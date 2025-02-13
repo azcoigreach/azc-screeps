@@ -1,0 +1,262 @@
+{
+    "annotations": {
+      "list": []
+    },
+    "editable": true,
+    "gnetId": null,
+    "graphTooltip": 0,
+    "id": null,
+    "links": [],
+    "panels": [
+      {
+        "id": 1,
+        "type": "timeseries",
+        "title": "CPU Metrics",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "screeps_cpu_used",
+            "legendFormat": "CPU Used",
+            "refId": "A"
+          },
+          {
+            "expr": "screeps_cpu_bucket",
+            "legendFormat": "CPU Bucket",
+            "refId": "B"
+          },
+          {
+            "expr": "screeps_tick",
+            "legendFormat": "Tick",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "none"
+          },
+          "overrides": []
+        }
+      },
+      {
+        "id": 2,
+        "type": "timeseries",
+        "title": "GCL Metrics",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "screeps_gcl_level",
+            "legendFormat": "GCL Level",
+            "refId": "A"
+          },
+          {
+            "expr": "screeps_gcl_progress",
+            "legendFormat": "GCL Progress",
+            "refId": "B"
+          },
+          {
+            "expr": "screeps_gcl_progress_total",
+            "legendFormat": "GCL Total",
+            "refId": "C"
+          },
+          {
+            "expr": "screeps_gcl_progress_percent",
+            "legendFormat": "GCL %",
+            "refId": "D"
+          },
+          {
+            "expr": "screeps_gcl_colonies",
+            "legendFormat": "Colonies",
+            "refId": "E"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "none"
+          },
+          "overrides": []
+        }
+      },
+      {
+        "id": 3,
+        "type": "timeseries",
+        "title": "Creeps Total",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        },
+        "targets": [
+          {
+            "expr": "screeps_creeps_total",
+            "legendFormat": "Total Creeps",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "none"
+          },
+          "overrides": []
+        }
+      },
+      {
+        "id": 4,
+        "type": "timeseries",
+        "title": "Colony RCL Progress (%)",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        },
+        "targets": [
+          {
+            "expr": "screeps_colony_rcl_progress_percent",
+            "legendFormat": "{{colony}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent"
+          },
+          "overrides": []
+        }
+      },
+      {
+        "id": 5,
+        "type": "timeseries",
+        "title": "Colony Remote Mining",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 16
+        },
+        "targets": [
+          {
+            "expr": "screeps_colony_remote_mining_rooms",
+            "legendFormat": "Remote Rooms {{colony}}",
+            "refId": "A"
+          },
+          {
+            "expr": "screeps_colony_remote_mining_sources",
+            "legendFormat": "Remote Sources {{colony}}",
+            "refId": "B"
+          },
+          {
+            "expr": "screeps_colony_mining_sources",
+            "legendFormat": "Total Mining Sources {{colony}}",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "none"
+          },
+          "overrides": []
+        }
+      },
+      {
+        "id": 6,
+        "type": "timeseries",
+        "title": "Colony Spawn Status",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 16
+        },
+        "targets": [
+          {
+            "expr": "screeps_colony_spawn_status",
+            "legendFormat": "{{colony}} - {{spawn}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "none"
+          },
+          "overrides": []
+        }
+      },
+      {
+        "id": 7,
+        "type": "timeseries",
+        "title": "Global Resources",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 24
+        },
+        "targets": [
+          {
+            "expr": "screeps_resource_amount",
+            "legendFormat": "{{resource}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "none"
+          },
+          "overrides": []
+        }
+      },
+      {
+        "id": 8,
+        "type": "timeseries",
+        "title": "Mining Store Percent",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 24
+        },
+        "targets": [
+          {
+            "expr": "screeps_mining_store_percent",
+            "legendFormat": "{{room}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent"
+          },
+          "overrides": []
+        }
+      }
+    ],
+    "refresh": "10s",
+    "schemaVersion": 37,
+    "style": "dark",
+    "tags": [],
+    "templating": {
+      "list": []
+    },
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "",
+    "title": "Screeps Dashboard",
+    "uid": "screeps-dashboard",
+    "version": 0,
+    "weekStart": ""
+  }
+  
