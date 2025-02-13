@@ -75,7 +75,7 @@ def fetch_screeps_stats():
     params = {
         "shard": SCREEPS_SHARD,
         "path": SCREEPS_PATH,
-        "token": SCREEPS_TOKEN
+        "_token": SCREEPS_TOKEN
     }
     try:
         resp = requests.get(url, params=params, timeout=10)
@@ -168,8 +168,12 @@ def update_metrics(stats):
     mining_data = stats.get("mining", {})
     mining_store_percent.clear()
     for mining_room, mining_info in mining_data.items():
-        store_val = mining_info.get("store_percent", 0)
+        store_val = mining_info.get("store_percent",0)
+        # If it's None, cast to 0 or skip
+        if store_val is None:
+            store_val = 0
         mining_store_percent.labels(room=mining_room).set(store_val)
+
 
 
 def main():
