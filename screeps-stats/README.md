@@ -11,3 +11,6 @@ Statistics logging for the Screeps MMO.
 2. `cp .env.example .env`
 3. Fill in the `.env` file with your Screeps server API token
 4. `docker-compose up -d`
+
+# Grafana
+Grafana is available at `http://localhost:3000` with the default credentials `admin:admin`.
