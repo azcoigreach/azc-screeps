@@ -150,7 +150,7 @@ Creep.prototype.isHostile = function isHostile() {
 
 Creep.prototype.hasPart = function hasPart(part) {
 	return this.getActiveBodyparts(part) > 0;
-}
+};
 
 
 /* ***********************************************************
@@ -177,6 +177,7 @@ Creep.prototype.runTask = function runTask() {
 		case "boost": {
 			let lab = Game.getObjectById(this.memory.task["id"]);
 			if (!this.pos.inRangeTo(lab, 1)) {
+				Stats_Visual.CreepSay(this, 'upgrade');
 				this.travelTask(lab);
 				return;
 			} else {    // Wait out timer- should be boosted by then.
@@ -187,6 +188,7 @@ Creep.prototype.runTask = function runTask() {
 		case "pickup": {
 			let obj = Game.getObjectById(this.memory.task["id"]);
 			if (this.pickup(obj) == ERR_NOT_IN_RANGE) {
+				Stats_Visual.CreepSay(this, 'pickup');
 				this.travelTask(obj);
 				return;
 			} else {    // Action takes one tick... task complete... delete task...
@@ -201,6 +203,7 @@ Creep.prototype.runTask = function runTask() {
 			if (this.withdraw(obj, this.memory.task["resource"],
 				(this.memory.task["amount"] > this.carryCapacity - _.sum(this.carry) ? null : this.memory.task["amount"]))
 				== ERR_NOT_IN_RANGE) {
+				Stats_Visual.CreepSay(this, 'withdraw');
 				this.travelTask(obj);
 				return;
 			} else {    // Action takes one tick... task complete... delete task...
@@ -227,6 +230,7 @@ Creep.prototype.runTask = function runTask() {
 							if (link != null) {
 								_.set(this.memory, ["task", "dump_link"], _.get(link, "id"));
 								this.transfer(link, "energy");
+								Stats_Visual.CreepSay(this, 'transfer');
 								return;
 							} else {
 								_.set(this.memory, ["task", "dump_link"], "unavailable");
@@ -241,6 +245,7 @@ Creep.prototype.runTask = function runTask() {
 							if (container != null) {
 								_.set(this.memory, ["task", "dump_container"], _.get(container, "id"));
 								this.transfer(container, "energy");
+								Stats_Visual.CreepSay(this, 'transfer');
 								return;
 							} else {
 								_.set(this.memory, ["task", "dump_container"], "unavailable");
@@ -267,6 +272,7 @@ Creep.prototype.runTask = function runTask() {
 			let result = this.upgradeController(controller);
 			if (result == OK) {
 				if (Game.time % 10 == 0)
+					Stats_Visual.CreepSay(this, 'upgrade');
 					this.travel(controller);
 				return;
 			} else if (result == ERR_NOT_IN_RANGE) {
@@ -295,6 +301,7 @@ Creep.prototype.runTask = function runTask() {
 			let structure = Game.getObjectById(this.memory.task["id"]);
 			let result = this.repair(structure);
 			if (result == ERR_NOT_IN_RANGE) {
+				Stats_Visual.CreepSay(this, 'repair');
 				this.travelTask(structure);
 				return;
 			} else if (result != OK || structure.hits == structure.hitsMax) {
@@ -307,18 +314,23 @@ Creep.prototype.runTask = function runTask() {
 			let structure = Game.getObjectById(this.memory.task["id"]);
 			let result = this.build(structure);
 			if (result == ERR_NOT_IN_RANGE) {
+				Stats_Visual.CreepSay(this, 'build');
 				this.travelTask(structure);
 				return;
 			} else if (result != OK) {
 				delete this.memory.task;
 				return;
-			} else { return; }
+			} else { 
+				Stats_Visual.CreepSay(this, 'build');
+				return; 
+			}
 		}
 
 		case "deposit": {
 			let target = Game.getObjectById(this.memory.task["id"]);
 			switch (this.memory.task["resource"]) {
 				case "energy":
+					Stats_Visual.CreepSay(this, 'transfer');
 					if (target != null && this.transfer(target, this.memory.task["resource"]) == ERR_NOT_IN_RANGE) {
 						if (_.get(target, "energy") != null && _.get(target, "energy") == _.get(target, "energyCapacity")) {
 							delete this.memory.task;
@@ -335,6 +347,7 @@ Creep.prototype.runTask = function runTask() {
 
 				default:
 				case "mineral":		// All except energy
+					Stats_Visual.CreepSay(this, 'transfer');
 					for (let r = Object.keys(this.carry).length; r > 0; r--) {
 						let resourceType = Object.keys(this.carry)[r - 1];
 						if (resourceType == "energy") {
@@ -524,7 +537,7 @@ Creep.prototype.getTask_Deposit_Source_Link = function getTask_Deposit_Source_Li
 			return s.structureType == "link" && s.energy < s.energyCapacity
 				&& _.some(_.get(Memory, ["rooms", this.room.name, "links"]),
 					l => { return _.get(l, "id") == s.id && _.get(l, "dir") == "send"; });
-				 }));
+				}));
 
 		if (link != null) {
 			return {
@@ -687,7 +700,7 @@ Creep.prototype.getTask_Pickup = function getTask_Pickup(resource) {
 			id: ruin.id,
 			timer: 50	/*ruin sites from suicides seem to have long tick times,
 						 sometimes 30k+.. just set to maxRoomLength */
-		};
+						};
 	}
 };
 
@@ -7773,7 +7786,15 @@ let Console = {
 			return `<font color=\"#D3FFA3\">[Console]</font> Visuals for repairs toggled to be shown: ${_.get(Memory, ["hive", "visuals", "show_repair"], false)}`;
 		};
 
+		help_visuals.push("visuals.toggle_speech()");
+		visuals.toggle_speech = function () {
+			if (_.get(Memory, ["hive", "visuals", "show_speech"], false) == true)
+				_.set(Memory, ["hive", "visuals", "show_speech"], false)
+			else
+				_.set(Memory, ["hive", "visuals", "show_speech"], true)
 
+			return `<font color=\"#D3FFA3\">[Console]</font> Visuals for speech toggled to be shown: ${_.get(Memory, ["hive", "visuals", "show_speech"], false)}`;
+		};
 		pause = new Object();
 
 		help_pause.push("pause.mineral_extraction()")
@@ -7882,7 +7903,27 @@ let Stats_Visual = {
 					Memory["hive"]["visuals"]["repair_levels"].push({ pos: w.pos, percent: p });
 				})
 		});
-	}
+	},
+
+	CreepSay: function(creep, task) {
+		if (!_.get(Memory, ["hive", "visuals", "show_speech"], false)) {
+			return;
+		}
+		const taskEmojis = {
+			harvest: '🌾',
+			build: '🏗️',
+			upgrade: '⚡',
+			repair: '🔧',
+			attack: '⚔️',
+			defend: '🛡️',
+			heal: '❤️',
+			transfer: '📦',
+			withdraw: '📥'
+		};
+		if (taskEmojis[task]) {
+			creep.say(taskEmojis[task]);
+		}
+	},
 };
 
 
