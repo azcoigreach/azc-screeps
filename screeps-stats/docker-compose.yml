@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  screeps-prometheus:
+    build: .
+    container_name: screeps_prometheus
+    ports:
+      - "9090:9090"  # Prometheus UI
+      - "8000:8000"  # Exporter endpoint
+    volumes:
+      - prometheus_data:/prometheus-data
+    env_file:
+      - .env
+    environment:
+      # These will be overridden by .env if present
+      SCREEPS_TOKEN: ${SCREEPS_TOKEN}
+      SCREEPS_SHARD: ${SCREEPS_SHARD}
+      SCREEPS_MEMORY_PATH: ${SCREEPS_MEMORY_PATH}
+      SCRAPE_INTERVAL: ${SCRAPE_INTERVAL}
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: screeps_grafana
+    ports:
+      - "3000:3000"  # Grafana UI
+    volumes:
+      - grafana_data:/var/lib/grafana
+    env_file:
+      - .env
+    environment:
+      # Optionally override these in .env or here
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
+    depends_on:
+      - screeps-prometheus
+
+volumes:
+  prometheus_data:
+  grafana_data:
