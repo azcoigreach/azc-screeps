@@ -115,8 +115,8 @@ Math.lerpSpawnPriority = function (lowPriority, highPriority, popActual, popTarg
 
 
 /* ***********************************************************
- *	[sec01b] OVERLOADS: CREEP
- * *********************************************************** */
+	*	[sec01b] OVERLOADS: CREEP
+	* *********************************************************** */
 
 Creep.prototype.isBoosted = function isBoosted() {
 	for (let b in this.body) {
@@ -150,12 +150,12 @@ Creep.prototype.isHostile = function isHostile() {
 
 Creep.prototype.hasPart = function hasPart(part) {
 	return this.getActiveBodyparts(part) > 0;
-}
+};
 
 
 /* ***********************************************************
- *	[sec01c] OVERLOADS: CREEP TASKS
- * *********************************************************** */
+	*	[sec01c] OVERLOADS: CREEP TASKS
+	* *********************************************************** */
 
 Creep.prototype.runTask = function runTask() {
 	if (this.memory.task == null) {
@@ -177,6 +177,7 @@ Creep.prototype.runTask = function runTask() {
 		case "boost": {
 			let lab = Game.getObjectById(this.memory.task["id"]);
 			if (!this.pos.inRangeTo(lab, 1)) {
+				Stats_Visual.CreepSay(this, 'upgrade');
 				this.travelTask(lab);
 				return;
 			} else {    // Wait out timer- should be boosted by then.
@@ -187,6 +188,7 @@ Creep.prototype.runTask = function runTask() {
 		case "pickup": {
 			let obj = Game.getObjectById(this.memory.task["id"]);
 			if (this.pickup(obj) == ERR_NOT_IN_RANGE) {
+				Stats_Visual.CreepSay(this, 'pickup');
 				this.travelTask(obj);
 				return;
 			} else {    // Action takes one tick... task complete... delete task...
@@ -201,6 +203,7 @@ Creep.prototype.runTask = function runTask() {
 			if (this.withdraw(obj, this.memory.task["resource"],
 				(this.memory.task["amount"] > this.carryCapacity - _.sum(this.carry) ? null : this.memory.task["amount"]))
 				== ERR_NOT_IN_RANGE) {
+				Stats_Visual.CreepSay(this, 'withdraw');
 				this.travelTask(obj);
 				return;
 			} else {    // Action takes one tick... task complete... delete task...
@@ -227,6 +230,7 @@ Creep.prototype.runTask = function runTask() {
 							if (link != null) {
 								_.set(this.memory, ["task", "dump_link"], _.get(link, "id"));
 								this.transfer(link, "energy");
+								Stats_Visual.CreepSay(this, 'transfer');
 								return;
 							} else {
 								_.set(this.memory, ["task", "dump_link"], "unavailable");
@@ -241,6 +245,7 @@ Creep.prototype.runTask = function runTask() {
 							if (container != null) {
 								_.set(this.memory, ["task", "dump_container"], _.get(container, "id"));
 								this.transfer(container, "energy");
+								Stats_Visual.CreepSay(this, 'transfer');
 								return;
 							} else {
 								_.set(this.memory, ["task", "dump_container"], "unavailable");
@@ -267,6 +272,7 @@ Creep.prototype.runTask = function runTask() {
 			let result = this.upgradeController(controller);
 			if (result == OK) {
 				if (Game.time % 10 == 0)
+					Stats_Visual.CreepSay(this, 'upgrade');
 					this.travel(controller);
 				return;
 			} else if (result == ERR_NOT_IN_RANGE) {
@@ -295,6 +301,7 @@ Creep.prototype.runTask = function runTask() {
 			let structure = Game.getObjectById(this.memory.task["id"]);
 			let result = this.repair(structure);
 			if (result == ERR_NOT_IN_RANGE) {
+				Stats_Visual.CreepSay(this, 'repair');
 				this.travelTask(structure);
 				return;
 			} else if (result != OK || structure.hits == structure.hitsMax) {
@@ -307,18 +314,23 @@ Creep.prototype.runTask = function runTask() {
 			let structure = Game.getObjectById(this.memory.task["id"]);
 			let result = this.build(structure);
 			if (result == ERR_NOT_IN_RANGE) {
+				Stats_Visual.CreepSay(this, 'build');
 				this.travelTask(structure);
 				return;
 			} else if (result != OK) {
 				delete this.memory.task;
 				return;
-			} else { return; }
+			} else { 
+				Stats_Visual.CreepSay(this, 'build');
+				return; 
+			}
 		}
 
 		case "deposit": {
 			let target = Game.getObjectById(this.memory.task["id"]);
 			switch (this.memory.task["resource"]) {
 				case "energy":
+					Stats_Visual.CreepSay(this, 'transfer');
 					if (target != null && this.transfer(target, this.memory.task["resource"]) == ERR_NOT_IN_RANGE) {
 						if (_.get(target, "energy") != null && _.get(target, "energy") == _.get(target, "energyCapacity")) {
 							delete this.memory.task;
@@ -335,6 +347,7 @@ Creep.prototype.runTask = function runTask() {
 
 				default:
 				case "mineral":		// All except energy
+					Stats_Visual.CreepSay(this, 'transfer');
 					for (let r = Object.keys(this.carry).length; r > 0; r--) {
 						let resourceType = Object.keys(this.carry)[r - 1];
 						if (resourceType == "energy") {
@@ -524,7 +537,7 @@ Creep.prototype.getTask_Deposit_Source_Link = function getTask_Deposit_Source_Li
 			return s.structureType == "link" && s.energy < s.energyCapacity
 				&& _.some(_.get(Memory, ["rooms", this.room.name, "links"]),
 					l => { return _.get(l, "id") == s.id && _.get(l, "dir") == "send"; });
-				 }));
+					}));
 
 		if (link != null) {
 			return {
@@ -686,7 +699,7 @@ Creep.prototype.getTask_Pickup = function getTask_Pickup(resource) {
 			resource: _.head(_.filter(_.keys(ruin.store), q => { return ruin.store[q] > carry_amount; })),
 			id: ruin.id,
 			timer: 50	/*ruin sites from suicides seem to have long tick times,
-						 sometimes 30k+.. just set to maxRoomLength */
+							sometimes 30k+.. just set to maxRoomLength */
 		};
 	}
 };
@@ -804,10 +817,10 @@ Creep.prototype.getTask_Mine = function getTask_Mine() {
 		return;
 
 	/* Expected behavior:
-	 * Burrowers: 1 burrower per source, stick to source, stand on container, mine; when source is empty, move
-	 *   energy to nearby link (as new task).
-	 * Miners: Move to any source that's not avoided and that has energy, harvest, then get new task
-	 */
+		* Burrowers: 1 burrower per source, stick to source, stand on container, mine; when source is empty, move
+		*   energy to nearby link (as new task).
+		* Miners: Move to any source that's not avoided and that has energy, harvest, then get new task
+		*/
 
 	let source = null;
 
@@ -926,8 +939,8 @@ Creep.prototype.getTask_Wait = function getTask_Wait(ticks) {
 
 
 /* ***********************************************************
- *	[sec01d] OVERLOADS: CREEP TRAVEL
- * *********************************************************** */
+	*	[sec01d] OVERLOADS: CREEP TRAVEL
+	* *********************************************************** */
 
 Creep.prototype.travel = function travel(dest, ignore_creeps) {
 	if (this.fatigue > 0)
@@ -1228,8 +1241,8 @@ Creep.prototype.moveFromSource = function moveFromSource() {
 
 
 /* ***********************************************************
- *	[sec01e] OVERLOADS: LAB
- * *********************************************************** */
+	*	[sec01e] OVERLOADS: LAB
+	* *********************************************************** */
 
 StructureLab.prototype.canBoost = function canBoost(mineral) {
 	return this.energy > 20 && this.mineralAmount > 30
@@ -1239,8 +1252,8 @@ StructureLab.prototype.canBoost = function canBoost(mineral) {
 
 
 /* ***********************************************************
- *	[sec01f] OVERLOADS: ROOM
- * *********************************************************** */
+	*	[sec01f] OVERLOADS: ROOM
+	* *********************************************************** */
 
 Room.prototype.store = function store(resource) {
 	let amount = (_.get(this, ["storage", "my"], false) ? _.get(this, ["storage", "store", resource], 0) : 0)
@@ -1363,8 +1376,8 @@ Room.prototype.getLevel = function getLevel() {
 
 
 /* ***********************************************************
- *	[sec01g] OVERLOADS: ROOMPOSITION
- * *********************************************************** */
+	*	[sec01g] OVERLOADS: ROOMPOSITION
+	* *********************************************************** */
 
 RoomPosition.prototype.isAvoided = function isAvoided() {
 	return _.findIndex(_.get(Memory, ["hive", "paths", "avoid", "rooms", this.roomName], null),
@@ -1569,8 +1582,8 @@ RoomPosition.prototype.getOpenTile_Path = function getOpenTile_Path(range, creep
 
 
 /* ***********************************************************
- *	[sec02a] DEFINITIONS: POPULATIONS
- * *********************************************************** */
+	*	[sec02a] DEFINITIONS: POPULATIONS
+	* *********************************************************** */
 
 Population_Industry =
 	{ courier: { level: 6, amount: 1 } };
@@ -1813,8 +1826,8 @@ Population_Mining = {
 
 
 /* ***********************************************************
- *	[sec02b] DEFINITIONS: COMBAT POPULATIONS
- * *********************************************************** */
+	*	[sec02b] DEFINITIONS: COMBAT POPULATIONS
+	* *********************************************************** */
 
 Population_Combat__Waves = {
 	soldier: { amount: 3 },
@@ -1847,8 +1860,8 @@ Population_Combat__Controller = {
 
 
 /* ***********************************************************
- *	[sec03a] DEFINITIONS: CREEP BODY
- * *********************************************************** */
+	*	[sec03a] DEFINITIONS: CREEP BODY
+	* *********************************************************** */
 
 let Creep_Body = {
 
@@ -2700,8 +2713,8 @@ let Creep_Body = {
 
 
 /* ***********************************************************
- *	[sec03b] DEFINITIONS: CREEP ROLES
- * *********************************************************** */
+	*	[sec03b] DEFINITIONS: CREEP ROLES
+	* *********************************************************** */
 
 let Creep_Roles = {
 
@@ -3249,8 +3262,8 @@ let Creep_Roles = {
 
 
 /* ***********************************************************
- *	[sec03c] DEFINITIONS: CREEP COMBAT ROLES
- * *********************************************************** */
+	*	[sec03c] DEFINITIONS: CREEP COMBAT ROLES
+	* *********************************************************** */
 
 let Creep_Roles_Combat = {
 	acquireBoost: function (creep) {
@@ -3553,8 +3566,8 @@ let Creep_Roles_Combat = {
 
 
 /* ***********************************************************
- *	[sec04a] DEFINITIONS: SITES
- * *********************************************************** */
+	*	[sec04a] DEFINITIONS: SITES
+	* *********************************************************** */
 
 let Sites = {
 	Colony: function (rmColony) {
@@ -4685,8 +4698,8 @@ let Sites = {
 
 					{ action: "boost", mineral: "", lab: "", role: "", subrole: "" }
 					{ action: "reaction", amount: -1, mineral: "",
-					  supply1: "", supply2: "",
-					  reactors: ["", "", ...] }
+						supply1: "", supply2: "",
+						reactors: ["", "", ...] }
 					{ action: "empty", labs: ["", "", ...] }
 				*/
 
@@ -4759,12 +4772,12 @@ let Sites = {
 
 			createLabTasks: function (rmColony) {
 				/* Terminal task priorities:
-				 * 2: emptying labs
-				 * 3: filling labs
-				 * 4: filling nuker
-				 * 5: filling orders
-				 * 6: emptying terminal
-				 */
+					* 2: emptying labs
+					* 3: filling labs
+					* 4: filling nuker
+					* 5: filling orders
+					* 6: emptying terminal
+					*/
 
 				for (let l in labDefinitions) {
 					var lab, storage;
@@ -4941,11 +4954,11 @@ let Sites = {
 
 			runTerminal_Orders: function (rmColony, storage, terminal, shortage, filling) {
 				/* Priority list for terminal orders:
-				 * 	1: console injected...
-				 * 	2: filling a shortage (internal transfers)
-				 * 	3: filling energy for an internal transfer
-				 *	4: filling a market order
-				 *	5: filling energy for a market order
+					* 	1: console injected...
+					* 	2: filling a shortage (internal transfers)
+					* 	3: filling energy for an internal transfer
+					*	4: filling a market order
+					*	5: filling energy for a market order
 				*/
 
 				for (let o in _.get(Memory, ["resources", "terminal_orders"]))
@@ -5021,7 +5034,7 @@ let Sites = {
 
 			runOrder_Send: function (rmColony, order, storage, terminal, shortage, filling) {
 				/* Notes: Minimum transfer amount is 100.
-				 *	 Don't try fulfilling orders with near-shortages- can cause an endless send loop and confuse couriers
+					*	 Don't try fulfilling orders with near-shortages- can cause an endless send loop and confuse couriers
 				*/
 
 				let o = order["name"];
@@ -5097,8 +5110,8 @@ let Sites = {
 
 			runOrder_Receive: function (rmColony, order, storage, terminal, filling) {
 				/* Notes: Minimum transfer amount is 100
-				 * And always buy in small amounts! ~500-5000
-				 */
+					* And always buy in small amounts! ~500-5000
+					*/
 
 				if (terminal.cooldown > 0)
 					return false;
@@ -5767,8 +5780,8 @@ let Sites = {
 
 
 /* ***********************************************************
- *	[sec05a] DEFINITIONS: HIVE CONTROL
- * *********************************************************** */
+	*	[sec05a] DEFINITIONS: HIVE CONTROL
+	* *********************************************************** */
 
 let Control = {
 
@@ -6163,8 +6176,8 @@ let Control = {
 
 
 /* ***********************************************************
- *	[sec06a] DEFINITIONS: BLUEPRINT
- * *********************************************************** */
+	*	[sec06a] DEFINITIONS: BLUEPRINT
+	* *********************************************************** */
 
 let Blueprint = {
 
@@ -6360,12 +6373,12 @@ let Blueprint = {
 
 		if (level >= 5) {
 			/* Building links... order to build:
-			 * RCL 5 (x2): 1 @ source; 1 @ storage
-			 * RCL 6 (x3): 2 @ sources; 1 @ storage
-			 * RCL 7 (x4): 2 @ sources; 1 @ storage; 1 @ controller
-			 * RCL 8 (x6): 2 @ sources; 2 @ storage; 2 @ controller
-			 * In 1 source rooms, start at controller at 1 RCL lower
-			 */
+				* RCL 5 (x2): 1 @ source; 1 @ storage
+				* RCL 6 (x3): 2 @ sources; 1 @ storage
+				* RCL 7 (x4): 2 @ sources; 1 @ storage; 1 @ controller
+				* RCL 8 (x6): 2 @ sources; 2 @ storage; 2 @ controller
+				* In 1 source rooms, start at controller at 1 RCL lower
+				*/
 
 			let links = _.filter(structures, s => { return s.structureType == "link"; });
 			if (sites < sites_per_room) {
@@ -6527,8 +6540,8 @@ let Blueprint = {
 
 
 /* ***********************************************************
- *	[sec06b] DEFINITIONS: BLUEPRINT LAYOUTS
- * *********************************************************** */
+	*	[sec06b] DEFINITIONS: BLUEPRINT LAYOUTS
+	* *********************************************************** */
 
 Blueprint__Default_Horizontal = { // Size (without walls) 13, 12 ; Defensive offset -3, -3, +3, +3
 	spawn: [ {x: 0, y: 0}, {x: 0, y: 4}, {x: 0, y: 8} ],
@@ -7026,8 +7039,8 @@ Blueprint__Compact_Vertical__Walled = {
 
 
 /* ***********************************************************
- *	[sec07a] DEFINITIONS: CONSOLE COMMANDS
- * *********************************************************** */
+	*	[sec07a] DEFINITIONS: CONSOLE COMMANDS
+	* *********************************************************** */
 
 let Console = {
 	Init: function () {
@@ -7773,7 +7786,15 @@ let Console = {
 			return `<font color=\"#D3FFA3\">[Console]</font> Visuals for repairs toggled to be shown: ${_.get(Memory, ["hive", "visuals", "show_repair"], false)}`;
 		};
 
+		help_visuals.push("visuals.toggle_speech()");
+		visuals.toggle_speech = function () {
+			if (_.get(Memory, ["hive", "visuals", "show_speech"], false) == true)
+				_.set(Memory, ["hive", "visuals", "show_speech"], false)
+			else
+				_.set(Memory, ["hive", "visuals", "show_speech"], true)
 
+			return `<font color=\"#D3FFA3\">[Console]</font> Visuals for speech toggled to be shown: ${_.get(Memory, ["hive", "visuals", "show_speech"], false)}`;
+		};
 		pause = new Object();
 
 		help_pause.push("pause.mineral_extraction()")
@@ -7818,8 +7839,8 @@ let Console = {
 
 
 /* ***********************************************************
- *	[sec08a] DEFINITIONS: VISUAL ELEMENTS
- * *********************************************************** */
+	*	[sec08a] DEFINITIONS: VISUAL ELEMENTS
+	* *********************************************************** */
 
 let Stats_Visual = {
 
@@ -7882,14 +7903,34 @@ let Stats_Visual = {
 					Memory["hive"]["visuals"]["repair_levels"].push({ pos: w.pos, percent: p });
 				})
 		});
-	}
+	},
+
+	CreepSay: function(creep, task) {
+		if (!_.get(Memory, ["hive", "visuals", "show_speech"], false)) {
+			return;
+		}
+		const taskEmojis = {
+			harvest: '🌾',
+			build: '🏗️',
+			upgrade: '⚡',
+			repair: '🔧',
+			attack: '⚔️',
+			defend: '🛡️',
+			heal: '❤️',
+			transfer: '📦',
+			withdraw: '📥'
+		};
+		if (taskEmojis[task]) {
+			creep.say(taskEmojis[task]);
+		}
+	},
 };
 
 
 
 /* ***********************************************************
- *	[sec09a] DEFINITIONS: CPU PROFILING
- * *********************************************************** */
+	*	[sec09a] DEFINITIONS: CPU PROFILING
+	* *********************************************************** */
 
 let Stats_CPU = {
 
@@ -8004,8 +8045,8 @@ let Stats_CPU = {
 
 
 /* ***********************************************************
- *	[sec10a] DEFINITIONS: GRAFANA STATISTICS
- * *********************************************************** */
+	*	[sec10a] DEFINITIONS: GRAFANA STATISTICS
+	* *********************************************************** */
 
 let Stats_Grafana = {
 
@@ -8115,8 +8156,8 @@ let Stats_Grafana = {
 
 
 /* ***********************************************************
- *	[sec11a] DEFINITIONS: MAIN LOOP
- * *********************************************************** */
+	*	[sec11a] DEFINITIONS: MAIN LOOP
+	* *********************************************************** */
 
 
 module.exports.loop = function () {
