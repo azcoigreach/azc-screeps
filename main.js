@@ -1061,10 +1061,29 @@ Creep.prototype.travelToRoom = function travelToRoom(tgtRoom, forward) {
 		return ERR_NO_PATH;
 
 	let list_route = _.get(this, ["memory", "list_route"]);
-	if (list_route != null) {
-		if (forward == true) {
+	
+	if (list_route && list_route.length > 0) {
+		if (forward === true) {
 			for (let i = 1; i < list_route.length; i++) {
-				if (_.get(list_route, i) != null && this.room.name == _.get(list_route, i - 1)) {
+				if (this.room.name === list_route[i - 1]) {
+					// Check for portal to next room in the route
+					let portal = this.pos.findClosestByRange(FIND_STRUCTURES, {
+						filter: (structure) => structure.structureType == STRUCTURE_PORTAL && structure.destination.roomName == list_route[i]
+					});
+					if (portal) {
+						_.set(this, ["memory", "path", "portal"], portal.id);
+						let result = this.travel(portal.pos);
+						if (result == OK) {
+							return OK;
+						} else {
+							// Fallback to moveTo if travel fails
+							result = this.moveTo(portal.pos);
+							if (result == OK) {
+								return OK;
+							}
+						}
+					}
+					// Attempt to travel to the exit tile of the target room
 					let result = this.travelToExitTile(list_route[i]);
 					if (result == OK)
 						return OK;
@@ -1072,10 +1091,28 @@ Creep.prototype.travelToRoom = function travelToRoom(tgtRoom, forward) {
 						return this.travel(new RoomPosition(25, 25, list_route[i]));
 				}
 			}
-		} else if (forward == false) {
+		} else if (forward === false) {
 			for (let i = list_route.length - 2; i >= 0; i--) {
-				if (_.get(list_route, i) != null && this.room.name == _.get(list_route, i + 1)) {
-					let result = this.travelToExitTile(list_route[i])
+				if (this.room.name === list_route[i + 1]) {
+					// Check for portal to previous room in the route
+					let portal = this.pos.findClosestByRange(FIND_STRUCTURES, {
+						filter: (structure) => structure.structureType == STRUCTURE_PORTAL && structure.destination.roomName == list_route[i]
+					});
+					if (portal) {
+						_.set(this, ["memory", "path", "portal"], portal.id);
+						let result = this.travel(portal.pos);
+						if (result == OK) {
+							return OK;
+						} else {
+							// Fallback to moveTo if travel fails
+							result = this.moveTo(portal.pos);
+							if (result == OK) {
+								return OK;
+							}
+						}
+					}
+					// Attempt to travel to the exit tile of the target room
+					let result = this.travelToExitTile(list_route[i]);
 					if (result == OK)
 						return OK;
 					else
@@ -1085,9 +1122,34 @@ Creep.prototype.travelToRoom = function travelToRoom(tgtRoom, forward) {
 		}
 	}
 
-	if (_.get(this, ["memory", "path", "route"]) != null && _.get(this, ["memory", "path", "route", 0, "room"] == this.room.name))
+	// Check for portals in the current room leading to the target room
+	let portals = this.room.find(FIND_STRUCTURES, {
+		filter: (structure) => structure.structureType == STRUCTURE_PORTAL
+	});
+
+	if (portals.length > 0) {
+		for (let portal of portals) {
+			if (portal.destination.roomName == tgtRoom) {
+				_.set(this, ["memory", "path", "portal"], portal.id);
+				let result = this.travel(portal.pos);
+				if (result == OK) {
+					return OK;
+				} else {
+					// Fallback to moveTo if travel fails
+					result = this.moveTo(portal.pos);
+					if (result == OK) {
+						return OK;
+					}
+				}
+			}
+		}
+	}
+
+	// Update route memory if the current room is at the start of the route
+	if (_.get(this, ["memory", "path", "route"]) != null && _.get(this, ["memory", "path", "route", 0, "room"]) == this.room.name)
 		this.memory.path.route.splice(0, 1);
 
+	// Find a new route if necessary
 	if (_.get(this, ["memory", "path", "route"]) == null || this.memory.path.route.length == 0 || this.memory.path.route == ERR_NO_PATH
 		|| _.get(this, ["memory", "path", "route", 0, "room"]) == this.room.name || _.get(this, ["memory", "path", "exit"]) == null
 		|| _.get(this, ["memory", "path", "exit", "roomName"]) != this.room.name)
