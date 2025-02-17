@@ -537,7 +537,7 @@ Creep.prototype.getTask_Deposit_Source_Link = function getTask_Deposit_Source_Li
 			return s.structureType == "link" && s.energy < s.energyCapacity
 				&& _.some(_.get(Memory, ["rooms", this.room.name, "links"]),
 					l => { return _.get(l, "id") == s.id && _.get(l, "dir") == "send"; });
-				 }));
+				}));
 
 		if (link != null) {
 			return {
@@ -700,7 +700,7 @@ Creep.prototype.getTask_Pickup = function getTask_Pickup(resource) {
 			id: ruin.id,
 			timer: 50	/*ruin sites from suicides seem to have long tick times,
 						 sometimes 30k+.. just set to maxRoomLength */
-		};
+						};
 	}
 };
 
@@ -7968,24 +7968,24 @@ let Stats_Visual = {
 	},
 
 	CreepSay: function(creep, task) {
-        if (!_.get(Memory, ["hive", "visuals", "show_speech"], false)) {
-            return;
-        }
-        const taskEmojis = {
-            harvest: '🌾',
-            build: '🏗️',
-            upgrade: '⚡',
-            repair: '🔧',
-            attack: '⚔️',
-            defend: '🛡️',
-            heal: '❤️',
-            transfer: '📦',
-            withdraw: '📥'
-        };
-        if (taskEmojis[task]) {
-            creep.say(taskEmojis[task]);
-        }
-    },
+		if (!_.get(Memory, ["hive", "visuals", "show_speech"], false)) {
+			return;
+		}
+		const taskEmojis = {
+			harvest: '🌾',
+			build: '🏗️',
+			upgrade: '⚡',
+			repair: '🔧',
+			attack: '⚔️',
+			defend: '🛡️',
+			heal: '❤️',
+			transfer: '📦',
+			withdraw: '📥'
+		};
+		if (taskEmojis[task]) {
+			creep.say(taskEmojis[task]);
+		}
+	},
 };
 
 
