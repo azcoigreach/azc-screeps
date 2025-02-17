@@ -634,75 +634,63 @@ Creep.prototype.getTask_Deposit_Spawns = function getTask_Deposit_Spawns() {
 };
 
 Creep.prototype.getTask_Pickup = function getTask_Pickup(resource) {
-	if (!_.get(Memory, ["rooms", this.room.name, "defense", "is_safe"]))
-		return;
-
-	let dropped_resources = this.room.find(FIND_DROPPED_RESOURCES);
-
-	if (resource == null || resource != "energy") {
-		let pile = _.head(_.sortBy(_.filter(dropped_resources,
-			r => { return r.resourceType == "mineral"; }),
-			r => { return -r.amount; }));
-
-		if (pile != null) {
-			return {
-				type: "pickup",
-				resource: "mineral",
-				id: pile.id,
-				timer: 30,
-			};
-		}
-	}
-
-	let am_owner = _.get(this.room, ["controller", "my"], false);
-	let mining_colony = _.get(Memory, ["sites", "mining", this.room.name, "colony"]);
-	let room_level = mining_colony == null || Game.rooms[mining_colony] == null
-		? (am_owner ? this.room.getLevel() : 0)
-		: Game.rooms[mining_colony].getLevel();
-	let carry_amount = this.carryCapacity / 5;
-
-	if (resource == null || resource == "energy") {
-		let pile = _.head(_.sortBy(_.filter(dropped_resources,
-			r => { return r.resourceType == "energy" && r.amount > carry_amount; }),
-			r => { return -r.amount; }));
-
-		if (pile != null) {
-			return {
-				type: "pickup",
-				resource: "energy",
-				id: pile.id,
-				timer: 30,
-			};
-		}
-	}
-
-	let tombstone = _.head(_.sortBy(_.filter(this.room.find(FIND_TOMBSTONES),
-		t => { return _.some(_.get(t, "store", null), s => { return s > carry_amount; }); }),
-		t => { return -this.pos.getRangeTo(t.pos); }));
-
-	if (tombstone != null) {
-		return {
-			type: "withdraw",	// Tombstones require creep.withdraw() ... not creep.pickup()
-			resource: _.head(_.filter(_.keys(tombstone.store), s => { return tombstone.store[s] > carry_amount; })),
-			id: tombstone.id,
-			timer: _.get(tombstone, "ticksToDecay", 50)
-		};
-	}
-
-	let ruin = _.head(_.sortBy(_.filter(this.room.find(FIND_RUINS),
-		p => { return _.some(_.get(p, "store", null), p => { return p > carry_amount; }); }),
-		p => { return -this.pos.getRangeTo(p.pos); }));
-
-	if(ruin != null) {
-		return {
-			type: "withdraw",
-			resource: _.head(_.filter(_.keys(ruin.store), q => { return ruin.store[q] > carry_amount; })),
-			id: ruin.id,
-			timer: 50	/*ruin sites from suicides seem to have long tick times,
-						 sometimes 30k+.. just set to maxRoomLength */
-						};
-	}
+    // Only pick up energy; ignore any other resource type.
+    if (resource && resource !== "energy") {
+        return null;
+    }
+    
+    // Ensure the room is safe before picking up any resource.
+    if (!_.get(Memory, ["rooms", this.room.name, "defense", "is_safe"])) {
+        return;
+    }
+    
+    let dropped = this.room.find(FIND_DROPPED_RESOURCES);
+    let carryAmount = this.carryCapacity / 5;
+    
+    // Look only for energy piles that are sizable enough.
+    let energyPile = _.head(_.sortBy(_.filter(dropped, r => 
+        r.resourceType === "energy" && r.amount > carryAmount
+    ), r => -r.amount));
+    
+    if (energyPile) {
+        return {
+            type: "pickup",
+            resource: "energy",
+            id: energyPile.id,
+            timer: 30
+        };
+    }
+    
+    // Optionally, if you want your creeps to withdraw energy from tombstones or ruins:
+    let tombstone = _.head(_.sortBy(_.filter(this.room.find(FIND_TOMBSTONES), t => 
+        t.store && t.store["energy"] > carryAmount
+    ), t => -this.pos.getRangeTo(t.pos)));
+    
+    if (tombstone) {
+        return {
+            type: "withdraw",
+            resource: "energy",
+            id: tombstone.id,
+            timer: _.get(tombstone, "ticksToDecay", 50)
+        };
+    }
+    
+    let ruin = _.head(_.sortBy(_.filter(this.room.find(FIND_RUINS), r =>
+        r.store && r.store["energy"] > carryAmount
+    ), r => -this.pos.getRangeTo(r.pos)));
+    
+    if (ruin) {
+        return {
+            type: "withdraw",
+            resource: "energy",
+            id: ruin.id,
+            timer: 50
+        };
+    }
+    
+    return null;
 };
+
 
 Creep.prototype.getTask_Upgrade = function getTask_Upgrade(only_critical) {
 	if (!_.get(this.room, ["controller", "my"], false))
