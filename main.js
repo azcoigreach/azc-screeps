@@ -461,18 +461,41 @@ Creep.prototype.getTask_Withdraw_Link = function getTask_Withdraw_Link(distance)
 		|| !_.get(Memory, ["rooms", this.room.name, "defense", "is_safe"]))
 		return;
 
-	let link = _.head(_.filter(this.room.find(FIND_MY_STRUCTURES), s => {
+	// Get all valid receive links with energy
+	let validLinks = _.filter(this.room.find(FIND_MY_STRUCTURES), s => {
 		return s.structureType == "link" && s.energy > 0 && this.pos.getRangeTo(s.pos) <= distance
 			&& _.some(_.get(Memory, ["rooms", this.room.name, "links"]),
 				l => { return _.get(l, "id") == s.id && _.get(l, "dir") == "receive"; });
-	}));
+	});
 
-	if (link != null) {
+	if (validLinks.length == 0) return;
+
+	// If we have storage, prioritize links closest to storage
+	if (this.room.storage) {
+		// Sort links by distance to storage (closest first)
+		let sortedLinks = _.sortBy(validLinks, link => {
+			return link.pos.getRangeTo(this.room.storage.pos);
+		});
+		
+		let closestLink = sortedLinks[0];
 		return {
 			type: "withdraw",
 			structure: "link",
 			resource: "energy",
-			id: link.id,
+			id: closestLink.id,
+			timer: 60
+		};
+	} else {
+		// No storage, use the closest link to the courier
+		let closestLink = _.head(_.sortBy(validLinks, link => {
+			return this.pos.getRangeTo(link.pos);
+		}));
+		
+		return {
+			type: "withdraw",
+			structure: "link",
+			resource: "energy",
+			id: closestLink.id,
 			timer: 60
 		};
 	}
