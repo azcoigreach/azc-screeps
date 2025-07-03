@@ -7697,8 +7697,8 @@ let Console = {
 		help_factories.push("factories.refresh_cache()");
 		help_factories.push(" - Refreshes the commodity recipe cache from Screeps API");
 
-		help_factories.push("factories.cleanup()");
-		help_factories.push(" - Manually triggers factory cleanup for all factories");
+		help_factories.push("factories.cleanup(priority)");
+		help_factories.push(" - Manually triggers factory cleanup (priority 1=high, 5=normal)");
 
 		help_factories.push("factories.clear_assignments()");
 		help_factories.push(" - Clears all factory assignments");
@@ -7709,6 +7709,10 @@ let Console = {
 		help_factories.push(" - Clears all factory tasks");
 		help_factories.push("factories.force_cleanup()");
 		help_factories.push(" - Forces factory cleanup even when priority 2 tasks are active");
+		help_factories.push("factories.maintenance()");
+		help_factories.push(" - Runs scheduled factory maintenance (cleanup and assignment checks)");
+		help_factories.push("factories.set_maintenance_intervals(cleanup, assignments)");
+		help_factories.push(" - Sets maintenance intervals in ticks (default: cleanup=50, assignments=200)");
 
 		factories.status = function () {
 			let targets = _.get(Memory, ["resources", "factories", "targets"]);
@@ -7852,7 +7856,7 @@ let Console = {
 			return `<font color=\"#FFA500\">[Factory]</font> Cached ${Object.keys(COMMODITIES).length} commodity recipes from Screeps API.`;
 		};
 
-		factories.cleanup = function () {
+		factories.cleanup = function (priority = 1) {
 			let totalCleanupTasks = 0;
 			let roomsProcessed = 0;
 			
@@ -7860,7 +7864,7 @@ let Console = {
 				let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
 				if (factories.length > 0) {
 					roomsProcessed++;
-					console.log(`<font color=\"#FFA500\">[Factory]</font> Processing cleanup for room ${room.name} with ${factories.length} factories`);
+					console.log(`<font color=\"#FFA500\">[Factory]</font> Processing cleanup for room ${room.name} with ${factories.length} factories (priority: ${priority})`);
 					
 					// Create cleanup tasks for this room
 					let Industry = {
@@ -7879,15 +7883,27 @@ let Console = {
 								return;
 							}
 
-							// Check for active loading tasks (priority 2)
-							let activeLoadingTasks = [];
-							if (Memory.rooms[rmColony] && Memory.rooms[rmColony].industry && Memory.rooms[rmColony].industry.tasks) {
-								activeLoadingTasks = _.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority == 2);
-							}
-							
-							if (activeLoadingTasks.length > 0) {
-								console.log(`<font color=\"#FFA500\">[Factory]</font> ${activeLoadingTasks.length} active loading tasks in ${rmColony} - skipping cleanup`);
-								return;
+							// If priority is 1 (high), we'll override loading tasks
+							if (priority === 1) {
+								// Clear existing priority 2 tasks to make room for cleanup
+								if (Memory.rooms[rmColony] && Memory.rooms[rmColony].industry && Memory.rooms[rmColony].industry.tasks) {
+									let loadingTasks = _.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority == 2);
+									if (loadingTasks.length > 0) {
+										console.log(`<font color=\"#FFA500\">[Factory]</font> Clearing ${loadingTasks.length} priority 2 tasks in ${rmColony} to prioritize cleanup`);
+										Memory.rooms[rmColony].industry.tasks = _.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority != 2);
+									}
+								}
+							} else {
+								// Check for active loading tasks (priority 2) - only block if not high priority
+								let activeLoadingTasks = [];
+								if (Memory.rooms[rmColony] && Memory.rooms[rmColony].industry && Memory.rooms[rmColony].industry.tasks) {
+									activeLoadingTasks = _.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority == 2);
+								}
+								
+								if (activeLoadingTasks.length > 0) {
+									console.log(`<font color=\"#FFA500\">[Factory]</font> ${activeLoadingTasks.length} active loading tasks in ${rmColony} - skipping cleanup`);
+									return;
+								}
 							}
 
 							let roomCleanupTasks = 0;
@@ -7903,8 +7919,8 @@ let Console = {
 										if (resource != "energy" && factory.store[resource] > 0) {
 											console.log(`<font color=\"#FFA500\">[Factory]</font> Cleaning ${resource}:${factory.store[resource]} from unassigned factory ${factory.id}`);
 											Memory.rooms[rmColony].industry.tasks.push(
-												{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 5 },
-												{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: 5 }
+												{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: priority },
+												{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: priority }
 											);
 											factoryCleanupTasks += 2;
 										}
@@ -7923,8 +7939,8 @@ let Console = {
 												let excess = factory.store[resource] - components[resource];
 												console.log(`<font color=\"#FFA500\">[Factory]</font> Cleaning excess ${resource}:${excess} from assigned factory ${factory.id}`);
 												Memory.rooms[rmColony].industry.tasks.push(
-													{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 5, amount: excess },
-													{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: 5 }
+													{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: priority, amount: excess },
+													{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: priority }
 												);
 												factoryCleanupTasks += 2;
 											}
@@ -7935,8 +7951,8 @@ let Console = {
 										if (factory.store[resource] > 0) {
 											console.log(`<font color=\"#FFA500\">[Factory]</font> Cleaning unwanted ${resource}:${factory.store[resource]} from assigned factory ${factory.id}`);
 											Memory.rooms[rmColony].industry.tasks.push(
-												{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 5 },
-												{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: 5 }
+												{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: priority },
+												{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: priority }
 											);
 											factoryCleanupTasks += 2;
 										}
@@ -7989,6 +8005,55 @@ let Console = {
 			});
 			console.log(`<font color=\"#FFA500\">[Factory]</font> All factory tasks cleared.`);
 			return `<font color=\"#FFA500\">[Factory]</font> All factory tasks cleared.`;
+		};
+
+		factories.maintenance = function () {
+			// Initialize factory maintenance memory if needed
+			if (!Memory.factories) {
+				Memory.factories = {
+					lastCleanup: 0,
+					cleanupInterval: 50, // Run cleanup every 50 ticks
+					lastAssignmentCheck: 0,
+					assignmentCheckInterval: 200 // Check assignments every 200 ticks
+				};
+			}
+			
+			let currentTick = Game.time;
+			let maintenanceActions = [];
+			
+			// Check if it's time for cleanup
+			if (currentTick - Memory.factories.lastCleanup >= Memory.factories.cleanupInterval) {
+				console.log(`<font color=\"#FFA500\">[Factory]</font> Running scheduled factory cleanup...`);
+				this.cleanup(1); // High priority cleanup
+				Memory.factories.lastCleanup = currentTick;
+				maintenanceActions.push("cleanup");
+			}
+			
+			// Check if it's time for assignment renewal
+			if (currentTick - Memory.factories.lastAssignmentCheck >= Memory.factories.assignmentCheckInterval) {
+				console.log(`<font color=\"#FFA500\">[Factory]</font> Running scheduled assignment check...`);
+				this.renew_assignments();
+				Memory.factories.lastAssignmentCheck = currentTick;
+				maintenanceActions.push("assignment renewal");
+			}
+			
+			if (maintenanceActions.length > 0) {
+				return `<font color=\"#FFA500\">[Factory]</font> Factory maintenance completed: ${maintenanceActions.join(', ')}`;
+			} else {
+				return `<font color=\"#FFA500\">[Factory]</font> No maintenance actions needed at tick ${currentTick}`;
+			}
+		};
+
+		factories.set_maintenance_intervals = function (cleanupInterval = 50, assignmentCheckInterval = 200) {
+			if (!Memory.factories) {
+				Memory.factories = {};
+			}
+			
+			Memory.factories.cleanupInterval = cleanupInterval;
+			Memory.factories.assignmentCheckInterval = assignmentCheckInterval;
+			
+			console.log(`<font color=\"#FFA500\">[Factory]</font> Maintenance intervals set: cleanup=${cleanupInterval}, assignments=${assignmentCheckInterval}`);
+			return `<font color=\"#FFA500\">[Factory]</font> Maintenance intervals updated.`;
 		};
 
 		factories.force_cleanup = function () {
@@ -9332,6 +9397,11 @@ module.exports.loop = function () {
 
 	if (hasCPU()) {
 		Blueprint.Init();
+	}
+
+	// Run factory maintenance
+	if (hasCPU()) {
+		factories.maintenance();
 	}
 
 	Control.endMemory();
