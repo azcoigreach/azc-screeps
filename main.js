@@ -7705,6 +7705,10 @@ let Console = {
 
 		help_factories.push("factories.renew_assignments()");
 		help_factories.push(" - Clears current assignments and reassigns factories based on current targets");
+		help_factories.push("factories.clear_tasks()");
+		help_factories.push(" - Clears all factory tasks");
+		help_factories.push("factories.force_cleanup()");
+		help_factories.push(" - Forces factory cleanup even when priority 2 tasks are active");
 
 		factories.status = function () {
 			let targets = _.get(Memory, ["resources", "factories", "targets"]);
@@ -7849,67 +7853,109 @@ let Console = {
 		};
 
 		factories.cleanup = function () {
+			let totalCleanupTasks = 0;
+			let roomsProcessed = 0;
+			
 			_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
 				let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
 				if (factories.length > 0) {
+					roomsProcessed++;
+					console.log(`<font color=\"#FFA500\">[Factory]</font> Processing cleanup for room ${room.name} with ${factories.length} factories`);
+					
 					// Create cleanup tasks for this room
 					let Industry = {
 						createFactoryCleanupTasks: function (rmColony) {
 							let factories = _.filter(Game.rooms[rmColony].find(FIND_MY_STRUCTURES), 
 								s => s.structureType == "factory");
 							
-							if (factories.length == 0) return;
+							if (factories.length == 0) {
+								console.log(`<font color=\"#FFA500\">[Factory]</font> No factories found in ${rmColony}`);
+								return;
+							}
 
 							let storage = Game.rooms[rmColony].storage;
-							if (storage == null) return;
+							if (storage == null) {
+								console.log(`<font color=\"#FFA500\">[Factory]</font> No storage found in ${rmColony} - cannot clean factories`);
+								return;
+							}
 
-							// Only run cleanup if there are no active component loading tasks
-							let activeLoadingTasks = _.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority == 2);
-							if (activeLoadingTasks.length > 0) return;
+							// Check for active loading tasks (priority 2)
+							let activeLoadingTasks = [];
+							if (Memory.rooms[rmColony] && Memory.rooms[rmColony].industry && Memory.rooms[rmColony].industry.tasks) {
+								activeLoadingTasks = _.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority == 2);
+							}
+							
+							if (activeLoadingTasks.length > 0) {
+								console.log(`<font color=\"#FFA500\">[Factory]</font> ${activeLoadingTasks.length} active loading tasks in ${rmColony} - skipping cleanup`);
+								return;
+							}
 
+							let roomCleanupTasks = 0;
 							for (let factory of factories) {
 								let assignment = _.get(Memory, ["resources", "factories", "assignments", factory.id]);
+								let factoryCleanupTasks = 0;
+								
+								console.log(`<font color=\"#FFA500\">[Factory]</font> Checking factory ${factory.id} in ${rmColony} (assignment: ${assignment ? assignment.commodity : 'None'})`);
 								
 								// If factory has no assignment, clean everything except energy
 								if (assignment == null) {
 									for (let resource in factory.store) {
 										if (resource != "energy" && factory.store[resource] > 0) {
+											console.log(`<font color=\"#FFA500\">[Factory]</font> Cleaning ${resource}:${factory.store[resource]} from unassigned factory ${factory.id}`);
 											Memory.rooms[rmColony].industry.tasks.push(
 												{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 5 },
 												{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: 5 }
 											);
+											factoryCleanupTasks += 2;
 										}
 									}
-									continue;
-								}
+								} else {
+									// Factory has assignment - clean unnecessary items
+									let commodity = assignment.commodity;
+									let components = assignment.components || {};
+									let allowedResources = ["energy", commodity, ...Object.keys(components)];
 
-								// Factory has assignment - clean unnecessary items
-								let commodity = assignment.commodity;
-								let components = assignment.components;
-								let allowedResources = ["energy", commodity, ...Object.keys(components)];
+									for (let resource in factory.store) {
+										// Skip if this resource is allowed for current production
+										if (allowedResources.includes(resource)) {
+											// Check if we have excess components (more than needed for production)
+											if (components[resource] && factory.store[resource] > components[resource] * 2) {
+												let excess = factory.store[resource] - components[resource];
+												console.log(`<font color=\"#FFA500\">[Factory]</font> Cleaning excess ${resource}:${excess} from assigned factory ${factory.id}`);
+												Memory.rooms[rmColony].industry.tasks.push(
+													{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 5, amount: excess },
+													{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: 5 }
+												);
+												factoryCleanupTasks += 2;
+											}
+											continue;
+										}
 
-								for (let resource in factory.store) {
-									// Skip if this resource is allowed for current production
-									if (allowedResources.includes(resource)) {
-										// Check if we have excess components (more than needed for production)
-										if (components[resource] && factory.store[resource] > components[resource] * 2) {
-											let excess = factory.store[resource] - components[resource];
+										// This resource is not needed - clean it up
+										if (factory.store[resource] > 0) {
+											console.log(`<font color=\"#FFA500\">[Factory]</font> Cleaning unwanted ${resource}:${factory.store[resource]} from assigned factory ${factory.id}`);
 											Memory.rooms[rmColony].industry.tasks.push(
-												{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 5, amount: excess },
+												{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 5 },
 												{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: 5 }
 											);
+											factoryCleanupTasks += 2;
 										}
-										continue;
-									}
-
-									// This resource is not needed - clean it up
-									if (factory.store[resource] > 0) {
-										Memory.rooms[rmColony].industry.tasks.push(
-											{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 5 },
-											{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: 5 }
-										);
 									}
 								}
+								
+								if (factoryCleanupTasks > 0) {
+									console.log(`<font color=\"#FFA500\">[Factory]</font> Created ${factoryCleanupTasks} cleanup tasks for factory ${factory.id}`);
+									roomCleanupTasks += factoryCleanupTasks;
+								} else {
+									console.log(`<font color=\"#FFA500\">[Factory]</font> No cleanup needed for factory ${factory.id}`);
+								}
+							}
+							
+							if (roomCleanupTasks > 0) {
+								console.log(`<font color=\"#FFA500\">[Factory]</font> Created ${roomCleanupTasks} total cleanup tasks for room ${rmColony}`);
+								totalCleanupTasks += roomCleanupTasks;
+							} else {
+								console.log(`<font color=\"#FFA500\">[Factory]</font> No cleanup tasks needed for room ${rmColony}`);
 							}
 						}
 					};
@@ -7918,7 +7964,11 @@ let Console = {
 				}
 			});
 			
-			return `<font color=\"#FFA500\">[Factory]</font> Factory cleanup tasks created for all rooms.`;
+			if (roomsProcessed === 0) {
+				return `<font color=\"#FFA500\">[Factory]</font> No rooms with factories found.`;
+			}
+			
+			return `<font color=\"#FFA500\">[Factory]</font> Factory cleanup completed. Created ${totalCleanupTasks} cleanup tasks across ${roomsProcessed} rooms.`;
 		};
 
 		factories.clear_assignments = function () {
@@ -7939,6 +7989,101 @@ let Console = {
 			});
 			console.log(`<font color=\"#FFA500\">[Factory]</font> All factory tasks cleared.`);
 			return `<font color=\"#FFA500\">[Factory]</font> All factory tasks cleared.`;
+		};
+
+		factories.force_cleanup = function () {
+			console.log(`<font color=\"#FFA500\">[Factory]</font> Force cleaning factories (ignoring priority 2 tasks)...`);
+			
+			let totalCleanupTasks = 0;
+			let roomsProcessed = 0;
+			
+			_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+				let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+				if (factories.length > 0) {
+					roomsProcessed++;
+					console.log(`<font color=\"#FFA500\">[Factory]</font> Force processing cleanup for room ${room.name} with ${factories.length} factories`);
+					
+					let storage = room.storage;
+					if (storage == null) {
+						console.log(`<font color=\"#FFA500\">[Factory]</font> No storage found in ${room.name} - cannot clean factories`);
+						return;
+					}
+
+					let roomCleanupTasks = 0;
+					for (let factory of factories) {
+						let assignment = _.get(Memory, ["resources", "factories", "assignments", factory.id]);
+						let factoryCleanupTasks = 0;
+						
+						console.log(`<font color=\"#FFA500\">[Factory]</font> Force checking factory ${factory.id} in ${room.name} (assignment: ${assignment ? assignment.commodity : 'None'})`);
+						
+						// If factory has no assignment, clean everything except energy
+						if (assignment == null) {
+							for (let resource in factory.store) {
+								if (resource != "energy" && factory.store[resource] > 0) {
+									console.log(`<font color=\"#FFA500\">[Factory]</font> Force cleaning ${resource}:${factory.store[resource]} from unassigned factory ${factory.id}`);
+									Memory.rooms[room.name].industry.tasks.push(
+										{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 5 },
+										{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: 5 }
+									);
+									factoryCleanupTasks += 2;
+								}
+							}
+						} else {
+							// Factory has assignment - clean unnecessary items
+							let commodity = assignment.commodity;
+							let components = assignment.components || {};
+							let allowedResources = ["energy", commodity, ...Object.keys(components)];
+
+							for (let resource in factory.store) {
+								// Skip if this resource is allowed for current production
+								if (allowedResources.includes(resource)) {
+									// Check if we have excess components (more than needed for production)
+									if (components[resource] && factory.store[resource] > components[resource] * 2) {
+										let excess = factory.store[resource] - components[resource];
+										console.log(`<font color=\"#FFA500\">[Factory]</font> Force cleaning excess ${resource}:${excess} from assigned factory ${factory.id}`);
+										Memory.rooms[room.name].industry.tasks.push(
+											{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 5, amount: excess },
+											{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: 5 }
+										);
+										factoryCleanupTasks += 2;
+									}
+									continue;
+								}
+
+								// This resource is not needed - clean it up
+								if (factory.store[resource] > 0) {
+									console.log(`<font color=\"#FFA500\">[Factory]</font> Force cleaning unwanted ${resource}:${factory.store[resource]} from assigned factory ${factory.id}`);
+									Memory.rooms[room.name].industry.tasks.push(
+										{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 5 },
+										{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: 5 }
+									);
+									factoryCleanupTasks += 2;
+								}
+							}
+						}
+						
+						if (factoryCleanupTasks > 0) {
+							console.log(`<font color=\"#FFA500\">[Factory]</font> Created ${factoryCleanupTasks} force cleanup tasks for factory ${factory.id}`);
+							roomCleanupTasks += factoryCleanupTasks;
+						} else {
+							console.log(`<font color=\"#FFA500\">[Factory]</font> No force cleanup needed for factory ${factory.id}`);
+						}
+					}
+					
+					if (roomCleanupTasks > 0) {
+						console.log(`<font color=\"#FFA500\">[Factory]</font> Created ${roomCleanupTasks} total force cleanup tasks for room ${room.name}`);
+						totalCleanupTasks += roomCleanupTasks;
+					} else {
+						console.log(`<font color=\"#FFA500\">[Factory]</font> No force cleanup tasks needed for room ${room.name}`);
+					}
+				}
+			});
+			
+			if (roomsProcessed === 0) {
+				return `<font color=\"#FFA500\">[Factory]</font> No rooms with factories found.`;
+			}
+			
+			return `<font color=\"#FFA500\">[Factory]</font> Force factory cleanup completed. Created ${totalCleanupTasks} cleanup tasks across ${roomsProcessed} rooms.`;
 		};
 
 
@@ -9194,3 +9339,4 @@ module.exports.loop = function () {
 
 	Stats_CPU.Finish();
 };
+
