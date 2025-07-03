@@ -90,6 +90,14 @@ To set reaction targets, "mineral" is the mineral's abbreviation, "amount" is th
 
 `resources.lab_target(mineral, amount, priority);`
 
+#### Factories
+
+Rooms with factories (RCL 7+) can automatically produce commodities using the factory system. The system dynamically queries the Screeps COMMODITIES API to get recipes and automatically assigns factories to produce your target commodities. Couriers load required components and factory operators move produced commodities to storage.
+
+To set production targets, "commodity" is the commodity name (e.g., 'wire', 'switch', 'transistor', 'microchip', 'circuit', 'device'), "amount" is the target amount to produce, and "priority" is the production priority (1-100, lower = higher priority):
+
+`factories.set_production(commodity, amount, priority);`
+
 #### Terminals
 
 Once you have reach RCL 6 a courier will spawn and begin to automatically do a lot of functions for you. For example, if you set up mineral reactions, the code will automatically request other rooms with terminals to load any excess minerals used for the reaction, and send it over! Also, if any rooms have an excess of energy, you can set the "cap_amount" so that when a room reaches the energy cap, it will start to overflow energy into other rooms:
