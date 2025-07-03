@@ -89,6 +89,14 @@ isPulse_Blueprint = function () {
 	return _.get(Memory, ["hive", "pulses", "blueprint", "active"], true);
 };
 
+isPulse_Highway = function () {
+	return _.get(Memory, ["hive", "pulses", "highway", "active"], true);
+};
+
+isPulse_HighwayHarvest = function () {
+	return _.get(Memory, ["hive", "pulses", "highway_harvest", "active"], true);
+};
+
 getReagents = function (mineral) {
 	for (let r1 in REACTIONS) {
 		for (let r2 in REACTIONS[r1]) {
@@ -2879,6 +2887,363 @@ let Creep_Roles = {
 		}
 	},
 
+	HighwayScout: function (creep) {
+		// Initialize scout if needed
+		if (!creep.memory.scout_initialized) {
+			this.initializeHighwayScout(creep);
+		}
+
+		// Check if we should return to colony (low energy, too old, etc.)
+		if (this.shouldReturnToColony(creep)) {
+			this.returnToColony(creep);
+			return;
+		}
+
+		// Scan current room for resources
+		this.scanRoomAsScout(creep);
+
+		// Check for portals to explore
+		if (this.checkForPortals(creep)) {
+			return;
+		}
+
+		// Continue scouting in current direction
+		this.continueScouting(creep);
+	},
+
+	// Initialize a new highway scout
+	initializeHighwayScout: function (creep) {
+		// Find the nearest highway room
+		let nearestHighway = this.findNearestHighway(creep.room.name);
+		
+		if (nearestHighway) {
+			// Set initial target to the nearest highway
+			creep.memory.target_room = nearestHighway;
+			creep.memory.scout_direction = this.getDirectionToRoom(creep.room.name, nearestHighway);
+			creep.memory.scout_initialized = true;
+			creep.memory.scout_start_time = Game.time;
+			console.log(`<font color=\"#00FF00\">[Highway]</font> Scout ${creep.name} initialized, heading to ${nearestHighway}`);
+		} else {
+			// No highway found, pick a random direction
+			let directions = ['1', '3', '5', '7']; // N, E, S, W
+			creep.memory.scout_direction = directions[Math.floor(Math.random() * directions.length)];
+			creep.memory.scout_initialized = true;
+			creep.memory.scout_start_time = Game.time;
+			console.log(`<font color=\"#00FF00\">[Highway]</font> Scout ${creep.name} initialized, exploring in direction ${creep.memory.scout_direction}`);
+		}
+	},
+
+	// Find the nearest highway room
+	findNearestHighway: function (roomName) {
+		let exits = Game.map.describeExits(roomName);
+		let highwayRooms = [];
+		
+		// Check all adjacent rooms
+		for (let direction in exits) {
+			let adjacentRoom = exits[direction];
+			if (this.isHighwayRoom(adjacentRoom)) {
+				highwayRooms.push(adjacentRoom);
+			}
+		}
+		
+		// Return the first highway room found
+		return highwayRooms.length > 0 ? highwayRooms[0] : null;
+	},
+
+	// Check if a room is a highway room
+	isHighwayRoom: function (roomName) {
+		// Highway rooms are typically named with patterns like W1N1, E1S1, etc.
+		// They're usually adjacent to regular rooms
+		let match = roomName.match(/^[WE](\d+)[NS](\d+)$/);
+		if (match) {
+			let x = parseInt(match[1]);
+			let y = parseInt(match[2]);
+			// Highway rooms are typically at regular intervals
+			return (x % 10 === 0) || (y % 10 === 0);
+		}
+		return false;
+	},
+
+	// Get direction from one room to another
+	getDirectionToRoom: function (fromRoom, toRoom) {
+		let exits = Game.map.describeExits(fromRoom);
+		for (let direction in exits) {
+			if (exits[direction] === toRoom) {
+				return direction;
+			}
+		}
+		return null;
+	},
+
+	// Check if scout should return to colony
+	shouldReturnToColony: function (creep) {
+		// Return if scout is too old (more than 1000 ticks)
+		if (Game.time - creep.memory.scout_start_time > 1000) {
+			return true;
+		}
+		
+		// Return if scout is low on energy (for future energy-based scouts)
+		if (creep.store && creep.store.getFreeCapacity() < creep.store.getCapacity() * 0.2) {
+			return true;
+		}
+		
+		return false;
+	},
+
+	// Return scout to colony
+	returnToColony: function (creep) {
+		if (creep.room.name === creep.memory.colony) {
+			// Scout has returned, can be recycled
+			console.log(`<font color=\"#00FF00\">[Highway]</font> Scout ${creep.name} returned to colony, recycling`);
+			creep.suicide();
+		} else {
+			// Move toward colony
+			creep.moveTo(new RoomPosition(25, 25, creep.memory.colony), {
+				ignoreCreeps: true,
+				reusePath: 10,
+				visualizePathStyle: { stroke: '#00ff00' }
+			});
+		}
+	},
+
+	// Check for portals to explore
+	checkForPortals: function (creep) {
+		let portals = creep.room.find(FIND_STRUCTURES, {
+			filter: s => s.structureType === STRUCTURE_PORTAL
+		});
+		
+		for (let portal of portals) {
+			if (portal.destination && portal.destination.shard === Game.shard.name) {
+				// Found a portal to same shard, explore it
+				console.log(`<font color=\"#00FF00\">[Highway]</font> Scout ${creep.name} found portal to ${portal.destination.roomName}, exploring`);
+				creep.moveTo(portal.pos, {
+					ignoreCreeps: true,
+					reusePath: 5,
+					visualizePathStyle: { stroke: '#ffff00' }
+				});
+				return true;
+			}
+		}
+		
+		return false;
+	},
+
+	// Continue scouting in current direction
+	continueScouting: function (creep) {
+		// Get exits from current room
+		let exits = Game.map.describeExits(creep.room.name);
+		let targetRoom = exits[creep.memory.scout_direction];
+		
+		if (targetRoom) {
+			// Move toward the exit in our scouting direction
+			let exitPos = this.getExitPosition(creep.room.name, creep.memory.scout_direction);
+			creep.moveTo(exitPos, {
+				ignoreCreeps: true,
+				reusePath: 5,
+				visualizePathStyle: { stroke: '#ff0000' }
+			});
+			
+			// If we're close to the exit, move into the next room
+			if (creep.pos.getRangeTo(exitPos) <= 1) {
+				creep.move(creep.pos.getDirectionTo(exitPos));
+			}
+		} else {
+			// No exit in this direction, pick a new random direction
+			let directions = ['1', '3', '5', '7'];
+			creep.memory.scout_direction = directions[Math.floor(Math.random() * directions.length)];
+		}
+	},
+
+	// Get exit position for a direction
+	getExitPosition: function (roomName, direction) {
+		switch (direction) {
+			case '1': return new RoomPosition(25, 0, roomName);   // North
+			case '3': return new RoomPosition(49, 25, roomName);  // East
+			case '5': return new RoomPosition(25, 49, roomName);  // South
+			case '7': return new RoomPosition(0, 25, roomName);   // West
+			default: return new RoomPosition(25, 25, roomName);
+		}
+	},
+
+	HighwayHarvester: function (creep) {
+		if (creep.memory.harvest_site) {
+			let harvest = Memory.sites.highway_harvest[creep.memory.harvest_site];
+			if (!harvest) {
+				creep.suicide();
+				return;
+			}
+
+			let opportunity = harvest.opportunity;
+			let target = null;
+
+			// Get the target resource
+			if (opportunity.type === "deposit") {
+				target = Game.getObjectById(opportunity.id);
+			} else if (opportunity.type === "power_bank") {
+				target = Game.getObjectById(opportunity.id);
+			}
+
+			if (!target) {
+				// Target no longer exists, return to colony
+				if (creep.room.name != creep.memory.colony) {
+					creep.travelToRoom(creep.memory.colony, true);
+				} else {
+					creep.suicide();
+				}
+				return;
+			}
+
+			// Harvest the resource
+			if (creep.pos.inRangeTo(target, 1)) {
+				if (opportunity.type === "deposit") {
+					creep.harvest(target);
+				} else if (opportunity.type === "power_bank") {
+					creep.attack(target);
+				}
+			} else {
+				creep.travel(target);
+			}
+		}
+	},
+
+	HighwayCarrier: function (creep) {
+		if (creep.memory.harvest_site) {
+			let harvest = Memory.sites.highway_harvest[creep.memory.harvest_site];
+			if (!harvest) {
+				creep.suicide();
+				return;
+			}
+
+			let opportunity = harvest.opportunity;
+			let target = null;
+
+			// Get the target resource
+			if (opportunity.type === "deposit") {
+				target = Game.getObjectById(opportunity.id);
+			} else if (opportunity.type === "power_bank") {
+				target = Game.getObjectById(opportunity.id);
+			}
+
+			if (!target) {
+				// Target no longer exists, return to colony
+				if (creep.room.name != creep.memory.colony) {
+					creep.travelToRoom(creep.memory.colony, true);
+				} else {
+					// Deposit any carried resources and suicide
+					this.depositCarriedResources(creep);
+					creep.suicide();
+				}
+				return;
+			}
+
+			// Pick up resources from the target
+			if (creep.pos.inRangeTo(target, 1)) {
+				if (opportunity.type === "deposit") {
+					creep.pickup(target);
+				} else if (opportunity.type === "power_bank") {
+					// Power banks need to be attacked to drop power
+					// The harvester should handle this, carrier just picks up dropped power
+					let droppedPower = creep.pos.findInRange(FIND_DROPPED_RESOURCES, 1, {
+						filter: r => r.resourceType === RESOURCE_POWER
+					});
+					if (droppedPower.length > 0) {
+						creep.pickup(droppedPower[0]);
+					}
+				}
+			} else {
+				creep.travel(target);
+			}
+
+			// If full, return to colony
+			if (_.sum(creep.carry) >= creep.carryCapacity * 0.8) {
+				if (creep.room.name != creep.memory.colony) {
+					creep.travelToRoom(creep.memory.colony, true);
+				} else {
+					this.depositCarriedResources(creep);
+				}
+			}
+		}
+	},
+
+	// Helper function to deposit carried resources
+	depositCarriedResources: function (creep) {
+		for (let resource in creep.carry) {
+			if (creep.carry[resource] > 0) {
+				let storage = creep.room.storage;
+				if (storage) {
+					creep.transfer(storage, resource);
+				} else {
+					creep.drop(resource);
+				}
+			}
+		}
+	},
+
+	// Helper function for highway scouts to scan rooms
+	scanRoomAsScout: function (creep) {
+		let room = creep.room;
+		let opportunities = [];
+		let newDiscoveries = [];
+
+		// Check if we've already scanned this room recently
+		let existingOpportunity = Memory.hive.highway_opportunities[room.name];
+		let lastScout = existingOpportunity ? existingOpportunity.last_scout : 0;
+		let scanCooldown = 1000; // Only log new discoveries if we haven't scanned recently
+		let isNewScan = (Game.time - lastScout) > scanCooldown;
+
+		// Scan for deposits (includes raw commodities: Metal, Silicon, Biomass, Mist)
+		let deposits = room.find(FIND_DEPOSITS);
+		_.each(deposits, deposit => {
+			if (deposit.amount > 0) {
+				opportunities.push({
+					type: "deposit",
+					id: deposit.id,
+					resource: deposit.depositType,
+					amount: deposit.amount,
+					decay: deposit.ticksToDecay,
+					pos: { x: deposit.pos.x, y: deposit.pos.y, roomName: deposit.pos.roomName }
+				});
+				if (isNewScan) {
+					newDiscoveries.push(`${deposit.depositType} deposit (amount: ${deposit.amount})`);
+				}
+			}
+		});
+
+		// Scan for power banks
+		let powerBanks = room.find(FIND_STRUCTURES, {
+			filter: s => s.structureType == STRUCTURE_POWER_BANK
+		});
+		_.each(powerBanks, powerBank => {
+			if (powerBank.power > 0) {
+				opportunities.push({
+					type: "power_bank",
+					id: powerBank.id,
+					resource: "power",
+					amount: powerBank.power,
+					decay: powerBank.ticksToDecay,
+					pos: { x: powerBank.pos.x, y: powerBank.pos.y, roomName: powerBank.pos.roomName }
+				});
+				if (isNewScan) {
+					newDiscoveries.push(`power bank (power: ${powerBank.power})`);
+				}
+			}
+		});
+
+		// Update memory with discovered opportunities
+		if (opportunities.length > 0) {
+			_.set(Memory, ["hive", "highway_opportunities", room.name], {
+				colony: creep.memory.colony,
+				last_scout: Game.time,
+				opportunities: opportunities
+			});
+			
+			// Only log if this is a new discovery
+			if (isNewScan && newDiscoveries.length > 0) {
+				console.log(`<font color=\"#00FF00\">[Highway]</font> Scout discovered ${newDiscoveries.join(', ')} in ${room.name}`);
+			}
+		}
+	},
+
 	Worker: function (creep, isSafe) {
 		let hostile = isSafe ? null
 			: _.head(creep.pos.findInRange(FIND_HOSTILE_CREEPS, 5, {
@@ -3964,12 +4329,19 @@ let Sites = {
 
 
 			runCreeps: function (rmColony, listCreeps, listSpawnRoute) {
+				// Add highway scouts that belong to this colony
+				let highwayScouts = _.filter(Game.creeps, creep => {
+					return creep.memory.role == "highway_scout" && creep.memory.colony == rmColony;
+				});
+				listCreeps = listCreeps.concat(highwayScouts);
+				
 				_.each(listCreeps, creep => {
 					_.set(creep, ["memory", "list_route"], listSpawnRoute);
 
 					switch (_.get(creep, ["memory", "role"])) {
 						case "worker": Creep_Roles.Worker(creep); break;
 						case "healer": Creep_Roles.Healer(creep, true); break;
+						case "highway_scout": Creep_Roles.HighwayScout(creep); break;
 
 						case "soldier": case "paladin":
 							Creep_Roles.Soldier(creep, false, true);
@@ -4575,6 +4947,9 @@ let Sites = {
 
 					switch (_.get(creep, ["memory", "role"])) {
 						case "scout": Creep_Roles.Scout(creep); break;
+						case "highway_scout": Creep_Roles.HighwayScout(creep); break;
+						case "highway_harvester": Creep_Roles.HighwayHarvester(creep); break;
+						case "highway_carrier": Creep_Roles.HighwayCarrier(creep); break;
 						case "extractor": Creep_Roles.Extractor(creep, is_safe); break;
 						case "reserver": Creep_Roles.Reserver(creep); break;
 						case "healer": Creep_Roles.Healer(creep, true); break;
@@ -6241,6 +6616,561 @@ let Sites = {
 
 
 /* ***********************************************************
+ *	[sec04b] DEFINITIONS: HIGHWAY SCOUTING & HARVESTING
+ * *********************************************************** */
+
+let Highway = {
+
+	// Main highway scouting function
+	Run: function () {
+		if (!isPulse_Highway())
+			return;
+
+		Stats_CPU.Start("Hive", "Highway-Run");
+
+		// Get all level 7+ colonies
+		let eligibleColonies = _.filter(Game.rooms, room => {
+			return room.controller != null && room.controller.my && room.controller.level >= 7;
+		});
+
+		_.each(eligibleColonies, colony => {
+			this.scoutHighwayRooms(colony.name);
+		});
+
+		// Clean up expired opportunities
+		this.cleanupExpiredOpportunities();
+
+		Stats_CPU.End("Hive", "Highway-Run");
+	},
+
+	// Scout highway rooms connected to a colony
+	scoutHighwayRooms: function (colonyName) {
+		let colony = Game.rooms[colonyName];
+		if (!colony) return;
+
+		// Get connected highway rooms
+		let highwayRooms = this.getConnectedHighwayRooms(colonyName);
+		
+		_.each(highwayRooms, roomName => {
+			// Find the closest eligible colony for this room
+			let closestColony = this.getClosestEligibleColony(roomName);
+			if (closestColony) {
+				this.scoutRoom(closestColony.name, roomName);
+			}
+		});
+	},
+
+	// Get the closest eligible colony to a target room
+	getClosestEligibleColony: function (targetRoom) {
+		let eligibleColonies = _.filter(Game.rooms, room => {
+			return room.controller != null && room.controller.my && room.controller.level >= 7;
+		});
+		
+		if (eligibleColonies.length === 0) {
+			return null;
+		}
+		
+		// Find the closest eligible colony to the target room
+		return _.head(_.sortBy(eligibleColonies, colony => {
+			return Game.map.getRoomLinearDistance(colony.name, targetRoom);
+		}));
+	},
+
+	// Get highway rooms connected to a colony (including through portals)
+	getConnectedHighwayRooms: function (colonyName) {
+		let connectedRooms = [];
+		let colony = Game.rooms[colonyName];
+		if (!colony) return connectedRooms;
+
+		// Check for portals in the colony
+		let portals = colony.find(FIND_STRUCTURES, {
+			filter: s => s.structureType == STRUCTURE_PORTAL
+		});
+
+		_.each(portals, portal => {
+			// Only explore portals within the same shard
+			if (portal.destination && portal.destination.shard == Game.shard.name) {
+				connectedRooms.push(portal.destination.roomName);
+			}
+		});
+
+		// Add adjacent rooms (highway rooms are typically adjacent)
+		let exits = Game.map.describeExits(colonyName);
+		_.each(exits, (exitRoom, direction) => {
+			if (!connectedRooms.includes(exitRoom)) {
+				connectedRooms.push(exitRoom);
+			}
+		});
+
+		return connectedRooms;
+	},
+
+	// Scout a specific room for resources
+	scoutRoom: function (colonyName, roomName) {
+		// Check if we need to scout this room
+		let lastScout = _.get(Memory, ["hive", "highway_opportunities", roomName, "last_scout"], 0);
+		let scoutInterval = 1000; // Scout every 1000 ticks
+
+		if (Game.time - lastScout < scoutInterval) {
+			return;
+		}
+
+		// Check if room is visible
+		let room = Game.rooms[roomName];
+		if (!room) {
+			// Room not visible, spawn a scout if we don't have one
+			this.spawnHighwayScout(colonyName);
+			return;
+		}
+
+		// Room is visible, scan for resources
+		this.scanRoomForResources(colonyName, roomName, room);
+	},
+
+	// Spawn a highway scout
+	spawnHighwayScout: function (colonyName, targetRoom) {
+		// Check if we already have enough scouts from this colony
+		let existingScouts = _.filter(Game.creeps, creep => {
+			return creep.memory.role == "highway_scout" && 
+				   creep.memory.colony == colonyName;
+		});
+
+		if (existingScouts.length >= 3) {
+			return; // Already have enough scouts from this colony
+		}
+
+		// Add spawn request for highway scout
+		Memory["hive"]["spawn_requests"].push({
+			room: colonyName,
+			listRooms: [colonyName],
+			priority: 5, // High priority for scouting
+			level: 1,
+			scale: false,
+			body: "scout",
+			name: null,
+			args: { 
+				role: "highway_scout", 
+				colony: colonyName
+			}
+		});
+	},
+
+	// Scan a visible room for resources
+	scanRoomForResources: function (colonyName, roomName, room) {
+		let opportunities = [];
+
+		// Scan for deposits
+		let deposits = room.find(FIND_DEPOSITS);
+		_.each(deposits, deposit => {
+			if (deposit.amount > 0) {
+				opportunities.push({
+					type: "deposit",
+					id: deposit.id,
+					resource: deposit.depositType,
+					amount: deposit.amount,
+					decay: deposit.ticksToDecay,
+					pos: { x: deposit.pos.x, y: deposit.pos.y, roomName: deposit.pos.roomName },
+					value: this.calculateResourceValue(deposit.depositType, deposit.amount)
+				});
+			}
+		});
+
+		// Scan for power banks
+		let powerBanks = room.find(FIND_STRUCTURES, {
+			filter: s => s.structureType == STRUCTURE_POWER_BANK
+		});
+		_.each(powerBanks, powerBank => {
+			if (powerBank.power > 0) {
+				opportunities.push({
+					type: "power_bank",
+					id: powerBank.id,
+					resource: "power",
+					amount: powerBank.power,
+					decay: powerBank.ticksToDecay,
+					pos: { x: powerBank.pos.x, y: powerBank.pos.y, roomName: powerBank.pos.roomName },
+					value: this.calculateResourceValue("power", powerBank.power)
+				});
+			}
+		});
+
+		// Update memory with discovered opportunities
+		if (opportunities.length > 0) {
+			_.set(Memory, ["hive", "highway_opportunities", roomName], {
+				colony: colonyName,
+				last_scout: Game.time,
+				opportunities: opportunities
+			});
+		} else {
+			// No opportunities found, but still update last scout time
+			_.set(Memory, ["hive", "highway_opportunities", roomName], {
+				colony: colonyName,
+				last_scout: Game.time,
+				opportunities: []
+			});
+		}
+	},
+
+	// Calculate resource value for prioritization
+	calculateResourceValue: function (resourceType, amount) {
+		let baseValue = 1;
+		
+		switch (resourceType) {
+			case "power":
+				baseValue = 10;
+				break;
+			case "ops":
+				baseValue = 8;
+				break;
+			case "utrium":
+			case "lemergium":
+			case "zynthium":
+			case "keanium":
+			case "ghodium_melt":
+				baseValue = 5;
+				break;
+			case "oxidant":
+			case "reductant":
+			case "purifier":
+			case "emanation":
+			case "essence":
+			case "spirit":
+			case "catalyst":
+				baseValue = 3;
+				break;
+			default:
+				baseValue = 1;
+		}
+
+		return baseValue * amount;
+	},
+
+	// Clean up expired opportunities
+	cleanupExpiredOpportunities: function () {
+		_.each(Memory.hive.highway_opportunities, (data, roomName) => {
+			if (data.opportunities) {
+				data.opportunities = _.filter(data.opportunities, opportunity => {
+					return opportunity.decay > 0;
+				});
+				
+				// Remove room entry if no opportunities remain
+				if (data.opportunities.length === 0) {
+					delete Memory.hive.highway_opportunities[roomName];
+				}
+			}
+		});
+	},
+
+	// Evaluate and prioritize opportunities for harvesting
+	evaluateOpportunities: function () {
+		if (!isPulse_HighwayHarvest())
+			return;
+
+		Stats_CPU.Start("Hive", "Highway-Evaluate");
+
+		let allOpportunities = [];
+		
+		// Collect all opportunities from memory
+		_.each(Memory.hive.highway_opportunities, (data, roomName) => {
+			if (data.opportunities) {
+				_.each(data.opportunities, opportunity => {
+					allOpportunities.push({
+						...opportunity,
+						roomName: roomName,
+						colony: data.colony
+					});
+				});
+			}
+		});
+
+		// Sort by value and decay time
+		allOpportunities.sort((a, b) => {
+			// Prioritize by value, then by decay time (earlier decay = higher priority)
+			if (a.value !== b.value) {
+				return b.value - a.value;
+			}
+			return a.decay - b.decay;
+		});
+
+		// Process top opportunities
+		_.each(allOpportunities.slice(0, 3), opportunity => {
+			this.evaluateOpportunity(opportunity);
+		});
+
+		Stats_CPU.End("Hive", "Highway-Evaluate");
+	},
+
+	// Evaluate a single opportunity for harvesting
+	evaluateOpportunity: function (opportunity) {
+		// Check if we already have a harvest team for this opportunity
+		let existingHarvest = _.find(Memory.sites.highway_harvest, harvest => {
+			return harvest.opportunity_id === opportunity.id;
+		});
+
+		if (existingHarvest) {
+			return; // Already being harvested
+		}
+
+		// Find the closest eligible colony for this opportunity
+		let closestColony = this.getClosestEligibleColony(opportunity.roomName);
+		if (!closestColony) {
+			return; // No eligible colonies
+		}
+
+		// Update opportunity with closest colony
+		opportunity.colony = closestColony.name;
+
+		// Calculate path from closest colony to opportunity
+		let path = this.calculatePath(closestColony.name, opportunity.roomName);
+		if (!path) {
+			return; // No viable path
+		}
+
+		// Check if we can harvest before decay
+		let travelTime = path.length * 2; // Rough estimate: 2 ticks per room
+		let harvestTime = this.estimateHarvestTime(opportunity);
+		let totalTime = travelTime + harvestTime;
+
+		if (totalTime > opportunity.decay) {
+			return; // Won't complete before decay
+		}
+
+		// Create harvest site
+		this.createHarvestSite(opportunity, path);
+	},
+
+	// Calculate path from colony to target room
+	calculatePath: function (colonyName, targetRoom) {
+		// Simple path calculation - can be enhanced with actual pathfinding
+		let path = [colonyName];
+		let currentRoom = colonyName;
+
+		// For now, assume direct connection or adjacent rooms
+		// In a real implementation, you'd use Game.map.findRoute
+		if (currentRoom !== targetRoom) {
+			path.push(targetRoom);
+		}
+
+		return path;
+	},
+
+	// Estimate time needed to harvest the resource
+	estimateHarvestTime: function (opportunity) {
+		let baseHarvestRate = 1; // 1 unit per tick per WORK part
+		let workParts = 5; // Assume 5 work parts for harvesting
+		let harvestRate = baseHarvestRate * workParts;
+		
+		return Math.ceil(opportunity.amount / harvestRate);
+	},
+
+	// Create a harvest site for an opportunity
+	createHarvestSite: function (opportunity, path) {
+		let harvestId = `highway_${opportunity.roomName}_${opportunity.id}`;
+		
+		_.set(Memory, ["sites", "highway_harvest", harvestId], {
+			colony: opportunity.colony,
+			target_room: opportunity.roomName,
+			opportunity_id: opportunity.id,
+			opportunity: opportunity,
+			path: path,
+			created: Game.time,
+			state: "spawning",
+			creeps: {
+				harvester: 0,
+				carrier: 0,
+				scout: 0
+			}
+		});
+
+		console.log(`<font color=\"#00FF00\">[Highway]</font> Created harvest site ${harvestId} for ${opportunity.resource} in ${opportunity.roomName}`);
+	}
+};
+
+// Highway Harvest Site Management
+let HighwayHarvest = {
+
+	// Main highway harvest function
+	Run: function () {
+		if (!isPulse_HighwayHarvest())
+			return;
+
+		Stats_CPU.Start("Hive", "HighwayHarvest-Run");
+
+		_.each(Memory.sites.highway_harvest, (harvest, harvestId) => {
+			this.runHarvestSite(harvestId, harvest);
+		});
+
+		Stats_CPU.End("Hive", "HighwayHarvest-Run");
+	},
+
+	// Run a single harvest site
+	runHarvestSite: function (harvestId, harvest) {
+		switch (harvest.state) {
+			case "spawning":
+				this.runSpawning(harvestId, harvest);
+				break;
+			case "traveling":
+				this.runTraveling(harvestId, harvest);
+				break;
+			case "harvesting":
+				this.runHarvesting(harvestId, harvest);
+				break;
+			case "returning":
+				this.runReturning(harvestId, harvest);
+				break;
+			case "complete":
+				this.cleanupHarvestSite(harvestId, harvest);
+				break;
+		}
+	},
+
+	// Handle spawning phase
+	runSpawning: function (harvestId, harvest) {
+		let listCreeps = _.filter(Game.creeps, c => c.memory.harvest_site == harvestId);
+		
+		// Count current creeps
+		harvest.creeps.harvester = _.filter(listCreeps, c => c.memory.role == "highway_harvester").length;
+		harvest.creeps.carrier = _.filter(listCreeps, c => c.memory.role == "highway_carrier").length;
+		harvest.creeps.scout = _.filter(listCreeps, c => c.memory.role == "highway_scout").length;
+
+		// Spawn required creeps
+		this.spawnHarvestTeam(harvestId, harvest);
+
+		// Check if team is ready
+		if (harvest.creeps.harvester >= 1 && harvest.creeps.carrier >= 1) {
+			harvest.state = "traveling";
+			console.log(`<font color=\"#00FF00\">[Highway]</font> Harvest team for ${harvestId} ready, starting travel`);
+		}
+	},
+
+	// Spawn harvest team
+	spawnHarvestTeam: function (harvestId, harvest) {
+		let colony = harvest.colony;
+		let listSpawnRooms = [colony];
+
+		// Spawn harvester
+		if (harvest.creeps.harvester < 1) {
+			Memory["hive"]["spawn_requests"].push({
+				room: colony,
+				listRooms: listSpawnRooms,
+				priority: 8, // High priority for highway harvesting
+				level: 3, // Level 3 for better work parts
+				scale: false,
+				body: "worker",
+				name: null,
+				args: {
+					role: "highway_harvester",
+					colony: colony,
+					harvest_site: harvestId,
+					target_room: harvest.target_room,
+					opportunity_id: harvest.opportunity_id
+				}
+			});
+		}
+
+		// Spawn carrier
+		if (harvest.creeps.carrier < 1) {
+			Memory["hive"]["spawn_requests"].push({
+				room: colony,
+				listRooms: listSpawnRooms,
+				priority: 8,
+				level: 2,
+				scale: false,
+				body: "carrier",
+				name: null,
+				args: {
+					role: "highway_carrier",
+					colony: colony,
+					harvest_site: harvestId,
+					target_room: harvest.target_room,
+					opportunity_id: harvest.opportunity_id
+				}
+			});
+		}
+	},
+
+	// Handle traveling phase
+	runTraveling: function (harvestId, harvest) {
+		let listCreeps = _.filter(Game.creeps, c => c.memory.harvest_site == harvestId);
+		let allInTargetRoom = true;
+
+		_.each(listCreeps, creep => {
+			if (creep.room.name !== harvest.target_room) {
+				allInTargetRoom = false;
+			}
+		});
+
+		if (allInTargetRoom) {
+			harvest.state = "harvesting";
+			console.log(`<font color=\"#00FF00\">[Highway]</font> Harvest team for ${harvestId} arrived, starting harvest`);
+		}
+	},
+
+	// Handle harvesting phase
+	runHarvesting: function (harvestId, harvest) {
+		// Check if opportunity still exists
+		let opportunity = harvest.opportunity;
+		let target = null;
+
+		if (opportunity.type === "deposit") {
+			target = Game.getObjectById(opportunity.id);
+		} else if (opportunity.type === "power_bank") {
+			target = Game.getObjectById(opportunity.id);
+		}
+
+		if (!target || (target.amount !== undefined && target.amount <= 0) || 
+			(target.power !== undefined && target.power <= 0)) {
+			harvest.state = "returning";
+			console.log(`<font color=\"#00FF00\">[Highway]</font> Resource depleted for ${harvestId}, returning`);
+			return;
+		}
+
+		// Check if carriers are full
+		let listCreeps = _.filter(Game.creeps, c => c.memory.harvest_site == harvestId);
+		let carriers = _.filter(listCreeps, c => c.memory.role == "highway_carrier");
+		let allCarriersFull = carriers.length > 0 && _.every(carriers, c => _.sum(c.carry) >= c.carryCapacity * 0.8);
+
+		if (allCarriersFull) {
+			harvest.state = "returning";
+			console.log(`<font color=\"#00FF00\">[Highway]</font> Carriers full for ${harvestId}, returning`);
+		}
+	},
+
+	// Handle returning phase
+	runReturning: function (harvestId, harvest) {
+		let listCreeps = _.filter(Game.creeps, c => c.memory.harvest_site == harvestId);
+		let allReturned = true;
+
+		_.each(listCreeps, creep => {
+			if (creep.room.name !== harvest.colony) {
+				allReturned = false;
+			}
+		});
+
+		if (allReturned) {
+			harvest.state = "complete";
+			console.log(`<font color=\"#00FF00\">[Highway]</font> Harvest team for ${harvestId} returned, completing`);
+		}
+	},
+
+	// Clean up completed harvest site
+	cleanupHarvestSite: function (harvestId, harvest) {
+		// Remove creeps from this harvest site
+		_.each(Game.creeps, creep => {
+			if (creep.memory.harvest_site === harvestId) {
+				delete creep.memory.harvest_site;
+			}
+		});
+
+		// Remove from memory
+		delete Memory.sites.highway_harvest[harvestId];
+
+		console.log(`<font color=\"#00FF00\">[Highway]</font> Cleaned up harvest site ${harvestId}`);
+	}
+};
+
+
+
+/* ***********************************************************
  *	[sec05a] DEFINITIONS: HIVE CONTROL
  * *********************************************************** */
 
@@ -6331,6 +7261,8 @@ let Control = {
 		this.setPulse("spawn", 14, 30);
 		this.setPulse("lab", 1999, 2000);
 		this.setPulse("blueprint", 99, 500);
+		this.setPulse("highway", 199, 400);
+		this.setPulse("highway_harvest", 99, 200);
 
 		if (_.get(Memory, ["rooms"]) == null) _.set(Memory, ["rooms"], new Object());
 		if (_.get(Memory, ["hive", "allies"]) == null) _.set(Memory, ["hive", "allies"], new Array());
@@ -6338,6 +7270,8 @@ let Control = {
 		if (_.get(Memory, ["sites", "mining"]) == null) _.set(Memory, ["sites", "mining"], new Object());
 		if (_.get(Memory, ["sites", "colonization"]) == null) _.set(Memory, ["sites", "colonization"], new Object());
 		if (_.get(Memory, ["sites", "combat"]) == null) _.set(Memory, ["sites", "combat"], new Object());
+		if (_.get(Memory, ["hive", "highway_opportunities"]) == null) _.set(Memory, ["hive", "highway_opportunities"], new Object());
+		if (_.get(Memory, ["sites", "highway_harvest"]) == null) _.set(Memory, ["sites", "highway_harvest"], new Object());
 
 		for (let r in Game["rooms"])
 			_.set(Memory, ["rooms", r, "population"], null);
@@ -6386,6 +7320,12 @@ let Control = {
 	runCombat: function () {
 		for (let memory_id in _.get(Memory, ["sites", "combat"]))
 			Sites.Combat(memory_id);
+	},
+
+	runHighway: function () {
+		Highway.Run();
+		Highway.evaluateOpportunities();
+		HighwayHarvest.Run();
 	},
 
 	populationTally: function (rmName, popTarget, popActual) {
@@ -7532,6 +8472,7 @@ let Console = {
 		help_main.push(`- "pause" \t Utilities for pausing specific creep or colony functions`);
 		help_main.push(`- "profiler" \t Built-in CPU profiler`);
 		help_main.push(`- "resources" \t Management of resources, empire-wide sharing and/or selling to market`);
+		help_main.push(`- "highway" \t Highway scouting and remote resource collection`);
 		help_main.push(`- "visuals" \t Manage visual objects (RoomVisual class)`);
 		help_main.push("");
 
@@ -8451,6 +9392,174 @@ let Console = {
 
 		help_resources.push("resources.overflow_cap(capAmount)");
 
+		// Highway system console commands
+		highway = new Object();
+		help_highway = new Array();
+
+		help_highway.push("highway.status()");
+		highway.status = function () {
+			let opportunities = Memory.hive.highway_opportunities;
+			let harvestSites = Memory.sites.highway_harvest;
+			
+			let output = `<font color=\"#00FF00\">[Highway Status]</font><br>`;
+			output += `Opportunities: ${Object.keys(opportunities || {}).length}<br>`;
+			output += `Active Harvest Sites: ${Object.keys(harvestSites || {}).length}<br>`;
+			
+			if (opportunities) {
+				output += `<br><b>Opportunities:</b><br>`;
+				_.each(opportunities, (data, roomName) => {
+					output += `${roomName}: ${data.opportunities ? data.opportunities.length : 0} resources<br>`;
+				});
+			}
+			
+			if (harvestSites) {
+				output += `<br><b>Harvest Sites:</b><br>`;
+				_.each(harvestSites, (harvest, harvestId) => {
+					output += `${harvestId}: ${harvest.state} (${harvest.opportunity ? harvest.opportunity.resource : 'unknown'})<br>`;
+				});
+			}
+			
+			return output;
+		};
+
+		help_highway.push("highway.clear_opportunities()");
+		highway.clear_opportunities = function () {
+			Memory.hive.highway_opportunities = {};
+			return `<font color=\"#D3FFA3\">[Console]</font> Cleared all highway opportunities.`;
+		};
+
+		help_highway.push("highway.clear_harvest_sites()");
+		highway.clear_harvest_sites = function () {
+			Memory.sites.highway_harvest = {};
+			return `<font color=\"#D3FFA3\">[Console]</font> Cleared all highway harvest sites.`;
+		};
+
+		help_highway.push("highway.force_scout()");
+		highway.force_scout = function () {
+			let colonies = _.filter(Game.rooms, room => {
+				return room.controller != null && room.controller.my && room.controller.level >= 7;
+			});
+			
+			if (colonies.length === 0) {
+				return `<font color=\"#FF0000\">[Console]</font> No eligible colonies (level 7+) found.`;
+			}
+			
+			// Spawn a scout from the first eligible colony
+			let colony = colonies[0];
+			Highway.spawnHighwayScout(colony.name);
+			return `<font color=\"#D3FFA3\">[Console]</font> Forced scout spawn from ${colony.name}.`;
+		};
+
+		help_highway.push("highway.diagnose()");
+		highway.diagnose = function () {
+			let output = `<font color=\"#00FF00\">[Highway Diagnosis]</font><br>`;
+			
+			// Check pulse status
+			let highwayPulse = _.get(Memory, ["hive", "pulses", "highway", "active"], true);
+			let harvestPulse = _.get(Memory, ["hive", "pulses", "highway_harvest", "active"], true);
+			output += `Highway Pulse Active: ${highwayPulse}<br>`;
+			output += `Harvest Pulse Active: ${harvestPulse}<br>`;
+			
+			// Check for level 7+ colonies
+			let eligibleColonies = _.filter(Game.rooms, room => {
+				return room.controller != null && room.controller.my && room.controller.level >= 7;
+			});
+			output += `<br>Level 7+ Colonies: ${eligibleColonies.length}<br>`;
+			
+			if (eligibleColonies.length > 0) {
+				output += `Colonies: ${eligibleColonies.map(c => `${c.name} (L${c.controller.level})`).join(', ')}<br>`;
+			} else {
+				output += `<font color=\"#FF0000\">No level 7+ colonies found! Highway system requires level 7+ colonies.</font><br>`;
+			}
+			
+			// Check existing highway scouts
+			let existingScouts = _.filter(Game.creeps, creep => creep.memory.role == "highway_scout");
+			output += `<br>Existing Highway Scouts: ${existingScouts.length}<br>`;
+			
+			if (existingScouts.length > 0) {
+				output += `Scouts: ${existingScouts.map(s => `${s.name} -> ${s.memory.target_room} (from ${s.memory.colony})`).join(', ')}<br>`;
+			}
+			
+			// Check memory structures
+			let opportunities = Memory.hive.highway_opportunities || {};
+			let harvestSites = Memory.sites.highway_harvest || {};
+			output += `<br>Opportunities in Memory: ${Object.keys(opportunities).length}<br>`;
+			output += `Harvest Sites in Memory: ${Object.keys(harvestSites).length}<br>`;
+			
+			// Check spawn requests
+			let spawnRequests = Memory.hive.spawn_requests || [];
+			let highwayRequests = spawnRequests.filter(req => req.args && req.args.role && req.args.role.startsWith('highway'));
+			output += `<br>Highway Spawn Requests: ${highwayRequests.length}<br>`;
+			
+			if (highwayRequests.length > 0) {
+				output += `Requests: ${highwayRequests.map(req => `${req.args.role} for ${req.room}`).join(', ')}<br>`;
+			}
+			
+			return output;
+		};
+
+		help_highway.push("highway.debug_scout(creepName)");
+		highway.debug_scout = function (creepName) {
+			let creep = Game.creeps[creepName];
+			if (!creep) {
+				return `<font color=\"#FF0000\">[Console]</font> Creep ${creepName} not found.`;
+			}
+			
+			if (creep.memory.role != "highway_scout") {
+				return `<font color=\"#FF0000\">[Console]</font> ${creepName} is not a highway scout (role: ${creep.memory.role}).`;
+			}
+			
+			let output = `<font color=\"#00FF00\">[Highway Scout Debug]</font><br>`;
+			output += `Name: ${creep.name}<br>`;
+			output += `Current Room: ${creep.room.name}<br>`;
+			output += `Target Room: ${creep.memory.target_room}<br>`;
+			output += `Colony: ${creep.memory.colony}<br>`;
+			output += `Position: (${creep.pos.x}, ${creep.pos.y})<br>`;
+			output += `Fatigue: ${creep.fatigue}<br>`;
+			output += `Ticks to Live: ${creep.ticksToLive}<br>`;
+			
+			// Check if target room is visible
+			let targetRoom = Game.rooms[creep.memory.target_room];
+			output += `<br>Target Room Visible: ${targetRoom ? 'Yes' : 'No'}<br>`;
+			
+			// Check if scout should be moving
+			if (creep.room.name != creep.memory.target_room) {
+				output += `<br><font color=\"#FFFF00\">Scout should be traveling to ${creep.memory.target_room}</font><br>`;
+			} else {
+				output += `<br><font color=\"#00FF00\">Scout has reached target room</font><br>`;
+			}
+			
+			return output;
+		};
+
+		help_highway.push("highway.scan_room(roomName)");
+		highway.scan_room = function (roomName) {
+			let room = Game.rooms[roomName];
+			if (!room) {
+				return `<font color=\"#FF0000\">[Console]</font> Room ${roomName} is not visible.`;
+			}
+			
+			let output = `<font color=\"#00FF00\">[Room Scan]</font> ${roomName}<br>`;
+			
+			// Scan for deposits
+			let deposits = room.find(FIND_DEPOSITS);
+			output += `Deposits found: ${deposits.length}<br>`;
+			_.each(deposits, deposit => {
+				output += `- ${deposit.depositType}: ${deposit.amount} (decay: ${deposit.ticksToDecay})<br>`;
+			});
+			
+			// Scan for power banks
+			let powerBanks = room.find(FIND_STRUCTURES, {
+				filter: s => s.structureType == STRUCTURE_POWER_BANK
+			});
+			output += `Power banks found: ${powerBanks.length}<br>`;
+			_.each(powerBanks, powerBank => {
+				output += `- Power: ${powerBank.power} (decay: ${powerBank.ticksToDecay})<br>`;
+			});
+			
+			return output;
+		};
+
 		resources = new Object();
 		resources.overflow_cap = function (amount) {
 			_.set(Memory, ["resources", "to_overflow"], amount);
@@ -8797,6 +9906,7 @@ let Console = {
 					case "pause": menu = help_pause; break;
 					case "profiler": menu = help_profiler; break;
 					case "resources": menu = help_resources; break;
+					case "highway": menu = help_highway; break;
 					case "visuals": menu = help_visuals; break;
 				}
 			}
@@ -9147,6 +10257,7 @@ module.exports.loop = function () {
 	Control.runColonies();
 	Control.runColonizations();
 	Control.runCombat();
+	Control.runHighway();
 
 	Control.processSpawnRequests();
 	Control.processSpawnRenewing();
