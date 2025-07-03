@@ -363,6 +363,82 @@ Creep.prototype.runTask = function runTask() {
 					return;
 			}
 		}
+
+		case "factory_operate": {
+			let factory = Game.getObjectById(this.memory.task["id"]);
+			if (factory == null) {
+				delete this.memory.task;
+				return;
+			}
+
+			if (!this.pos.inRangeTo(factory, 1)) {
+				Stats_Visual.CreepSay(this, 'transfer');
+				this.travelTask(factory);
+				return;
+			}
+
+			// Check if factory has produced something and needs to be emptied
+			let producedCommodity = null;
+			for (let resource in factory.store) {
+				if (resource != "energy" && factory.store[resource] > 0) {
+					producedCommodity = resource;
+					break;
+				}
+			}
+
+			if (producedCommodity != null) {
+				// Try to transfer the produced commodity to storage
+				let storage = factory.room.storage;
+				if (storage != null) {
+					let result = this.transfer(storage, producedCommodity);
+					if (result == OK) {
+						Stats_Visual.CreepSay(this, 'transfer');
+					}
+				}
+			}
+
+			// Task continues until manually cleared or factory is empty
+			return;
+		}
+
+		case "factory_cleanup": {
+			let factory = Game.getObjectById(this.memory.task["id"]);
+			if (factory == null) {
+				delete this.memory.task;
+				return;
+			}
+
+			if (!this.pos.inRangeTo(factory, 1)) {
+				Stats_Visual.CreepSay(this, 'cleanup');
+				this.travelTask(factory);
+				return;
+			}
+
+			// Check if we need to withdraw a specific resource for cleanup
+			let resource = this.memory.task["resource"];
+			if (resource && factory.store[resource] > 0) {
+				let storage = factory.room.storage;
+				if (storage != null) {
+					let amount = this.memory.task["amount"] || factory.store[resource];
+					let result = this.withdraw(factory, resource, amount);
+					if (result == OK) {
+						Stats_Visual.CreepSay(this, 'cleanup');
+						
+						// Deposit to storage
+						this.memory.task = {
+							type: "deposit",
+							resource: resource,
+							id: storage.id,
+							timer: 60,
+							priority: 4
+						};
+					}
+				}
+			}
+
+			// Task continues until manually cleared
+			return;
+		}
 	}
 };
 
@@ -2996,6 +3072,49 @@ let Creep_Roles = {
 		}
 	},
 
+	Factory_Operator: function (creep) {
+		if (this.moveToDestination(creep))
+			return;
+
+		// Find factories in the room
+		let factories = _.filter(creep.room.find(FIND_MY_STRUCTURES), 
+			s => s.structureType == "factory");
+		
+		if (factories.length == 0) {
+			// No factories, just wait
+			creep.memory.task = creep.memory.task || creep.getTask_Wait(50);
+			creep.runTask(creep);
+			return;
+		}
+
+		// Check if any factory has produced commodities that need to be moved
+		let factoryWithCommodity = null;
+		for (let factory of factories) {
+			for (let resource in factory.store) {
+				if (resource != "energy" && factory.store[resource] > 0) {
+					factoryWithCommodity = factory;
+					break;
+				}
+			}
+			if (factoryWithCommodity) break;
+		}
+
+		if (factoryWithCommodity) {
+			// Move commodities from factory to storage
+			creep.memory.task = creep.memory.task || { 
+				type: "factory_operate", 
+				id: factoryWithCommodity.id, 
+				timer: 60, 
+				priority: 3 
+			};
+		} else {
+			// No commodities to move, just wait
+			creep.memory.task = creep.memory.task || creep.getTask_Wait(50);
+		}
+
+		creep.runTask(creep);
+	},
+
 	Extractor: function (creep, isSafe) {
 		let hostile = isSafe ? null
 			: _.head(creep.pos.findInRange(FIND_HOSTILE_CREEPS, 6, {
@@ -4537,6 +4656,10 @@ let Sites = {
 				this.runLabs(rmColony);
 				Stats_CPU.End(rmColony, "Industry-runLabs");
 
+				Stats_CPU.Start(rmColony, "Industry-runFactories");
+				this.runFactories(rmColony);
+				Stats_CPU.End(rmColony, "Industry-runFactories");
+
 				if (isPulse_Mid()) {
 					// Reset task list for recompilation
 					_.set(Memory, ["rooms", rmColony, "industry", "tasks"], new Array());
@@ -4551,6 +4674,10 @@ let Sites = {
 					_.set(Memory, ["rooms", rmColony, "industry", "tasks", "running"], new Object());
 					this.createLabTasks(rmColony);
 					Stats_CPU.End(rmColony, "Industry-createLabTasks");
+
+					Stats_CPU.Start(rmColony, "Industry-createFactoryTasks");
+					this.createFactoryTasks(rmColony);
+					Stats_CPU.End(rmColony, "Industry-createFactoryTasks");
 
 					Stats_CPU.Start(rmColony, "Industry-runTerminal");
 					this.runTerminal(rmColony);
@@ -4568,6 +4695,7 @@ let Sites = {
 
 				let popActual = new Object();
 				_.set(popActual, "courier", _.filter(listCreeps, (c) => c.memory.role == "courier" && (c.ticksToLive == undefined || c.ticksToLive > 80)).length);
+				_.set(popActual, "factory_operator", _.filter(listCreeps, (c) => c.memory.role == "factory_operator" && (c.ticksToLive == undefined || c.ticksToLive > 80)).length);
 
 				let popTarget = new Object();
 				let popSetting = _.get(Memory, ["rooms", rmColony, "set_population"]);
@@ -4592,6 +4720,19 @@ let Sites = {
 						level: popTarget["courier"]["level"],
 						scale: popTarget["courier"] == null ? true : popTarget["courier"]["scale"],
 						body: "courier", name: null, args: { role: "courier", room: rmColony }
+					});
+				}
+
+				// Spawn factory operators if there are factories and we need them
+				let factories = _.filter(Game.rooms[rmColony].find(FIND_MY_STRUCTURES), 
+					s => s.structureType == "factory");
+				if (factories.length > 0 && _.get(popActual, "factory_operator", 0) < 1) {
+					Memory["hive"]["spawn_requests"].push({
+						room: rmColony, listRooms: listSpawnRooms,
+						priority: 15,
+						level: 6,
+						scale: true,
+						body: "worker", name: null, args: { role: "factory_operator", room: rmColony }
 					});
 				}
 			},
@@ -5232,8 +5373,278 @@ let Sites = {
 				_.each(listCreeps, creep => {
 					if (creep.memory.role == "courier") {
 						Creep_Roles.Courier(creep);
+					} else if (creep.memory.role == "factory_operator") {
+						Creep_Roles.Factory_Operator(creep);
 					}
 				});
+			},
+
+			runFactories: function (rmColony) {
+				let factories = _.filter(Game.rooms[rmColony].find(FIND_MY_STRUCTURES), 
+					s => s.structureType == "factory");
+				
+				if (factories.length == 0) return;
+
+				// Initialize commodity cache if needed
+				if (_.get(Memory, ["resources", "factories", "commodity_cache"]) == null) {
+					this.cacheCommodityData();
+				}
+
+				let targets = _.get(Memory, ["resources", "factories", "targets"]);
+				if (targets == null || Object.keys(targets).length == 0) return;
+
+				// Sort targets by priority (lower number = higher priority)
+				let sortedTargets = _.sortBy(targets, "priority");
+
+				for (let target of sortedTargets) {
+					let commodity = target.commodity;
+					let current = 0;
+					_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+						current += room.store(commodity);
+					});
+
+					// If we've reached the target, skip this commodity
+					if (current >= target.amount) continue;
+
+					// Find a factory that can produce this commodity
+					for (let factory of factories) {
+						if (factory.cooldown > 0) continue;
+
+						// Check if factory has the required components to produce this commodity
+						let components = this.getCommodityComponents(commodity);
+						if (components == null) continue;
+
+						let hasComponents = true;
+						for (let component in components) {
+							let amount = components[component];
+							if (factory.store[component] < amount) {
+								hasComponents = false;
+								break;
+							}
+						}
+
+						if (hasComponents) {
+							// Try to produce the commodity
+							let result = factory.produce(commodity);
+							if (result == OK) {
+								// Only produce one commodity at a time
+								return;
+							}
+						}
+					}
+				}
+			},
+
+			createFactoryTasks: function (rmColony) {
+				let factories = _.filter(Game.rooms[rmColony].find(FIND_MY_STRUCTURES), 
+					s => s.structureType == "factory");
+				
+				if (factories.length == 0) {
+					return;
+				}
+
+				let targets = _.get(Memory, ["resources", "factories", "targets"]);
+				if (targets == null || Object.keys(targets).length == 0) {
+					console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: No factory targets set`);
+					return;
+				}
+
+				let storage = Game.rooms[rmColony].storage;
+				if (storage == null) {
+					console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: No storage found`);
+					return;
+				}
+
+				// Sort targets by priority
+				let sortedTargets = _.sortBy(targets, "priority");
+
+				for (let target of sortedTargets) {
+					let commodity = target.commodity;
+					let current = 0;
+					_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+						current += room.store(commodity);
+					});
+
+					// If we've reached the target, skip this commodity
+					if (current >= target.amount) continue;
+
+					// Get commodity components from Screeps API
+					let components = this.getCommodityComponents(commodity);
+					if (components == null) {
+						console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: No recipe found for ${commodity}`);
+						continue;
+					}
+
+					// Check if we have enough components
+					let hasComponents = true;
+					for (let component in components) {
+						let amount = components[component];
+						let available = 0;
+						_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+							available += room.store(component);
+						});
+						if (available < amount) {
+							hasComponents = false;
+							break;
+						}
+					}
+
+					if (!hasComponents) continue;
+
+					// Find a factory that needs components loaded
+					for (let factory of factories) {
+						if (factory.cooldown > 0) continue;
+
+						// Check if factory needs components
+						let needsComponents = false;
+						for (let component in components) {
+							let amount = components[component];
+							if (factory.store[component] < amount) {
+								needsComponents = true;
+								break;
+							}
+						}
+
+						if (needsComponents) {
+							// Assign this factory to produce this commodity
+							_.set(Memory, ["resources", "factories", "assignments", factory.id], {
+								commodity: commodity,
+								components: components,
+								room: rmColony
+							});
+							
+							// Create tasks to load components into factory
+							for (let component in components) {
+								let amount = components[component];
+								if (factory.store[component] < amount) {
+									let needed = amount - factory.store[component];
+									Memory.rooms[rmColony].industry.tasks.push(
+										{ type: "withdraw", resource: component, id: storage.id, timer: 60, priority: 2 },
+										{ type: "deposit", resource: component, id: factory.id, timer: 60, priority: 2 }
+									);
+								}
+							}
+							break;
+						}
+					}
+
+					// Only process one commodity at a time to avoid overwhelming the system
+					break;
+				}
+
+				// Create tasks for factory operators to move produced commodities to storage
+				this.createFactoryOperatorTasks(rmColony);
+				
+							// Create cleanup tasks for factories (only if no active loading tasks)
+			if (_.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority == 2).length == 0) {
+				this.createFactoryCleanupTasks(rmColony);
+			}
+			},
+
+			getCommodityComponents: function (commodity) {
+				// Check if we have cached commodity data
+				if (_.get(Memory, ["resources", "factories", "commodity_cache"]) == null) {
+					this.cacheCommodityData();
+				}
+				
+				// Get from cache first
+				let cached = _.get(Memory, ["resources", "factories", "commodity_cache", commodity]);
+				if (cached) {
+					// Extract components from recipe
+					return cached.components || cached;
+				}
+				
+				// No recipe found
+				return null;
+			},
+
+			cacheCommodityData: function () {
+				// Cache all available commodities from Screeps API
+				_.set(Memory, ["resources", "factories", "commodity_cache"], COMMODITIES);
+			},
+
+			createFactoryOperatorTasks: function (rmColony) {
+				let factories = _.filter(Game.rooms[rmColony].find(FIND_MY_STRUCTURES), 
+					s => s.structureType == "factory");
+				
+				if (factories.length == 0) return;
+
+				// Check if any factory has produced commodities that need to be moved to storage
+				for (let factory of factories) {
+					let hasProducedCommodity = false;
+					for (let resource in factory.store) {
+						if (resource != "energy" && factory.store[resource] > 0) {
+							hasProducedCommodity = true;
+							break;
+						}
+					}
+
+					if (hasProducedCommodity) {
+						// Create task for operator to move commodities to storage
+						Memory.rooms[rmColony].industry.tasks.push(
+							{ type: "factory_operate", id: factory.id, timer: 60, priority: 2 }
+						);
+					}
+				}
+			},
+
+			createFactoryCleanupTasks: function (rmColony) {
+				let factories = _.filter(Game.rooms[rmColony].find(FIND_MY_STRUCTURES), 
+					s => s.structureType == "factory");
+				
+				if (factories.length == 0) return;
+
+				let storage = Game.rooms[rmColony].storage;
+				if (storage == null) return;
+
+				// Only run cleanup if there are no active component loading tasks
+				let activeLoadingTasks = _.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority == 2);
+				if (activeLoadingTasks.length > 0) return;
+
+				for (let factory of factories) {
+					let assignment = _.get(Memory, ["resources", "factories", "assignments", factory.id]);
+					
+					// If factory has no assignment, clean everything except energy
+					if (assignment == null) {
+						for (let resource in factory.store) {
+							if (resource != "energy" && factory.store[resource] > 0) {
+								Memory.rooms[rmColony].industry.tasks.push(
+									{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 5 },
+									{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: 5 }
+								);
+							}
+						}
+						continue;
+					}
+
+					// Factory has assignment - clean unnecessary items
+					let commodity = assignment.commodity;
+					let components = assignment.components;
+					let allowedResources = ["energy", commodity, ...Object.keys(components)];
+
+					for (let resource in factory.store) {
+						// Skip if this resource is allowed for current production
+						if (allowedResources.includes(resource)) {
+							// Check if we have excess components (more than needed for production)
+							if (components[resource] && factory.store[resource] > components[resource] * 2) {
+								let excess = factory.store[resource] - components[resource];
+								Memory.rooms[rmColony].industry.tasks.push(
+									{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 5, amount: excess },
+									{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: 5 }
+								);
+							}
+							continue;
+						}
+
+						// This resource is not needed - clean it up
+						if (factory.store[resource] > 0) {
+							Memory.rooms[rmColony].industry.tasks.push(
+								{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 5 },
+								{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: 5 }
+							);
+						}
+					}
+				}
 			}
 		};
 
@@ -7098,6 +7509,7 @@ let Console = {
 		let help_allies = new Array();
 		let help_blueprint = new Array();
 		let help_empire = new Array();
+		let help_factories = new Array();
 		let help_labs = new Array();
 		let help_log = new Array();
 		let help_path = new Array();
@@ -7113,6 +7525,7 @@ let Console = {
 		help_main.push(`- "allies" \t Manage ally list`);
 		help_main.push(`- "blueprint" \t Settings for automatic base building`);
 		help_main.push(`- "empire" \t Miscellaneous empire and colony management`);
+		help_main.push(`- "factories" \t Management of factory commodity production`);
 		help_main.push(`- "labs" \t Management of lab functions/reactions`);
 		help_main.push(`- "log" \t Logs for statistical output`);
 		help_main.push(`- "path" \t Utilities for enhancing creep pathfinding abilities`);
@@ -7229,6 +7642,513 @@ let Console = {
 				_.set(Memory, ["rooms", rmName, "layout", "place_defenses"], true)
 
 			return `<font color=\"#D3FFA3\">[Console]</font> Blueprint placing defensive walls and ramparts: ${_.get(Memory, ["rooms", rmName, "layout", "place_defenses"], true)}`;
+		};
+
+
+		factories = new Object();
+		help_factories.push("factories.set_production(commodity, amount, priority)");
+		help_factories.push(" - Sets production target for a commodity (e.g., 'wire', 'switch', 'transistor', 'microchip', 'circuit', 'device')");
+		help_factories.push(" - amount: target amount to produce");
+		help_factories.push(" - priority: production priority (1-100, lower = higher priority)");
+
+		factories.set_production = function (commodity, amount, priority) {
+			if (_.get(Memory, ["resources", "factories", "targets"]) == null) {
+				_.set(Memory, ["resources", "factories", "targets"], new Object());
+			}
+			_.set(Memory, ["resources", "factories", "targets", commodity], { 
+				commodity: commodity, 
+				amount: amount, 
+				priority: priority || 50 
+			});
+			return `<font color=\"#D3FFA3\">[Console]</font> ${commodity} production target set to ${amount} (priority ${priority || 50}).`;
+		};
+
+		help_factories.push("factories.clear_production(commodity)");
+		help_factories.push(" - Clears production target for a specific commodity");
+
+		factories.clear_production = function (commodity) {
+			if (_.get(Memory, ["resources", "factories", "targets", commodity]) != null) {
+				delete Memory["resources"]["factories"]["targets"][commodity];
+				return `<font color=\"#D3FFA3\">[Console]</font> ${commodity} production target cleared.`;
+			}
+			return `<font color=\"#D3FFA3\">[Console]</font> No production target found for ${commodity}.`;
+		};
+
+		help_factories.push("factories.clear_all()");
+		help_factories.push(" - Clears all factory production targets");
+
+		factories.clear_all = function () {
+			_.set(Memory, ["resources", "factories", "targets"], new Object());
+			return `<font color=\"#D3FFA3\">[Console]</font> All factory production targets cleared.`;
+		};
+
+		help_factories.push("factories.status()");
+		help_factories.push(" - Shows current factory production status");
+
+		help_factories.push("factories.debug()");
+		help_factories.push(" - Shows detailed factory debugging information");
+
+		help_factories.push("factories.list_commodities()");
+		help_factories.push(" - Lists all available commodities and their recipes");
+
+		help_factories.push("factories.clear_cache()");
+		help_factories.push(" - Clears the commodity recipe cache and rebuilds it");
+
+		help_factories.push("factories.refresh_cache()");
+		help_factories.push(" - Refreshes the commodity recipe cache from Screeps API");
+
+		help_factories.push("factories.cleanup()");
+		help_factories.push(" - Manually triggers factory cleanup for all factories");
+
+		help_factories.push("factories.clear_assignments()");
+		help_factories.push(" - Clears all factory assignments");
+
+		help_factories.push("factories.renew_assignments()");
+		help_factories.push(" - Clears current assignments and reassigns factories based on current targets");
+
+		factories.status = function () {
+			let targets = _.get(Memory, ["resources", "factories", "targets"]);
+			let assignments = _.get(Memory, ["resources", "factories", "assignments"]);
+			
+			// Production Targets Table
+			console.log(`<font color=\"#D3FFA3\">[Console]</font> <b>Factory Production Targets:</b>`);
+			if (targets == null || Object.keys(targets).length == 0) {
+				console.log(`<font color=\"#D3FFA3\">[Console]</font> No production targets set.`);
+			} else {
+				let targetTable = "<table><tr><th>Commodity&nbsp;&nbsp;&nbsp;&nbsp;</th><th>Current&nbsp;&nbsp;&nbsp;&nbsp;</th><th>Target&nbsp;&nbsp;&nbsp;&nbsp;</th><th>Progress&nbsp;&nbsp;&nbsp;&nbsp;</th><th>Priority&nbsp;&nbsp;&nbsp;&nbsp;</th></tr>";
+				_.each(targets, (target, commodity) => {
+					let current = 0;
+					_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+						// Count in storage
+						current += room.store(commodity);
+						
+						// Count in factories
+						let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+						_.each(factories, factory => {
+							if (factory.store[commodity]) {
+								current += factory.store[commodity];
+							}
+						});
+					});
+					let progress = Math.min(100, Math.round((current / target.amount) * 100));
+					let progressBar = "|".repeat(Math.floor(progress/10)) + "-".repeat(10 - Math.floor(progress/10));
+					targetTable += `<tr><td>${commodity}&nbsp;&nbsp;&nbsp;&nbsp;</td><td>${current}&nbsp;&nbsp;&nbsp;&nbsp;</td><td>${target.amount}&nbsp;&nbsp;&nbsp;&nbsp;</td><td>${progressBar} ${progress}%&nbsp;&nbsp;&nbsp;&nbsp;</td><td>${target.priority}&nbsp;&nbsp;&nbsp;&nbsp;</td></tr>`;
+				});
+				targetTable += "</table>";
+				console.log(targetTable);
+			}
+
+			// Factory Assignments and Status Table
+			console.log(`<font color=\"#D3FFA3\">[Console]</font> <b>Factory Status:</b>`);
+			let factoryTable = "<table><tr><th>Room&nbsp;&nbsp;&nbsp;&nbsp;</th><th>Assignment&nbsp;&nbsp;&nbsp;&nbsp;</th><th>Cooldown&nbsp;&nbsp;&nbsp;&nbsp;</th><th>Store&nbsp;&nbsp;&nbsp;&nbsp;</th><th>Status&nbsp;&nbsp;&nbsp;&nbsp;</th></tr>";
+			let totalFactories = 0;
+			let assignedFactories = 0;
+			let activeFactories = 0;
+
+			_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+				let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+				if (factories.length > 0) {
+					totalFactories += factories.length;
+					_.each(factories, factory => {
+						let assignment = assignments ? assignments[factory.id] : null;
+						let assignmentText = assignment ? `${assignment.commodity}` : "None";
+						let cooldownText = factory.cooldown > 0 ? `${factory.cooldown}` : "Ready";
+						
+						// Count store contents (excluding energy)
+						let storeContents = [];
+						for (let resource in factory.store) {
+							if (resource != "energy" && factory.store[resource] > 0) {
+								storeContents.push(`${resource}:${factory.store[resource]}`);
+							}
+						}
+						let storeText = storeContents.length > 0 ? storeContents.join(", ") : "Empty";
+						
+						// Determine status
+						let status = "Idle";
+						if (factory.cooldown > 0) {
+							status = "Cooldown";
+						} else if (assignment) {
+							assignedFactories++;
+							if (storeContents.length > 0) {
+								status = "Has Output";
+								activeFactories++;
+							} else {
+								status = "Ready";
+								activeFactories++;
+							}
+						}
+						
+						factoryTable += `<tr><td>${room.name}&nbsp;&nbsp;&nbsp;&nbsp;</td><td>${assignmentText}&nbsp;&nbsp;&nbsp;&nbsp;</td><td>${cooldownText}&nbsp;&nbsp;&nbsp;&nbsp;</td><td>${storeText}&nbsp;&nbsp;&nbsp;&nbsp;</td><td>${status}&nbsp;&nbsp;&nbsp;&nbsp;</td></tr>`;
+					});
+				}
+			});
+			factoryTable += "</table>";
+			console.log(factoryTable);
+
+			// Summary
+			console.log(`<font color=\"#D3FFA3\">[Console]</font> <b>Summary:</b> ${totalFactories} total factories, ${assignedFactories} assigned, ${activeFactories} active`);
+
+			// Industry Tasks Summary (condensed)
+			let totalTasks = 0;
+			let priority2Tasks = 0;
+			let priority3Tasks = 0;
+			let priority5Tasks = 0;
+			
+			_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+				let tasks = _.get(Memory, ["rooms", room.name, "industry", "tasks"]);
+				if (tasks && tasks.length > 0) {
+					totalTasks += tasks.length;
+					_.each(tasks, task => {
+						if (task.priority == 2) priority2Tasks++;
+						else if (task.priority == 3) priority3Tasks++;
+						else if (task.priority == 5) priority5Tasks++;
+					});
+				}
+			});
+			
+			if (totalTasks > 0) {
+				console.log(`<font color=\"#D3FFA3\">[Console]</font> <b>Industry Tasks:</b> ${totalTasks} total (P2: ${priority2Tasks}, P3: ${priority3Tasks}, P5: ${priority5Tasks})`);
+			}
+
+			return `<font color=\"#D3FFA3\">[Console]</font> Factory status displayed.`;
+		};
+
+		factories.list_commodities = function () {
+			// Check if we have cached commodity data
+			let cache = _.get(Memory, ["resources", "factories", "commodity_cache"]);
+			if (cache == null) {
+				console.log(`<font color=\"#D3FFA3\">[Console]</font> No commodity cache found. Run factories.refresh_cache() first.`);
+				return `<font color=\"#D3FFA3\">[Console]</font> No commodity cache found. Run factories.refresh_cache() first.`;
+			}
+
+			console.log(`<font color=\"#D3FFA3\">[Console]</font> Available Commodities (${Object.keys(cache).length}):`);
+			_.each(cache, (recipe, commodity) => {
+				let recipeStr = Object.keys(recipe).map(resource => `${recipe[resource]} ${resource}`).join(', ');
+				console.log(`<font color=\"#D3FFA3\">${commodity}</font>: ${recipeStr}`);
+			});
+
+			console.log(`<font color=\"#D3FFA3\">[Console]</font> Screeps COMMODITIES API is available with ${Object.keys(COMMODITIES).length} commodities`);
+
+			return `<font color=\"#D3FFA3\">[Console]</font> Commodity list displayed.`;
+		};
+
+		factories.clear_cache = function () {
+			delete Memory["resources"]["factories"]["commodity_cache"];
+			console.log(`<font color=\"#D3FFA3\">[Console]</font> Commodity cache cleared.`);
+			return `<font color=\"#D3FFA3\">[Console]</font> Commodity cache cleared.`;
+		};
+
+		factories.refresh_cache = function () {
+			// Clear existing cache
+			delete Memory["resources"]["factories"]["commodity_cache"];
+			
+			// Cache all available commodities from Screeps API
+			console.log(`<font color=\"#D3FFA3\">[Console]</font> Caching ${Object.keys(COMMODITIES).length} commodity recipes from Screeps API`);
+			_.set(Memory, ["resources", "factories", "commodity_cache"], COMMODITIES);
+			return `<font color=\"#D3FFA3\">[Console]</font> Cached ${Object.keys(COMMODITIES).length} commodity recipes from Screeps API.`;
+		};
+
+		factories.cleanup = function () {
+			_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+				let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+				if (factories.length > 0) {
+					// Create cleanup tasks for this room
+					let Industry = {
+						createFactoryCleanupTasks: function (rmColony) {
+							let factories = _.filter(Game.rooms[rmColony].find(FIND_MY_STRUCTURES), 
+								s => s.structureType == "factory");
+							
+							if (factories.length == 0) return;
+
+							let storage = Game.rooms[rmColony].storage;
+							if (storage == null) return;
+
+							// Only run cleanup if there are no active component loading tasks
+							let activeLoadingTasks = _.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority == 2);
+							if (activeLoadingTasks.length > 0) return;
+
+							for (let factory of factories) {
+								let assignment = _.get(Memory, ["resources", "factories", "assignments", factory.id]);
+								
+								// If factory has no assignment, clean everything except energy
+								if (assignment == null) {
+									for (let resource in factory.store) {
+										if (resource != "energy" && factory.store[resource] > 0) {
+											Memory.rooms[rmColony].industry.tasks.push(
+												{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 5 },
+												{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: 5 }
+											);
+										}
+									}
+									continue;
+								}
+
+								// Factory has assignment - clean unnecessary items
+								let commodity = assignment.commodity;
+								let components = assignment.components;
+								let allowedResources = ["energy", commodity, ...Object.keys(components)];
+
+								for (let resource in factory.store) {
+									// Skip if this resource is allowed for current production
+									if (allowedResources.includes(resource)) {
+										// Check if we have excess components (more than needed for production)
+										if (components[resource] && factory.store[resource] > components[resource] * 2) {
+											let excess = factory.store[resource] - components[resource];
+											Memory.rooms[rmColony].industry.tasks.push(
+												{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 5, amount: excess },
+												{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: 5 }
+											);
+										}
+										continue;
+									}
+
+									// This resource is not needed - clean it up
+									if (factory.store[resource] > 0) {
+										Memory.rooms[rmColony].industry.tasks.push(
+											{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 5 },
+											{ type: "deposit", resource: resource, id: storage.id, timer: 60, priority: 5 }
+										);
+									}
+								}
+							}
+						}
+					};
+					
+					Industry.createFactoryCleanupTasks(room.name);
+				}
+			});
+			
+			return `<font color=\"#D3FFA3\">[Console]</font> Factory cleanup tasks created for all rooms.`;
+		};
+
+		factories.clear_assignments = function () {
+			delete Memory["resources"]["factories"]["assignments"];
+			console.log(`<font color=\"#D3FFA3\">[Console]</font> All factory assignments cleared.`);
+			return `<font color=\"#D3FFA3\">[Console]</font> All factory assignments cleared.`;
+		};
+
+		factories.clear_tasks = function () {
+			_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+				if (Memory.rooms[room.name] && Memory.rooms[room.name].industry && Memory.rooms[room.name].industry.tasks) {
+					// Remove all factory-related tasks
+					Memory.rooms[room.name].industry.tasks = _.filter(Memory.rooms[room.name].industry.tasks, task => {
+						return !(task.type == "withdraw" || task.type == "deposit") || 
+							   !(task.id && Game.getObjectById(task.id) && Game.getObjectById(task.id).structureType == "factory");
+					});
+				}
+			});
+			console.log(`<font color=\"#D3FFA3\">[Console]</font> All factory tasks cleared.`);
+			return `<font color=\"#D3FFA3\">[Console]</font> All factory tasks cleared.`;
+		};
+
+
+
+		factories.renew_assignments = function () {
+			console.log(`<font color=\"#D3FFA3\">[Console]</font> Renewing factory assignments...`);
+			
+			// Clear existing assignments
+			delete Memory["resources"]["factories"]["assignments"];
+			
+			// Get current targets
+			let targets = _.get(Memory, ["resources", "factories", "targets"]);
+			if (targets == null || Object.keys(targets).length == 0) {
+				console.log(`<font color=\"#D3FFA3\">[Console]</font> No factory targets set. No assignments to create.`);
+				return `<font color=\"#D3FFA3\">[Console]</font> No factory targets set. No assignments to create.`;
+			}
+			
+			// Initialize commodity cache if needed
+			if (_.get(Memory, ["resources", "factories", "commodity_cache"]) == null) {
+				let Industry = {
+					cacheCommodityData: function () {
+						_.set(Memory, ["resources", "factories", "commodity_cache"], COMMODITIES);
+					}
+				};
+				Industry.cacheCommodityData();
+			}
+			
+			let assignmentsCreated = 0;
+			
+			// Process each room with factories
+			_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+				let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+				if (factories.length == 0) return;
+				
+				console.log(`<font color=\"#D3FFA3\">[Console]</font> Processing room ${room.name} with ${factories.length} factories`);
+				
+				// Sort targets by priority (lower number = higher priority)
+				let sortedTargets = _.sortBy(targets, "priority");
+				
+				// Try to assign each factory to a commodity
+				for (let factory of factories) {
+					if (factory.cooldown > 0) {
+						console.log(`<font color=\"#D3FFA3\">[Console]</font> Factory ${factory.id} has cooldown ${factory.cooldown}, skipping`);
+						continue;
+					}
+					
+					console.log(`<font color=\"#D3FFA3\">[Console]</font> Processing factory ${factory.id}`);
+					
+					// Find the highest priority commodity that needs production
+					for (let target of sortedTargets) {
+						let commodity = target.commodity;
+						
+						console.log(`<font color=\"#D3FFA3\">[Console]</font> Checking commodity ${commodity} (target: ${target.amount})`);
+						
+						// Check current amount of this commodity
+						let current = 0;
+						_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+							current += room.store(commodity);
+						});
+						
+						console.log(`<font color=\"#D3FFA3\">[Console]</font> Current ${commodity}: ${current}/${target.amount}`);
+						
+						// If we've reached the target, skip this commodity
+						if (current >= target.amount) {
+							console.log(`<font color=\"#D3FFA3\">[Console]</font> Target reached for ${commodity}, skipping`);
+							continue;
+						}
+						
+						// Get commodity components
+						let cache = _.get(Memory, ["resources", "factories", "commodity_cache"]);
+						let recipe = cache[commodity];
+						if (recipe == null) {
+							console.log(`<font color=\"#D3FFA3\">[Console]</font> No recipe found for ${commodity}`);
+							continue;
+						}
+						
+						console.log(`<font color=\"#D3FFA3\">[Console]</font> Recipe for ${commodity}: ${JSON.stringify(recipe)}`);
+						
+						// Extract components from recipe (handle both API format and fallback format)
+						let components = recipe.components || recipe;
+						
+						// Check if we have enough components available
+						let hasComponents = true;
+						for (let component in components) {
+							let amount = components[component];
+							let available = 0;
+							_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+								// Count in storage
+								available += room.store(component);
+								
+								// Count in factories
+								let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+								_.each(factories, factory => {
+									if (factory.store[component]) {
+										available += factory.store[component];
+									}
+								});
+							});
+							console.log(`<font color=\"#D3FFA3\">[Console]</font> Component ${component}: ${available}/${amount} available`);
+							if (available < amount) {
+								console.log(`<font color=\"#D3FFA3\">[Console]</font> Not enough ${component} (need ${amount}, have ${available})`);
+								hasComponents = false;
+								break;
+							}
+						}
+						
+						if (!hasComponents) {
+							console.log(`<font color=\"#D3FFA3\">[Console]</font> Missing components for ${commodity}, trying next commodity`);
+							continue;
+						}
+						
+						console.log(`<font color=\"#D3FFA3\">[Console]</font> Assigning factory ${factory.id} to produce ${commodity}`);
+						
+						// Assign this factory to produce this commodity
+						_.set(Memory, ["resources", "factories", "assignments", factory.id], {
+							commodity: commodity,
+							components: components,
+							room: room.name
+						});
+						
+						assignmentsCreated++;
+						
+						// Only assign one commodity per factory
+						break;
+					}
+				}
+			});
+			
+			console.log(`<font color=\"#D3FFA3\">[Console]</font> Created ${assignmentsCreated} factory assignments.`);
+			
+			// Trigger cleanup to remove any unnecessary items from factories
+			this.cleanup();
+			
+			return `<font color=\"#D3FFA3\">[Console]</font> Renewed ${assignmentsCreated} factory assignments and triggered cleanup.`;
+		};
+
+		factories.debug = function () {
+			console.log(`<font color=\"#D3FFA3\">[Console]</font> Factory Debug Information:`);
+			
+			// Show commodity cache status
+			let cache = _.get(Memory, ["resources", "factories", "commodity_cache"]);
+			if (cache) {
+				console.log(`<font color=\"#D3FFA3\">[Console]</font> Commodity cache: ${Object.keys(cache).length} recipes cached`);
+				console.log(`<font color=\"#D3FFA3\">[Console]</font> Available commodities: ${Object.keys(cache).join(', ')}`);
+			} else {
+				console.log(`<font color=\"#D3FFA3\">[Console]</font> Commodity cache: Not initialized`);
+			}
+
+			// Show COMMODITIES API status
+			console.log(`<font color=\"#D3FFA3\">[Console]</font> COMMODITIES API: Available (${Object.keys(COMMODITIES).length} commodities)`);
+			console.log(`<font color=\"#D3FFA3\">[Console]</font> API commodities: ${Object.keys(COMMODITIES).join(', ')}`);
+			
+			// Check factory targets
+			let targets = _.get(Memory, ["resources", "factories", "targets"]);
+			console.log(`<font color=\"#D3FFA3\">[Console]</font> Factory targets: ${JSON.stringify(targets)}`);
+			
+			// Check factory assignments
+			let assignments = _.get(Memory, ["resources", "factories", "assignments"]);
+			if (assignments && Object.keys(assignments).length > 0) {
+				console.log(`<font color=\"#D3FFA3\">[Console]</font> Factory assignments: ${Object.keys(assignments).length} factories assigned`);
+				_.each(assignments, (assignment, factoryId) => {
+					let factory = Game.getObjectById(factoryId);
+					let roomName = factory ? factory.room.name : "Unknown";
+					console.log(`  Factory ${factoryId} (${roomName}): ${assignment.commodity}`);
+				});
+			} else {
+				console.log(`<font color=\"#D3FFA3\">[Console]</font> Factory assignments: None`);
+			}
+			
+			// Check each room with factories
+			_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+				console.log(`<font color=\"#D3FFA3\">[Console]</font> ${room.name}:`);
+				
+				// List all structure types in the room
+				let allStructures = room.find(FIND_MY_STRUCTURES);
+				let structureTypes = {};
+				_.each(allStructures, structure => {
+					structureTypes[structure.structureType] = (structureTypes[structure.structureType] || 0) + 1;
+				});
+				console.log(`  - All structure types: ${JSON.stringify(structureTypes)}`);
+				
+				let factories = _.filter(allStructures, s => s.structureType == "factory");
+				if (factories.length > 0) {
+					console.log(`  - Storage: ${room.storage ? 'Present' : 'Missing'}`);
+					if (room.storage) {
+						console.log(`  - Storage contents: ${JSON.stringify(room.storage.store)}`);
+					}
+					_.each(factories, factory => {
+						console.log(`  - Factory ${factory.id}:`);
+						console.log(`    Cooldown: ${factory.cooldown}`);
+						console.log(`    Store: ${JSON.stringify(factory.store)}`);
+						console.log(`    Store capacity: ${factory.store.getCapacity()}`);
+					});
+					
+					// Check industry tasks
+					let tasks = _.get(Memory, ["rooms", room.name, "industry", "tasks"]);
+					if (tasks && tasks.length > 0) {
+						console.log(`  - Industry tasks: ${tasks.length}`);
+						_.each(tasks, (task, index) => {
+							console.log(`    Task ${index}: ${JSON.stringify(task)}`);
+						});
+					} else {
+						console.log(`  - No industry tasks`);
+					}
+				} else {
+					console.log(`  - No factories found`);
+				}
+			});
+			
+			return `<font color=\"#D3FFA3\">[Console]</font> Factory debug information displayed.`;
 		};
 
 
@@ -7870,6 +8790,7 @@ let Console = {
 					case "allies": menu = help_allies; break;
 					case "blueprint": menu = help_blueprint; break;
 					case "empire": menu = help_empire; break;
+					case "factories": menu = help_factories; break;
 					case "labs": menu = help_labs; break;
 					case "log": menu = help_log; break;
 					case "path": menu = help_path; break;
