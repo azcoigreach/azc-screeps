@@ -1889,9 +1889,9 @@ Population_Colony = {
 		2: { worker: { level: 2, amount: 5, body: "worker_at" } },
 		3: { worker: { level: 3, amount: 6, body: "worker_at" } },
 		4: { worker: { level: 4, amount: 6, body: "worker_at" } },
-		5: { worker: { level: 4, amount: 6, body: "worker_at" } },
-		6: { worker: { level: 4, amount: 4 }, upgrader: { level: 6, amount: 3, body: "upgrader" } },
-		7: { worker: { level: 7, amount: 4 }, upgrader: { level: 7, amount: 4, body: "upgrader" } },
+		5: { worker: { level: 4, amount: 6, body: "worker_at" }, upgrader: { level: 5, amount: 1, body: "upgrader" } },
+		6: { worker: { level: 4, amount: 4 }, upgrader: { level: 6, amount: 1, body: "upgrader" } },
+		7: { worker: { level: 7, amount: 4 }, upgrader: { level: 7, amount: 1, body: "upgrader" } },
 		8: { worker: { level: 7, amount: 3 }, upgrader: { level: 8, amount: 1, body: "upgrader" } }
 	},
 
@@ -1900,9 +1900,9 @@ Population_Colony = {
 		2: { worker: { level: 3, amount: 4, body: "worker_at" } },
 		3: { worker: { level: 4, amount: 6, body: "worker_at" } },
 		4: { worker: { level: 5, amount: 6, body: "worker_at" } },
-		5: { worker: { level: 6, amount: 6, body: "worker_at" } },
-		6: { worker: { level: 6, amount: 5 }, upgrader: { level: 6, amount: 3, body: "upgrader" } },
-		7: { worker: { level: 7, amount: 4 }, upgrader: { level: 7, amount: 4, body: "upgrader" } },
+		5: { worker: { level: 6, amount: 6, body: "worker_at" }, upgrader: { level: 5, amount: 1, body: "upgrader" } },
+		6: { worker: { level: 6, amount: 5 }, upgrader: { level: 6, amount: 1, body: "upgrader" } },
+		7: { worker: { level: 7, amount: 4 }, upgrader: { level: 7, amount: 1, body: "upgrader" } },
 		8: { worker: { level: 7, amount: 3 }, upgrader: { level: 8, amount: 1, body: "upgrader" } }
 	}
 };
@@ -4243,14 +4243,32 @@ let Sites = {
 					delete Memory.rooms[rmColony].upgrader_force_spawn;
 				}
 
-				// Check if room has reached RCL 6+ and should spawn upgraders
+				// Check if room has reached RCL 5+ and should spawn upgraders
 				let roomLevel = Game.rooms[rmColony].controller.level;
-				if (roomLevel >= 6) {
-					// Check if we need upgraders (only if room is RCL 6+)
-					if (_.get(popActual, "upgrader", 0) < _.get(popTarget, ["upgrader", "amount"], 0)) {
+				if (roomLevel >= 5) {
+					// Calculate upgrader amount based on remote mining sources
+					let remoteMiningSources = 0;
+					let remote_mining = _.get(Memory, ["sites", "mining"]);
+					if (remote_mining) {
+						let remote_list = _.filter(Object.keys(remote_mining), rem => { 
+							return rem != rmColony && _.get(remote_mining[rem], "colony") == rmColony; 
+						});
+						_.each(remote_list, rem => { 
+							remoteMiningSources += _.get(Memory, ["sites", "mining", rem, "survey", "source_amount"], 0); 
+						});
+					}
+					
+					// Base upgrader amount: 1 for every room level 5+
+					// Additional upgrader for every 2 remote mining sources
+					let baseUpgraders = 1;
+					let additionalUpgraders = Math.floor(remoteMiningSources / 2);
+					let totalUpgraders = baseUpgraders + additionalUpgraders;
+					
+					// Check if we need upgraders
+					if (_.get(popActual, "upgrader", 0) < totalUpgraders) {
 						Memory["hive"]["spawn_requests"].push({
 							room: rmColony, listRooms: listSpawnRooms,
-							priority: Math.lerpSpawnPriority(20, 22, _.get(popActual, "upgrader", 0), _.get(popTarget, ["upgrader", "amount"], 0)),
+							priority: Math.lerpSpawnPriority(20, 22, _.get(popActual, "upgrader", 0), totalUpgraders),
 							level: _.get(popTarget, ["upgrader", "level"], room_level),
 							scale: _.get(popTarget, ["upgrader", "scale"], true),
 							body: _.get(popTarget, ["upgrader", "body"], "upgrader"),
@@ -9557,9 +9575,28 @@ let Console = {
 			let controllerProgress = room.controller.progress;
 			let controllerProgressTotal = room.controller.progressTotal;
 
+			// Calculate expected upgrader amount based on remote mining sources
+			let remoteMiningSources = 0;
+			let remote_mining = _.get(Memory, ["sites", "mining"]);
+			let remoteRooms = [];
+			if (remote_mining) {
+				remoteRooms = _.filter(Object.keys(remote_mining), rem => { 
+					return rem != roomName && _.get(remote_mining[rem], "colony") == roomName; 
+				});
+				_.each(remoteRooms, rem => { 
+					remoteMiningSources += _.get(Memory, ["sites", "mining", rem, "survey", "source_amount"], 0); 
+				});
+			}
+			
+			let baseUpgraders = roomLevel >= 5 ? 1 : 0;
+			let additionalUpgraders = Math.floor(remoteMiningSources / 2);
+			let totalExpectedUpgraders = baseUpgraders + additionalUpgraders;
+
 			console.log(`<font color=\"#D3FFA3\">[Console]</font> <b>Upgrader Status for ${roomName}:</b>`);
 			console.log(`Room Level: ${roomLevel}, Controller Progress: ${controllerProgress}/${controllerProgressTotal}`);
-			console.log(`Active Upgraders: ${upgraders.length}`);
+			console.log(`Active Upgraders: ${upgraders.length}/${totalExpectedUpgraders}`);
+			console.log(`Remote Mining: ${remoteRooms.length} rooms, ${remoteMiningSources} sources`);
+			console.log(`Upgrader Calculation: Base(${baseUpgraders}) + Remote(${additionalUpgraders}) = ${totalExpectedUpgraders}`);
 			
 			if (upgraders.length > 0) {
 				console.log(`Upgrader Details:`);
