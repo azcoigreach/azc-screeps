@@ -582,8 +582,15 @@ Creep.prototype.getTask_Withdraw_Storage = function getTask_Withdraw_Storage(res
 			id: this.room.storage.id,
 			timer: 60
 		};
-	} else
+	} else {
+		// Debug: Log why storage withdrawal failed
+		if (Game.time % 20 == 0 && this.memory.role == "upgrader") {
+			let energyLevel = _.get(Memory, ["rooms", this.room.name, "survey", "energy_level"]);
+			let storageEnergy = _.get(this.room.storage, ["store", "energy"], 0);
+			console.log(`<font color=\"#FFA500\">[Storage Debug]</font> ${this.room.name}: storage energy=${storageEnergy}, energy_level=${energyLevel}, is_critical=${is_critical}`);
+		}
 		return;
+	}
 };
 
 Creep.prototype.getTask_Withdraw_Container = function getTask_Withdraw_Container(resource, is_critical) {
@@ -3656,7 +3663,7 @@ let Creep_Roles = {
 				// Priority: Controller links -> Controller containers -> Storage
 				creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Controller_Link();
 				creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Controller_Container();
-				creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage("energy", false);
+				creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage("energy", true);
 				creep.memory.task = creep.memory.task || creep.getTask_Pickup("energy");
 				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 
