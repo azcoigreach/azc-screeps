@@ -5423,6 +5423,9 @@ let Sites = {
 					let energy_level = room.store("energy");
 					let energy_critical = room.getCriticalEnergy();
 
+					// Check total colony energy and create market orders if needed
+					this.checkColonyEnergyAndCreateMarketOrders(rmColony);
+
 					// Create orders to request resources to meet per-room stockpile
 					for (let res in _.get(Memory, ["rooms", rmColony, "stockpile"])) {
 						shortage[res] = _.get(Memory, ["rooms", rmColony, "stockpile", res]) - room.store(res);
@@ -5457,6 +5460,69 @@ let Sites = {
 					let filling = new Array();
 					this.runTerminal_Orders(rmColony, storage, terminal, shortage, filling);
 					this.runTerminal_Empty(rmColony, storage, terminal, filling);
+				}
+			},
+
+			checkColonyEnergyAndCreateMarketOrders: function (rmColony) {
+				// Only check every 50 ticks to avoid spam
+				if (Game.time % 50 != 0) return;
+
+				// Calculate total energy across all colonies
+				let totalEnergy = 0;
+				let colonies = _.filter(Game.rooms, r => r.controller && r.controller.my);
+				_.each(colonies, colony => {
+					totalEnergy += colony.store("energy");
+				});
+
+				// Check if total energy is below threshold (1,000,000)
+				let energyThreshold = _.get(Memory, ["resources", "market_energy_threshold"], 1000000);
+				if (totalEnergy < energyThreshold) {
+					// Find best energy market orders
+					let energyOrders = _.sortBy(Game.market.getAllOrders(
+						order => order.type == "sell" && order.resourceType == "energy"
+					), order => order.price);
+
+					if (energyOrders.length > 0) {
+						let bestOrder = energyOrders[0];
+						let amountToBuy = Math.min(5000, energyThreshold - totalEnergy); // Buy in chunks of 5000
+
+						// Create market buy order
+						let orderName = `market_energy_emergency_${Game.time}`;
+						_.set(Memory, ["resources", "terminal_orders", orderName], {
+							market_id: bestOrder.id,
+							amount: amountToBuy,
+							to: rmColony,
+							priority: 1, // High priority for emergency energy
+							automated: true,
+							emergency: true
+						});
+
+						console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Total colony energy (${totalEnergy}) below threshold (${energyThreshold}). Creating market buy order for ${amountToBuy} energy at ${bestOrder.price} credits.`);
+					}
+
+					// Also try to buy batteries if available
+					let batteryOrders = _.sortBy(Game.market.getAllOrders(
+						order => order.type == "sell" && order.resourceType == "battery"
+					), order => order.price);
+
+					if (batteryOrders.length > 0) {
+						let bestBatteryOrder = batteryOrders[0];
+						let batteryAmount = Math.min(100, Math.floor((energyThreshold - totalEnergy) / 1000)); // 1 battery = 1000 energy
+
+						if (batteryAmount > 0) {
+							let batteryOrderName = `market_battery_emergency_${Game.time}`;
+							_.set(Memory, ["resources", "terminal_orders", batteryOrderName], {
+								market_id: bestBatteryOrder.id,
+								amount: batteryAmount,
+								to: rmColony,
+								priority: 1, // High priority for emergency batteries
+								automated: true,
+								emergency: true
+							});
+
+							console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Creating market buy order for ${batteryAmount} batteries at ${bestBatteryOrder.price} credits.`);
+						}
+					}
 				}
 			},
 
@@ -9446,6 +9512,73 @@ let Console = {
 		resources.clear_transactions = function () {
 			_.set(Memory, ["resources", "terminal_orders"], new Object());
 			return `<font color=\"#D3FFA3\">[Console]</font> All terminal transactions cleared.`;
+		};
+
+		help_resources.push("resources.set_energy_threshold(amount)");
+
+		resources.set_energy_threshold = function (amount) {
+			_.set(Memory, ["resources", "market_energy_threshold"], amount);
+			return `<font color=\"#D3FFA3\">[Console]</font> Market energy threshold set to ${amount}. Emergency market orders will trigger when total colony energy falls below this amount.`;
+		};
+
+		help_resources.push("resources.market_status()");
+
+		resources.market_status = function () {
+			// Calculate total colony energy
+			let totalEnergy = 0;
+			let colonies = _.filter(Game.rooms, r => r.controller && r.controller.my);
+			_.each(colonies, colony => {
+				totalEnergy += colony.store("energy");
+			});
+
+			let energyThreshold = _.get(Memory, ["resources", "market_energy_threshold"], 1000000);
+			let status = totalEnergy >= energyThreshold ? "OK" : "LOW";
+
+			console.log(`<font color=\"#D3FFA3\">[Market Status]</font> Total Colony Energy: ${totalEnergy.toLocaleString()}`);
+			console.log(`<font color=\"#D3FFA3\">[Market Status]</font> Energy Threshold: ${energyThreshold.toLocaleString()}`);
+			console.log(`<font color=\"#D3FFA3\">[Market Status]</font> Status: ${status}`);
+
+			// Show available energy orders
+			let energyOrders = _.sortBy(Game.market.getAllOrders(
+				order => order.type == "sell" && order.resourceType == "energy"
+			), order => order.price);
+
+			if (energyOrders.length > 0) {
+				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> Available Energy Orders:`);
+				_.each(energyOrders.slice(0, 5), (order, i) => {
+					console.log(`  ${i+1}. ${order.amount.toLocaleString()} energy at ${order.price} credits from ${order.roomName}`);
+				});
+			}
+
+			// Show available battery orders
+			let batteryOrders = _.sortBy(Game.market.getAllOrders(
+				order => order.type == "sell" && order.resourceType == "battery"
+			), order => order.price);
+
+			if (batteryOrders.length > 0) {
+				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> Available Battery Orders:`);
+				_.each(batteryOrders.slice(0, 5), (order, i) => {
+					console.log(`  ${i+1}. ${order.amount} batteries at ${order.price} credits from ${order.roomName}`);
+				});
+			}
+
+			return `<font color=\"#D3FFA3\">[Console]</font> Market status displayed.`;
+		};
+
+		help_resources.push("resources.clear_emergency_orders()");
+
+		resources.clear_emergency_orders = function () {
+			let cleared = 0;
+			let orders = _.get(Memory, ["resources", "terminal_orders"]);
+			if (orders) {
+				_.each(Object.keys(orders), orderName => {
+					if (orders[orderName].emergency) {
+						delete orders[orderName];
+						cleared++;
+					}
+				});
+			}
+			return `<font color=\"#D3FFA3\">[Console]</font> Cleared ${cleared} emergency market orders.`;
 		};
 
 
