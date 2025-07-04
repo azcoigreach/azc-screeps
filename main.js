@@ -1095,9 +1095,14 @@ Creep.prototype.getTask_Withdraw_Controller_Link = function getTask_Withdraw_Con
 				l => { return _.get(l, "id") == s.id && _.get(l, "dir") == "receive"; });
 	});
 
+	// Debug: Log if we found controller links
+	if (Game.time % 20 == 0 && this.memory.role == "upgrader") {
+		console.log(`<font color=\"#FFA500\">[Controller Link Debug]</font> Found ${controllerLinks.length} controller links with energy in ${this.room.name}`);
+	}
+
 	if (controllerLinks.length > 0) {
 		let closestLink = _.head(_.sortBy(controllerLinks, link => {
-			return this.pos.getRangeTo(link.pos);
+			return link.pos.getRangeTo(this.room.controller.pos);
 		}));
 		
 		return {
@@ -1120,9 +1125,14 @@ Creep.prototype.getTask_Withdraw_Controller_Container = function getTask_Withdra
 			&& s.pos.getRangeTo(this.room.controller.pos) <= 3;
 	});
 
+	// Debug: Log if we found controller containers
+	if (Game.time % 20 == 0 && this.memory.role == "upgrader") {
+		console.log(`<font color=\"#FFA500\">[Controller Container Debug]</font> Found ${controllerContainers.length} controller containers with energy in ${this.room.name}`);
+	}
+
 	if (controllerContainers.length > 0) {
 		let closestContainer = _.head(_.sortBy(controllerContainers, container => {
-			return this.pos.getRangeTo(container.pos);
+			return container.pos.getRangeTo(this.room.controller.pos);
 		}));
 		
 		return {
@@ -3649,6 +3659,11 @@ let Creep_Roles = {
 				creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage("energy", false);
 				creep.memory.task = creep.memory.task || creep.getTask_Pickup("energy");
 				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+
+				// Debug: Log what task we got
+				if (creep.memory.task && Game.time % 10 == 0) {
+					console.log(`<font color=\"#FFA500\">[Upgrader Debug]</font> ${creep.name} in ${creep.room.name} got task: ${creep.memory.task.type}`);
+				}
 
 				creep.runTask(creep);
 				return;
