@@ -5568,6 +5568,15 @@ let Sites = {
 						continue;
 					}
 
+					// Set stockpile targets for components (like labs do for reagents)
+					for (let component in components) {
+						let amount = components[component];
+						// Set stockpile target to 2x the amount needed for one production cycle
+						// This ensures we have enough for production and some buffer
+						let stockpileTarget = amount * 2;
+						_.set(Memory, ["rooms", rmColony, "stockpile", component], stockpileTarget);
+					}
+
 					// Check if we have enough components
 					let hasComponents = true;
 					for (let component in components) {
@@ -5582,7 +5591,10 @@ let Sites = {
 						}
 					}
 
-					if (!hasComponents) continue;
+					if (!hasComponents) {
+						console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: Not enough components for ${commodity}, waiting for terminal orders to fill stockpile`);
+						continue;
+					}
 
 					// Find a factory that needs components loaded
 					for (let factory of factories) {
@@ -5651,6 +5663,76 @@ let Sites = {
 				_.set(Memory, ["resources", "factories", "commodity_cache"], COMMODITIES);
 			},
 
+			cleanupFactoryStockpileTargets: function (rmColony) {
+				// Get all active factory targets
+				let targets = _.get(Memory, ["resources", "factories", "targets"]);
+				if (targets == null || Object.keys(targets).length == 0) {
+					// No targets, clean up all factory-related stockpile targets
+					let stockpile = _.get(Memory, ["rooms", rmColony, "stockpile"]);
+					if (stockpile) {
+						for (let resource in stockpile) {
+							// Check if this resource is used by any commodity
+							let isUsed = false;
+							let cache = _.get(Memory, ["resources", "factories", "commodity_cache"]);
+							if (cache) {
+								for (let commodity in cache) {
+									let recipe = cache[commodity];
+									let components = recipe.components || recipe;
+									if (components && components[resource]) {
+										isUsed = true;
+										break;
+									}
+								}
+							}
+							
+							// If not used by any commodity, remove the stockpile target
+							if (!isUsed) {
+								delete stockpile[resource];
+								console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: Removed stockpile target for unused component ${resource}`);
+							}
+						}
+					}
+					return;
+				}
+
+				// Get all components needed by active targets
+				let neededComponents = new Set();
+				for (let commodity in targets) {
+					let components = this.getCommodityComponents(commodity);
+					if (components) {
+						for (let component in components) {
+							neededComponents.add(component);
+						}
+					}
+				}
+
+				// Clean up stockpile targets for components that are no longer needed
+				let stockpile = _.get(Memory, ["rooms", rmColony, "stockpile"]);
+				if (stockpile) {
+					for (let resource in stockpile) {
+						// Check if this is a factory component (not a lab reagent)
+						let isFactoryComponent = false;
+						let cache = _.get(Memory, ["resources", "factories", "commodity_cache"]);
+						if (cache) {
+							for (let commodity in cache) {
+								let recipe = cache[commodity];
+								let components = recipe.components || recipe;
+								if (components && components[resource]) {
+									isFactoryComponent = true;
+									break;
+								}
+							}
+						}
+
+						// If it's a factory component and not needed, remove the stockpile target
+						if (isFactoryComponent && !neededComponents.has(resource)) {
+							delete stockpile[resource];
+							console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: Removed stockpile target for unused component ${resource}`);
+						}
+					}
+				}
+			},
+
 			createFactoryOperatorTasks: function (rmColony) {
 				let factories = _.filter(Game.rooms[rmColony].find(FIND_MY_STRUCTURES), 
 					s => s.structureType == "factory");
@@ -5691,6 +5773,9 @@ let Sites = {
 				// Only run cleanup if there are no active component loading tasks
 				let activeLoadingTasks = _.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority == 2);
 				if (activeLoadingTasks.length > 0) return;
+
+				// Clean up stockpile targets for components that are no longer needed
+				this.cleanupFactoryStockpileTargets(rmColony);
 
 				for (let factory of factories) {
 					let assignment = _.get(Memory, ["resources", "factories", "assignments", factory.id]);
@@ -7961,6 +8046,175 @@ let Console = {
 			console.log(`<font color=\"#FFA500\">[Factory]</font> Caching ${Object.keys(COMMODITIES).length} commodity recipes from Screeps API`);
 			_.set(Memory, ["resources", "factories", "commodity_cache"], COMMODITIES);
 			return `<font color=\"#FFA500\">[Factory]</font> Cached ${Object.keys(COMMODITIES).length} commodity recipes from Screeps API.`;
+		};
+
+		help_factories.push("factories.cleanup_stockpile()");
+
+		factories.cleanup_stockpile = function () {
+			let roomsProcessed = 0;
+			let totalCleanup = 0;
+			
+			_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+				let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+				if (factories.length > 0) {
+					let Industry = {
+						cleanupFactoryStockpileTargets: function (rmColony) {
+							// Get all active factory targets
+							let targets = _.get(Memory, ["resources", "factories", "targets"]);
+							if (targets == null || Object.keys(targets).length == 0) {
+								// No targets, clean up all factory-related stockpile targets
+								let stockpile = _.get(Memory, ["rooms", rmColony, "stockpile"]);
+								if (stockpile) {
+									for (let resource in stockpile) {
+										// Check if this resource is used by any commodity
+										let isUsed = false;
+										let cache = _.get(Memory, ["resources", "factories", "commodity_cache"]);
+										if (cache) {
+											for (let commodity in cache) {
+												let recipe = cache[commodity];
+												let components = recipe.components || recipe;
+												if (components && components[resource]) {
+													isUsed = true;
+													break;
+												}
+											}
+										}
+										
+										// If not used by any commodity, remove the stockpile target
+										if (!isUsed) {
+											delete stockpile[resource];
+											console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: Removed stockpile target for unused component ${resource}`);
+											totalCleanup++;
+										}
+									}
+								}
+								return;
+							}
+
+							// Get all components needed by active targets
+							let neededComponents = new Set();
+							for (let commodity in targets) {
+								let components = this.getCommodityComponents(commodity);
+								if (components) {
+									for (let component in components) {
+										neededComponents.add(component);
+									}
+								}
+							}
+
+							// Clean up stockpile targets for components that are no longer needed
+							let stockpile = _.get(Memory, ["rooms", rmColony, "stockpile"]);
+							if (stockpile) {
+								for (let resource in stockpile) {
+									// Check if this is a factory component (not a lab reagent)
+									let isFactoryComponent = false;
+									let cache = _.get(Memory, ["resources", "factories", "commodity_cache"]);
+									if (cache) {
+										for (let commodity in cache) {
+											let recipe = cache[commodity];
+											let components = recipe.components || recipe;
+											if (components && components[resource]) {
+												isFactoryComponent = true;
+												break;
+											}
+										}
+									}
+
+									// If it's a factory component and not needed, remove the stockpile target
+									if (isFactoryComponent && !neededComponents.has(resource)) {
+										delete stockpile[resource];
+										console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: Removed stockpile target for unused component ${resource}`);
+										totalCleanup++;
+									}
+								}
+							}
+						},
+						getCommodityComponents: function (commodity) {
+							// Check if we have cached commodity data
+							if (_.get(Memory, ["resources", "factories", "commodity_cache"]) == null) {
+								this.cacheCommodityData();
+							}
+							
+							// Get from cache first
+							let cached = _.get(Memory, ["resources", "factories", "commodity_cache", commodity]);
+							if (cached) {
+								// Extract components from recipe
+								return cached.components || cached;
+							}
+							
+							// No recipe found
+							return null;
+						},
+						cacheCommodityData: function () {
+							// Cache all available commodities from Screeps API
+							_.set(Memory, ["resources", "factories", "commodity_cache"], COMMODITIES);
+						}
+					};
+					
+					Industry.cleanupFactoryStockpileTargets(room.name);
+					roomsProcessed++;
+				}
+			});
+			
+			if (roomsProcessed === 0) {
+				return `<font color=\"#FFA500\">[Factory]</font> No rooms with factories found.`;
+			}
+			
+			return `<font color=\"#FFA500\">[Factory]</font> Cleaned up ${totalCleanup} stockpile targets across ${roomsProcessed} rooms.`;
+		};
+
+		help_factories.push("factories.stockpile_status()");
+
+		factories.stockpile_status = function () {
+			console.log(`<font color=\"#FFA500\">[Factory]</font> <b>Factory Component Stockpile Status:</b>`);
+			
+			_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+				let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+				if (factories.length > 0) {
+					let stockpile = _.get(Memory, ["rooms", room.name, "stockpile"]);
+					if (stockpile && Object.keys(stockpile).length > 0) {
+						console.log(`<font color=\"#FFA500\">[Factory]</font> <b>${room.name}:</b>`);
+						
+						let tableStyle = "border=\"1\" style=\"border-collapse: collapse; margin: 5px;\"";
+						let headerStyle = "style=\"background-color: #FFA500; color: white; padding: 5px;\"";
+						let cellStyle = "style=\"padding: 3px; border: 1px solid #ccc;\"";
+						
+						let stockpileTable = `<table ${tableStyle}><tr><th ${headerStyle}>Component</th><th ${headerStyle}>Current</th><th ${headerStyle}>Target</th><th ${headerStyle}>Status</th></tr>`;
+						
+						for (let resource in stockpile) {
+							// Check if this is a factory component
+							let isFactoryComponent = false;
+							let cache = _.get(Memory, ["resources", "factories", "commodity_cache"]);
+							if (cache) {
+								for (let commodity in cache) {
+									let recipe = cache[commodity];
+									let components = recipe.components || recipe;
+									if (components && components[resource]) {
+										isFactoryComponent = true;
+										break;
+									}
+								}
+							}
+							
+							if (isFactoryComponent) {
+								let current = room.store(resource);
+								let target = stockpile[resource];
+								let status = current >= target ? "✓ Full" : "⚠ Low";
+								let statusColor = current >= target ? "green" : "orange";
+								
+								stockpileTable += `<tr><td ${cellStyle}>${resource}</td><td ${cellStyle}>${current}</td><td ${cellStyle}>${target}</td><td ${cellStyle}><font color=\"${statusColor}\">${status}</font></td></tr>`;
+							}
+						}
+						
+						stockpileTable += "</table>";
+						console.log(stockpileTable);
+					} else {
+						console.log(`<font color=\"#FFA500\">[Factory]</font> ${room.name}: No stockpile targets set`);
+					}
+				}
+			});
+			
+			return `<font color=\"#FFA500\">[Factory]</font> Factory component stockpile status displayed.`;
 		};
 
 		factories.cleanup = function (priority = 1) {
