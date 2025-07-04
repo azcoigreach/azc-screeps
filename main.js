@@ -5537,6 +5537,17 @@ let Sites = {
 					return;
 				}
 
+				// Create cleanup tasks for factories first (priority 1)
+				this.createFactoryCleanupTasks(rmColony);
+				
+				// Check if there are active cleanup tasks - if so, don't create loading tasks
+				let activeCleanupTasks = _.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority == 1);
+				if (activeCleanupTasks.length > 0) {
+					// Create tasks for factory operators to move produced commodities to storage
+					this.createFactoryOperatorTasks(rmColony);
+					return; // Don't create loading tasks while cleanup is in progress
+				}
+
 				// Sort targets by priority
 				let sortedTargets = _.sortBy(targets, "priority");
 
@@ -5616,11 +5627,6 @@ let Sites = {
 
 				// Create tasks for factory operators to move produced commodities to storage
 				this.createFactoryOperatorTasks(rmColony);
-				
-							// Create cleanup tasks for factories (only if no active loading tasks)
-			if (_.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority == 2).length == 0) {
-				this.createFactoryCleanupTasks(rmColony);
-			}
 			},
 
 			getCommodityComponents: function (commodity) {
