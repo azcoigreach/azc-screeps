@@ -8049,6 +8049,8 @@ let Console = {
 		};
 
 		help_factories.push("factories.cleanup_stockpile()");
+		help_factories.push(" - Removes stockpile targets for factory components that are no longer needed");
+		help_factories.push(" - Automatically detects unused components and cleans up their stockpile targets");
 
 		factories.cleanup_stockpile = function () {
 			let roomsProcessed = 0;
@@ -8164,6 +8166,8 @@ let Console = {
 		};
 
 		help_factories.push("factories.stockpile_status()");
+		help_factories.push(" - Shows current stockpile status for all factory components");
+		help_factories.push(" - Displays component amounts, targets, and status in a formatted table");
 
 		factories.stockpile_status = function () {
 			console.log(`<font color=\"#FFA500\">[Factory]</font> <b>Factory Component Stockpile Status:</b>`);
