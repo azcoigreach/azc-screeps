@@ -9552,17 +9552,6 @@ let Console = {
 		}
 
 		help_empire.push("");
-		help_empire.push("empire.clear_deprecated_memory()")
-		empire.clear_deprecated_memory = function () {
-
-			_.each(Memory.rooms, r => {
-				delete r.tasks;
-				delete r.structures;
-			});
-
-			return `<font color=\"#D3FFA3\">[Console]</font> Deleted deprecated Memory objects.`;
-		};
-
 		help_empire.push("empire.upgrader_status(roomName)")
 		empire.upgrader_status = function (roomName) {
 			let room = Game.rooms[roomName];
@@ -9623,6 +9612,18 @@ let Console = {
 		empire.upgrader_clear_force_spawn = function (roomName) {
 			delete Memory.rooms[roomName].upgrader_force_spawn;
 			return `<font color=\"#D3FFA3\">[Console]</font> Force spawn cleared for ${roomName}.`;
+		};
+
+		help_empire.push("");
+		help_empire.push("empire.clear_deprecated_memory()")
+		empire.clear_deprecated_memory = function () {
+
+			_.each(Memory.rooms, r => {
+				delete r.tasks;
+				delete r.structures;
+			});
+
+			return `<font color=\"#D3FFA3\">[Console]</font> Deleted deprecated Memory objects.`;
 		};
 
 		path = new Object();
