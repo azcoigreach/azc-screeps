@@ -9465,6 +9465,8 @@ let Console = {
 
 
 		help_resources.push("resources.overflow_cap(capAmount)");
+		help_resources.push(" - Sets the energy overflow cap for automatic market selling");
+		help_resources.push(" - When total colony energy exceeds this amount, excess energy is sold to market");
 
 		resources = new Object();
 		resources.overflow_cap = function (amount) {
@@ -9473,6 +9475,9 @@ let Console = {
 		};
 
 		help_resources.push("resources.market_cap(resource, capAmount)");
+		help_resources.push(" - Sets market overflow cap for a specific resource");
+		help_resources.push(" - When resource amount exceeds this cap, excess is automatically sold to market");
+		help_resources.push(" - Example: resources.market_cap('energy', 1000000)");
 
 		resources.market_cap = function (resource, amount) {
 			_.set(Memory, ["resources", "to_market", resource], amount);
@@ -9480,6 +9485,10 @@ let Console = {
 		};
 
 		help_resources.push("resources.send(orderName, rmFrom, rmTo, resource, amount)");
+		help_resources.push(" - Creates a terminal order to send resources between your rooms");
+		help_resources.push(" - orderName: unique identifier for the order");
+		help_resources.push(" - rmFrom: source room name, rmTo: destination room name");
+		help_resources.push(" - resource: resource type (energy, battery, etc.), amount: quantity to transfer");
 
 		resources.send = function (orderName, rmFrom, rmTo, resource, amount) {
 			_.set(Memory, ["resources", "terminal_orders", orderName], { room: rmTo, from: rmFrom, resource: resource, amount: amount, priority: 1 });
@@ -9487,6 +9496,10 @@ let Console = {
 		};
 
 		help_resources.push("resources.market_sell(orderName, marketOrderID, rmFrom, amount)");
+		help_resources.push(" - Creates a market sell order to fulfill an existing buy order");
+		help_resources.push(" - orderName: unique identifier for the order");
+		help_resources.push(" - marketOrderID: ID of the buy order you want to fulfill");
+		help_resources.push(" - rmFrom: your room that will send the resources, amount: quantity to sell");
 
 		resources.market_sell = function (orderName, marketOrderID, rmFrom, amount) {
 			_.set(Memory, ["resources", "terminal_orders", orderName], { market_id: marketOrderID, amount: amount, from: rmFrom, priority: 4 });
@@ -9494,6 +9507,10 @@ let Console = {
 		};
 
 		help_resources.push("resources.market_buy(orderName, marketOrderID, rmTo, amount)");
+		help_resources.push(" - Creates a market buy order to fulfill an existing sell order");
+		help_resources.push(" - orderName: unique identifier for the order");
+		help_resources.push(" - marketOrderID: ID of the sell order you want to fulfill");
+		help_resources.push(" - rmTo: your room that will receive the resources, amount: quantity to buy");
 
 		resources.market_buy = function (orderName, marketOrderID, rmTo, amount) {
 			_.set(Memory, ["resources", "terminal_orders", orderName], { market_id: marketOrderID, amount: amount, to: rmTo, priority: 4 });
@@ -9501,6 +9518,8 @@ let Console = {
 		};
 
 		help_resources.push("resources.clear_market_cap()");
+		help_resources.push(" - Clears all market overflow caps for all resources");
+		help_resources.push(" - Stops automatic market selling of excess resources");
 
 		resources.clear_market_cap = function () {
 			_.set(Memory, ["resources", "to_market"], new Object());
@@ -9508,6 +9527,8 @@ let Console = {
 		};
 
 		help_resources.push("resources.clear_transactions()");
+		help_resources.push(" - Clears all active terminal orders and market transactions");
+		help_resources.push(" - Cancels all pending resource transfers and market orders");
 
 		resources.clear_transactions = function () {
 			_.set(Memory, ["resources", "terminal_orders"], new Object());
@@ -9515,6 +9536,9 @@ let Console = {
 		};
 
 		help_resources.push("resources.set_energy_threshold(amount)");
+		help_resources.push(" - Sets the energy threshold for emergency market orders");
+		help_resources.push(" - When total colony energy falls below this amount, automatic buy orders are created");
+		help_resources.push(" - Default threshold is 1,000,000 energy");
 
 		resources.set_energy_threshold = function (amount) {
 			_.set(Memory, ["resources", "market_energy_threshold"], amount);
@@ -9522,6 +9546,9 @@ let Console = {
 		};
 
 		help_resources.push("resources.market_status()");
+		help_resources.push(" - Shows current market status and energy levels");
+		help_resources.push(" - Displays total colony energy, energy threshold, and available market orders");
+		help_resources.push(" - Shows top 5 cheapest energy and battery orders from the market");
 
 		resources.market_status = function () {
 			// Calculate total colony energy
@@ -9566,6 +9593,8 @@ let Console = {
 		};
 
 		help_resources.push("resources.clear_emergency_orders()");
+		help_resources.push(" - Clears all emergency market orders created by the automatic system");
+		help_resources.push(" - Only affects orders marked as 'emergency', leaves manual orders intact");
 
 		resources.clear_emergency_orders = function () {
 			let cleared = 0;
