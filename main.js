@@ -7798,29 +7798,27 @@ let Console = {
 		help_factories.push("factories.list_commodities()");
 		help_factories.push(" - Lists all available commodities and their recipes");
 
-		help_factories.push("factories.clear_cache()");
-		help_factories.push(" - Clears the commodity recipe cache and rebuilds it");
-
 		help_factories.push("factories.refresh_cache()");
-		help_factories.push(" - Refreshes the commodity recipe cache from Screeps API");
+		help_factories.push(" - Clears and refreshes the commodity recipe cache from Screeps API");
 
 		help_factories.push("factories.cleanup(priority)");
 		help_factories.push(" - Manually triggers factory cleanup (priority 1=high, 5=normal)");
 
-		help_factories.push("factories.clear_assignments()");
-		help_factories.push(" - Clears all factory assignments");
-
-		help_factories.push("factories.renew_assignments()");
-		help_factories.push(" - Clears current assignments and reassigns factories based on current targets");
-		help_factories.push("factories.clear_tasks()");
-		help_factories.push(" - Clears all factory tasks");
-		help_factories.push("factories.force_cleanup()");
-		help_factories.push("factories.emergency_cleanup(roomName)");
-		help_factories.push(" - Emergency cleanup that removes most materials from factories");
 		help_factories.push("factories.force_cleanup()");
 		help_factories.push(" - Forces factory cleanup even when priority 2 tasks are active");
+
+		help_factories.push("factories.emergency_cleanup(roomName)");
+		help_factories.push(" - Emergency cleanup that removes most materials from factories");
+
+		help_factories.push("factories.clear_tasks()");
+		help_factories.push(" - Clears all factory tasks");
+
+		help_factories.push("factories.renew_assignments()");
+		help_factories.push(" - Clears all assignments and reassigns factories based on current targets");
+
 		help_factories.push("factories.maintenance()");
 		help_factories.push(" - Runs scheduled factory maintenance (cleanup and assignment checks)");
+
 		help_factories.push("factories.set_maintenance_intervals(cleanup, assignments)");
 		help_factories.push(" - Sets maintenance intervals in ticks (default: cleanup=50, assignments=200)");
 
@@ -7948,12 +7946,6 @@ let Console = {
 			console.log(`<font color=\"#FFA500\">[Factory]</font> Screeps COMMODITIES API is available with ${Object.keys(COMMODITIES).length} commodities`);
 
 			return `<font color=\"#FFA500\">[Factory]</font> Commodity list displayed.`;
-		};
-
-		factories.clear_cache = function () {
-			delete Memory["resources"]["factories"]["commodity_cache"];
-			console.log(`<font color=\"#FFA500\">[Factory]</font> Commodity cache cleared.`);
-			return `<font color=\"#FFA500\">[Factory]</font> Commodity cache cleared.`;
 		};
 
 		factories.refresh_cache = function () {
@@ -8113,12 +8105,6 @@ let Console = {
 			}
 			
 			return `<font color=\"#FFA500\">[Factory]</font> Factory cleanup completed. Created ${totalCleanupTasks} cleanup tasks across ${roomsProcessed} rooms.`;
-		};
-
-		factories.clear_assignments = function () {
-			delete Memory["resources"]["factories"]["assignments"];
-			console.log(`<font color=\"#FFA500\">[Factory]</font> All factory assignments cleared.`);
-			return `<font color=\"#FFA500\">[Factory]</font> All factory assignments cleared.`;
 		};
 
 		factories.clear_tasks = function () {
