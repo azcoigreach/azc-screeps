@@ -7826,12 +7826,17 @@ let Console = {
 			let targets = _.get(Memory, ["resources", "factories", "targets"]);
 			let assignments = _.get(Memory, ["resources", "factories", "assignments"]);
 			
+			// CSS styles for better table formatting
+			let tableStyle = "style=\"border-collapse: collapse; border: 1px solid #666; margin: 5px 0;\"";
+			let cellStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left;\"";
+			let headerStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left; background-color: #444; color: #D3FFA3; font-weight: bold;\"";
+			
 			// Production Targets Table
 			console.log(`<font color=\"#FFA500\">[Factory]</font> <b>Factory Production Targets:</b>`);
 			if (targets == null || Object.keys(targets).length == 0) {
 				console.log(`<font color=\"#FFA500\">[Factory]</font> No production targets set.`);
 			} else {
-				let targetTable = "<table><tr><th>Commodity&nbsp;&nbsp;&nbsp;&nbsp;</th><th>Current&nbsp;&nbsp;&nbsp;&nbsp;</th><th>Target&nbsp;&nbsp;&nbsp;&nbsp;</th><th>Progress&nbsp;&nbsp;&nbsp;&nbsp;</th><th>Priority&nbsp;&nbsp;&nbsp;&nbsp;</th></tr>";
+				let targetTable = `<table ${tableStyle}><tr><th ${headerStyle}>Commodity</th><th ${headerStyle}>Current</th><th ${headerStyle}>Target</th><th ${headerStyle}>Progress</th><th ${headerStyle}>Priority</th></tr>`;
 				_.each(targets, (target, commodity) => {
 					let current = 0;
 					_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
@@ -7848,7 +7853,7 @@ let Console = {
 					});
 					let progress = Math.min(100, Math.round((current / target.amount) * 100));
 					let progressBar = "|".repeat(Math.floor(progress/10)) + "-".repeat(10 - Math.floor(progress/10));
-					targetTable += `<tr><td>${commodity}&nbsp;&nbsp;&nbsp;&nbsp;</td><td>${current}&nbsp;&nbsp;&nbsp;&nbsp;</td><td>${target.amount}&nbsp;&nbsp;&nbsp;&nbsp;</td><td>${progressBar} ${progress}%&nbsp;&nbsp;&nbsp;&nbsp;</td><td>${target.priority}&nbsp;&nbsp;&nbsp;&nbsp;</td></tr>`;
+					targetTable += `<tr><td ${cellStyle}>${commodity}</td><td ${cellStyle}>${current}</td><td ${cellStyle}>${target.amount}</td><td ${cellStyle}>${progressBar} ${progress}%</td><td ${cellStyle}>${target.priority}</td></tr>`;
 				});
 				targetTable += "</table>";
 				console.log(targetTable);
@@ -7856,7 +7861,7 @@ let Console = {
 
 			// Factory Assignments and Status Table
 			console.log(`<font color=\"#FFA500\">[Factory]</font> <b>Factory Status:</b>`);
-			let factoryTable = "<table><tr><th>Room&nbsp;&nbsp;&nbsp;&nbsp;</th><th>Assignment&nbsp;&nbsp;&nbsp;&nbsp;</th><th>Cooldown&nbsp;&nbsp;&nbsp;&nbsp;</th><th>Store&nbsp;&nbsp;&nbsp;&nbsp;</th><th>Status&nbsp;&nbsp;&nbsp;&nbsp;</th></tr>";
+			let factoryTable = `<table ${tableStyle}><tr><th ${headerStyle}>Room</th><th ${headerStyle}>Assignment</th><th ${headerStyle}>Cooldown</th><th ${headerStyle}>Store</th><th ${headerStyle}>Status</th></tr>`;
 			let totalFactories = 0;
 			let assignedFactories = 0;
 			let activeFactories = 0;
@@ -7894,7 +7899,7 @@ let Console = {
 							}
 						}
 						
-						factoryTable += `<tr><td>${room.name}&nbsp;&nbsp;&nbsp;&nbsp;</td><td>${assignmentText}&nbsp;&nbsp;&nbsp;&nbsp;</td><td>${cooldownText}&nbsp;&nbsp;&nbsp;&nbsp;</td><td>${storeText}&nbsp;&nbsp;&nbsp;&nbsp;</td><td>${status}&nbsp;&nbsp;&nbsp;&nbsp;</td></tr>`;
+						factoryTable += `<tr><td ${cellStyle}><font color=\"#D3FFA3\">${room.name}</font></td><td ${cellStyle}>${assignmentText}</td><td ${cellStyle}>${cooldownText}</td><td ${cellStyle}>${storeText}</td><td ${cellStyle}>${status}</td></tr>`;
 					});
 				}
 			});
