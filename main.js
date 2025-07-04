@@ -1083,6 +1083,57 @@ Creep.prototype.getTask_Wait = function getTask_Wait(ticks) {
 	};
 };
 
+Creep.prototype.getTask_Withdraw_Controller_Link = function getTask_Withdraw_Controller_Link() {
+	if (!_.get(this.room, ["controller", "my"], false))
+		return;
+
+	// Find links near the controller that have energy
+	let controllerLinks = _.filter(this.room.find(FIND_MY_STRUCTURES), s => {
+		return s.structureType == "link" && s.energy > 0 
+			&& s.pos.getRangeTo(this.room.controller.pos) <= 3
+			&& _.some(_.get(Memory, ["rooms", this.room.name, "links"]),
+				l => { return _.get(l, "id") == s.id && _.get(l, "dir") == "receive"; });
+	});
+
+	if (controllerLinks.length > 0) {
+		let closestLink = _.head(_.sortBy(controllerLinks, link => {
+			return this.pos.getRangeTo(link.pos);
+		}));
+		
+		return {
+			type: "withdraw",
+			structure: "link",
+			resource: "energy",
+			id: closestLink.id,
+			timer: 60
+		};
+	}
+};
+
+Creep.prototype.getTask_Withdraw_Controller_Container = function getTask_Withdraw_Controller_Container() {
+	if (!_.get(this.room, ["controller", "my"], false))
+		return;
+
+	// Find containers near the controller that have energy
+	let controllerContainers = _.filter(this.room.find(FIND_STRUCTURES), s => {
+		return s.structureType == "container" && s.store.energy > 0
+			&& s.pos.getRangeTo(this.room.controller.pos) <= 3;
+	});
+
+	if (controllerContainers.length > 0) {
+		let closestContainer = _.head(_.sortBy(controllerContainers, container => {
+			return this.pos.getRangeTo(container.pos);
+		}));
+		
+		return {
+			type: "withdraw",
+			resource: "energy",
+			id: closestContainer.id,
+			timer: 60
+		};
+	}
+};
+
 
 /* ***********************************************************
  *	[sec01d] OVERLOADS: CREEP TRAVEL
@@ -1807,9 +1858,9 @@ Population_Colony = {
 		3: { worker: { level: 3, amount: 6, body: "worker_at" } },
 		4: { worker: { level: 4, amount: 6, body: "worker_at" } },
 		5: { worker: { level: 4, amount: 6, body: "worker_at" } },
-		6: { worker: { level: 4, amount: 6 } },
-		7: { worker: { level: 7, amount: 5 } },
-		8: { worker: { level: 7, amount: 4 } }
+		6: { worker: { level: 4, amount: 4 }, upgrader: { level: 6, amount: 3, body: "upgrader" } },
+		7: { worker: { level: 7, amount: 4 }, upgrader: { level: 7, amount: 4, body: "upgrader" } },
+		8: { worker: { level: 7, amount: 3 }, upgrader: { level: 8, amount: 1, body: "upgrader" } }
 	},
 
 	Assisted: {
@@ -1818,9 +1869,9 @@ Population_Colony = {
 		3: { worker: { level: 4, amount: 6, body: "worker_at" } },
 		4: { worker: { level: 5, amount: 6, body: "worker_at" } },
 		5: { worker: { level: 6, amount: 6, body: "worker_at" } },
-		6: { worker: { level: 6, amount: 6 } },
-		7: { worker: { level: 7, amount: 5 } },
-		8: { worker: { level: 7, amount: 4 } }
+		6: { worker: { level: 6, amount: 5 }, upgrader: { level: 6, amount: 3, body: "upgrader" } },
+		7: { worker: { level: 7, amount: 4 }, upgrader: { level: 7, amount: 4, body: "upgrader" } },
+		8: { worker: { level: 7, amount: 3 }, upgrader: { level: 8, amount: 1, body: "upgrader" } }
 	}
 };
 
@@ -2117,6 +2168,7 @@ let Creep_Body = {
 			case "extractor_rem": return this.getBody_Extractor_REM(level);
 			case "reserver": return this.getBody_Reserver(level);
 			case "reserver_at": return this.getBody_Reserver_AT(level);
+			case "upgrader": return this.getBody_Upgrader(level);
 
 			case "worker": return this.getBody_Worker(level);
 			case "worker_at": return this.getBody_Worker_AT(level);
@@ -2916,6 +2968,29 @@ let Creep_Body = {
 					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
 		}
 	},
+
+	getBody_Upgrader: function (level) {
+		switch (level) {
+			case 1: case 2: case 3: case 4: case 5:
+				return [ // Prevent spawn locking with null body
+					MOVE];
+			case 6:
+				return [ // 650 energy, 4x WORK, 1x CARRY, 2x MOVE
+					WORK, WORK, WORK, WORK,
+					CARRY,
+					MOVE, MOVE];
+			case 7:
+				return [ // 1050 energy, 6x WORK, 2x CARRY, 4x MOVE
+					WORK, WORK, WORK, WORK, WORK, WORK,
+					CARRY, CARRY,
+					MOVE, MOVE, MOVE, MOVE];
+			case 8:
+				return [ // 1450 energy, 8x WORK, 2x CARRY, 6x MOVE
+					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
+					CARRY, CARRY,
+					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
+		}
+	},
 };
 
 
@@ -3003,12 +3078,24 @@ let Creep_Roles = {
 				if (this.goToRoom(creep, creep.memory.room, false))
 					return;
 
-				creep.memory.task = creep.memory.task || creep.getTask_Upgrade(true);
+				// Check if room has reached RCL 6+ and has upgraders
+				let roomLevel = creep.room.controller.level;
+				let hasUpgraders = _.filter(Game.creeps, c => 
+					c.memory.role == "upgrader" && c.memory.room == creep.room.name).length > 0;
+				let isCriticalDowngrade = _.get(Memory, ["rooms", creep.room.name, "survey", "downgrade_critical"], false);
+
+				// Only upgrade if room is below RCL 6, or if critical downgrade and no upgraders available
+				let shouldUpgrade = roomLevel < 6 || (isCriticalDowngrade && !hasUpgraders);
+
+				if (shouldUpgrade) {
+					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(true);
+					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
+				}
+
 				creep.memory.task = creep.memory.task || creep.getTask_Sign();
 				creep.memory.task = creep.memory.task || creep.getTask_Repair(true);
 				creep.memory.task = creep.memory.task || creep.getTask_Build();
 				creep.memory.task = creep.memory.task || creep.getTask_Repair(false);
-				creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
 				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 
 				creep.runTask(creep);
@@ -3508,6 +3595,63 @@ let Creep_Roles = {
 			return;
 		}
 	},
+
+	Upgrader: function (creep, isSafe) {
+		let hostile = isSafe ? null
+			: _.head(creep.pos.findInRange(FIND_HOSTILE_CREEPS, 5, {
+				filter:
+					c => { return c.isHostile(); }
+			}));
+
+		if (hostile == null) {
+			if (creep.memory.state == "refueling") {
+				if (_.sum(creep.carry) == creep.carryCapacity) {
+					creep.memory.state = "upgrading";
+					delete creep.memory.task;
+					return;
+				}
+
+				creep.memory.task = creep.memory.task || creep.getTask_Boost();
+
+				if (!creep.memory.task && this.goToRoom(creep, creep.memory.room, true))
+					return;
+
+				// Priority: Controller links -> Controller containers -> Storage
+				creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Controller_Link();
+				creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Controller_Container();
+				creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage("energy", false);
+				creep.memory.task = creep.memory.task || creep.getTask_Pickup("energy");
+				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+
+				creep.runTask(creep);
+				return;
+
+			} else if (creep.memory.state == "upgrading") {
+				if (creep.carry["energy"] == 0) {
+					creep.memory.state = "refueling";
+					delete creep.memory.task;
+					return;
+				}
+
+				if (this.goToRoom(creep, creep.memory.room, false))
+					return;
+
+				// Only upgrade the controller, no other tasks
+				creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
+				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+
+				creep.runTask(creep);
+				return;
+
+			} else {
+				creep.memory.state = "refueling";
+				return;
+			}
+		} else if (hostile != null) {
+			creep.moveFrom(creep, hostile);
+			return;
+		}
+	},
 };
 
 
@@ -3957,6 +4101,10 @@ let Sites = {
 							let role = _.get(c, ["memory", "role"]);
 							popActual[role] = _.get(popActual, role, 0) + 1;
 							break;
+						
+						case "upgrader":
+							popActual["upgrader"] = _.get(popActual, "upgrader", 0) + 1;
+							break;
 					}
 				});
 
@@ -4042,6 +4190,38 @@ let Sites = {
 						name: null, args: { role: "worker", room: rmColony }
 					});
 				}
+
+				// Check for force spawn request
+				let forceSpawn = _.get(Memory, ["rooms", rmColony, "upgrader_force_spawn"]);
+				if (forceSpawn && forceSpawn.timestamp == Game.time) {
+					for (let i = 0; i < forceSpawn.amount; i++) {
+						Memory["hive"]["spawn_requests"].push({
+							room: rmColony, listRooms: listSpawnRooms,
+							priority: 1, // High priority for force spawn
+							level: room_level,
+							scale: true,
+							body: "upgrader",
+							name: null, args: { role: "upgrader", room: rmColony }
+						});
+					}
+					delete Memory.rooms[rmColony].upgrader_force_spawn;
+				}
+
+				// Check if room has reached RCL 6+ and should spawn upgraders
+				let roomLevel = Game.rooms[rmColony].controller.level;
+				if (roomLevel >= 6) {
+					// Check if we need upgraders (only if room is RCL 6+)
+					if (_.get(popActual, "upgrader", 0) < _.get(popTarget, ["upgrader", "amount"], 0)) {
+						Memory["hive"]["spawn_requests"].push({
+							room: rmColony, listRooms: listSpawnRooms,
+							priority: Math.lerpSpawnPriority(20, 22, _.get(popActual, "upgrader", 0), _.get(popTarget, ["upgrader", "amount"], 0)),
+							level: _.get(popTarget, ["upgrader", "level"], room_level),
+							scale: _.get(popTarget, ["upgrader", "scale"], true),
+							body: _.get(popTarget, ["upgrader", "body"], "upgrader"),
+							name: null, args: { role: "upgrader", room: rmColony }
+						});
+					}
+				}
 			},
 
 
@@ -4051,6 +4231,7 @@ let Sites = {
 
 					switch (_.get(creep, ["memory", "role"])) {
 						case "worker": Creep_Roles.Worker(creep); break;
+						case "upgrader": Creep_Roles.Upgrader(creep, _.get(Memory, ["rooms", rmColony, "defense", "is_safe"], true)); break;
 						case "healer": Creep_Roles.Healer(creep, true); break;
 
 						case "soldier": case "paladin":
@@ -9326,6 +9507,49 @@ let Console = {
 			});
 
 			return `<font color=\"#D3FFA3\">[Console]</font> Deleted deprecated Memory objects.`;
+		};
+
+		help_empire.push("empire.upgrader_status(roomName)")
+		empire.upgrader_status = function (roomName) {
+			let room = Game.rooms[roomName];
+			if (!room || !room.controller || !room.controller.my) {
+				return `<font color=\"#D3FFA3\">[Console]</font> Error: Room ${roomName} not found or not controlled.`;
+			}
+
+			let upgraders = _.filter(Game.creeps, c => c.memory.role == "upgrader" && c.memory.room == roomName);
+			let roomLevel = room.controller.level;
+			let controllerProgress = room.controller.progress;
+			let controllerProgressTotal = room.controller.progressTotal;
+
+			console.log(`<font color=\"#D3FFA3\">[Console]</font> <b>Upgrader Status for ${roomName}:</b>`);
+			console.log(`Room Level: ${roomLevel}, Controller Progress: ${controllerProgress}/${controllerProgressTotal}`);
+			console.log(`Active Upgraders: ${upgraders.length}`);
+			
+			if (upgraders.length > 0) {
+				console.log(`Upgrader Details:`);
+				_.each(upgraders, (creep, i) => {
+					console.log(`  ${i+1}. ${creep.name} - Energy: ${creep.carry.energy || 0}/${creep.carryCapacity}, State: ${creep.memory.state}`);
+				});
+			}
+
+			return `<font color=\"#D3FFA3\">[Console]</font> Upgrader status displayed for ${roomName}.`;
+		};
+
+		help_empire.push("empire.upgrader_force_spawn(roomName, amount)")
+		empire.upgrader_force_spawn = function (roomName, amount) {
+			let room = Game.rooms[roomName];
+			if (!room || !room.controller || !room.controller.my) {
+				return `<font color=\"#D3FFA3\">[Console]</font> Error: Room ${roomName} not found or not controlled.`;
+			}
+
+			_.set(Memory, ["rooms", roomName, "upgrader_force_spawn"], { amount: amount, timestamp: Game.time });
+			return `<font color=\"#D3FFA3\">[Console]</font> Force spawn ${amount} upgraders in ${roomName} next tick.`;
+		};
+
+		help_empire.push("empire.upgrader_clear_force_spawn(roomName)")
+		empire.upgrader_clear_force_spawn = function (roomName) {
+			delete Memory.rooms[roomName].upgrader_force_spawn;
+			return `<font color=\"#D3FFA3\">[Console]</font> Force spawn cleared for ${roomName}.`;
 		};
 
 		path = new Object();
