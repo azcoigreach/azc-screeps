@@ -5665,9 +5665,9 @@ let Sites = {
 					}
 
 					if (needsOperator) {
-						// Create task for operator to handle factory contents
+						// Create task for operator to handle factory contents (priority 3 - lower than cleanup tasks)
 						Memory.rooms[rmColony].industry.tasks.push(
-							{ type: "factory_operate", id: factory.id, timer: 60, priority: 2 }
+							{ type: "factory_operate", id: factory.id, timer: 60, priority: 3 }
 						);
 					}
 				}
