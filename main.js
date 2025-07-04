@@ -5694,7 +5694,7 @@ let Sites = {
 						for (let resource in factory.store) {
 							if (resource != "energy" && factory.store[resource] > 0) {
 								Memory.rooms[rmColony].industry.tasks.push(
-									{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 2 }
+									{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 1 }
 								);
 							}
 						}
@@ -5707,10 +5707,10 @@ let Sites = {
 					let allowedResources = ["energy", commodity].concat(Object.keys(components));
 
 					for (let resource in factory.store) {
-						// If this resource is not allowed for current production, clean it immediately (priority 2)
+						// If this resource is not allowed for current production, clean it immediately (priority 1)
 						if (!allowedResources.includes(resource) && factory.store[resource] > 0) {
 							Memory.rooms[rmColony].industry.tasks.push(
-								{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 2 }
+								{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 1 }
 							);
 							continue;
 						}
@@ -5726,7 +5726,7 @@ let Sites = {
 								if (currentAmount > neededAmount * 1.5) {
 									let excess = currentAmount - neededAmount;
 									Memory.rooms[rmColony].industry.tasks.push(
-										{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 2, amount: excess }
+										{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 1, amount: excess }
 									);
 								}
 							}
@@ -5739,7 +5739,7 @@ let Sites = {
 								if (currentAmount > maxKeep) {
 									let excess = currentAmount - maxKeep;
 									Memory.rooms[rmColony].industry.tasks.push(
-										{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 2, amount: excess }
+										{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 1, amount: excess }
 									);
 								}
 							}
@@ -8023,7 +8023,7 @@ let Console = {
 										if (resource != "energy" && factory.store[resource] > 0) {
 											console.log(`<font color=\"#FFA500\">[Factory]</font> Cleaning ${resource}:${factory.store[resource]} from unassigned factory ${factory.id}`);
 											Memory.rooms[rmColony].industry.tasks.push(
-												{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 2 }
+												{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 1 }
 											);
 											factoryCleanupTasks += 1;
 										}
@@ -8035,11 +8035,11 @@ let Console = {
 					let allowedResources = ["energy", commodity].concat(Object.keys(components));
 
 									for (let resource in factory.store) {
-										// If this resource is not allowed for current production, clean it immediately (priority 2)
+										// If this resource is not allowed for current production, clean it immediately (priority 1)
 										if (!allowedResources.includes(resource) && factory.store[resource] > 0) {
 											console.log(`<font color=\"#FFA500\">[Factory]</font> Cleaning unwanted ${resource}:${factory.store[resource]} from assigned factory ${factory.id}`);
 											Memory.rooms[rmColony].industry.tasks.push(
-												{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 2 }
+												{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 1 }
 											);
 											factoryCleanupTasks += 1;
 											continue;
@@ -8052,31 +8052,31 @@ let Console = {
 												let neededAmount = components[resource];
 												let currentAmount = factory.store[resource];
 												
-												// If we have more than 1.5x what we need, clean the excess
-												if (currentAmount > neededAmount * 1.5) {
-													let excess = currentAmount - neededAmount;
-													console.log(`<font color=\"#FFA500\">[Factory]</font> Cleaning excess ${resource}:${excess} from assigned factory ${factory.id} (keep ${neededAmount})`);
-													Memory.rooms[rmColony].industry.tasks.push(
-														{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 2, amount: excess }
-													);
-													factoryCleanupTasks += 1;
-												}
+																				// If we have more than 1.5x what we need, clean the excess
+								if (currentAmount > neededAmount * 1.5) {
+									let excess = currentAmount - neededAmount;
+									console.log(`<font color=\"#FFA500\">[Factory]</font> Cleaning excess ${resource}:${excess} from assigned factory ${factory.id} (keep ${neededAmount})`);
+									Memory.rooms[rmColony].industry.tasks.push(
+										{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 1, amount: excess }
+									);
+									factoryCleanupTasks += 1;
+								}
 											}
 											
-											// For the output commodity, keep only a reasonable amount (like labs keep 20% capacity)
-											if (resource === commodity) {
-												let currentAmount = factory.store[resource];
-												let maxKeep = 1000; // Keep max 1000 of output commodity
-												
-												if (currentAmount > maxKeep) {
-													let excess = currentAmount - maxKeep;
-													console.log(`<font color=\"#FFA500\">[Factory]</font> Cleaning excess ${resource}:${excess} from assigned factory ${factory.id} (keep ${maxKeep})`);
-													Memory.rooms[rmColony].industry.tasks.push(
-														{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 2, amount: excess }
-													);
-													factoryCleanupTasks += 1;
-												}
-											}
+																			// For the output commodity, keep only a reasonable amount (like labs keep 20% capacity)
+								if (resource === commodity) {
+									let currentAmount = factory.store[resource];
+									let maxKeep = 1000; // Keep max 1000 of output commodity
+									
+									if (currentAmount > maxKeep) {
+										let excess = currentAmount - maxKeep;
+										console.log(`<font color=\"#FFA500\">[Factory]</font> Cleaning excess ${resource}:${excess} from assigned factory ${factory.id} (keep ${maxKeep})`);
+										Memory.rooms[rmColony].industry.tasks.push(
+											{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 1, amount: excess }
+										);
+										factoryCleanupTasks += 1;
+									}
+								}
 										}
 									}
 								}
