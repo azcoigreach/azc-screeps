@@ -397,6 +397,55 @@ Creep.prototype.runTask = function runTask() {
 				}
 			}
 
+			// Also handle cleanup of unwanted materials
+			let assignment = _.get(Memory, ["resources", "factories", "assignments", factory.id]);
+			if (assignment != null) {
+				let commodity = assignment.commodity;
+				let components = assignment.components || {};
+				let allowedResources = ["energy", commodity, ...Object.keys(components)];
+
+				// Check for unwanted materials
+				for (let resource in factory.store) {
+					if (!allowedResources.includes(resource) && factory.store[resource] > 0) {
+						// This is an unwanted material - clean it up
+						let storage = factory.room.storage;
+						if (storage != null) {
+							let result = this.transfer(storage, resource);
+							if (result == OK) {
+								Stats_Visual.CreepSay(this, 'cleanup');
+							}
+						}
+						break; // Handle one resource at a time
+					}
+				}
+
+				// Check for excess allowed materials
+				for (let resource in factory.store) {
+					if (allowedResources.includes(resource) && resource !== "energy") {
+						let currentAmount = factory.store[resource];
+						let maxKeep = 0;
+						
+						if (resource === commodity) {
+							maxKeep = 1000; // Keep max 1000 of output commodity
+						} else if (components[resource]) {
+							maxKeep = components[resource] * 1.5; // Keep 1.5x needed components
+						}
+						
+						if (currentAmount > maxKeep) {
+							let excess = currentAmount - maxKeep;
+							let storage = factory.room.storage;
+							if (storage != null) {
+								let result = this.transfer(storage, resource);
+								if (result == OK) {
+									Stats_Visual.CreepSay(this, 'excess');
+								}
+							}
+							break; // Handle one resource at a time
+						}
+					}
+				}
+			}
+
 			// Task continues until manually cleared or factory is empty
 			return;
 		}
@@ -5592,18 +5641,21 @@ let Sites = {
 				
 				if (factories.length == 0) return;
 
-				// Check if any factory has produced commodities that need to be moved to storage
+				// Check if any factory needs operator attention (produced commodities OR unwanted materials)
 				for (let factory of factories) {
-					let hasProducedCommodity = false;
+					let needsOperator = false;
+					let assignment = _.get(Memory, ["resources", "factories", "assignments", factory.id]);
+					
+					// Check for any non-energy materials
 					for (let resource in factory.store) {
 						if (resource != "energy" && factory.store[resource] > 0) {
-							hasProducedCommodity = true;
+							needsOperator = true;
 							break;
 						}
 					}
 
-					if (hasProducedCommodity) {
-						// Create task for operator to move commodities to storage
+					if (needsOperator) {
+						// Create task for operator to handle factory contents
 						Memory.rooms[rmColony].industry.tasks.push(
 							{ type: "factory_operate", id: factory.id, timer: 60, priority: 2 }
 						);
