@@ -1134,6 +1134,33 @@ Creep.prototype.getTask_Withdraw_Controller_Container = function getTask_Withdra
 	}
 };
 
+Creep.prototype.getTask_Withdraw_Storage_Link = function getTask_Withdraw_Storage_Link() {
+	if (!this.room.storage)
+		return;
+
+	// Only get energy from the link nearest to storage (within 3 tiles)
+	let storageLinks = _.filter(this.room.find(FIND_MY_STRUCTURES), s => {
+		return s.structureType == "link" && s.energy > 0 
+			&& s.pos.getRangeTo(this.room.storage.pos) <= 3
+			&& _.some(_.get(Memory, ["rooms", this.room.name, "links"]),
+				l => { return _.get(l, "id") == s.id && _.get(l, "dir") == "receive"; });
+	});
+
+	if (storageLinks.length > 0) {
+		let closestLink = _.head(_.sortBy(storageLinks, link => {
+			return link.pos.getRangeTo(this.room.storage.pos);
+		}));
+		
+		return {
+			type: "withdraw",
+			structure: "link",
+			resource: "energy",
+			id: closestLink.id,
+			timer: 60
+		};
+	}
+};
+
 
 /* ***********************************************************
  *	[sec01d] OVERLOADS: CREEP TRAVEL
@@ -3214,7 +3241,7 @@ let Creep_Roles = {
 				return;
 
 			creep.memory.task = creep.memory.task || creep.getTask_Industry_Withdraw();
-			creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Link(50);
+			creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage_Link();
 			creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 
 			creep.runTask(creep);
