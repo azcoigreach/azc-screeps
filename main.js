@@ -9521,6 +9521,9 @@ let Console = {
 	}
 };
 
+// Make help function globally available
+global.help = help;
+
 
 
 /* ***********************************************************
