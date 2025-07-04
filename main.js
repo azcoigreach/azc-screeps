@@ -510,17 +510,19 @@ Creep.prototype.getTask_Withdraw_Link = function getTask_Withdraw_Link(distance)
 		|| !_.get(Memory, ["rooms", this.room.name, "defense", "is_safe"]))
 		return;
 
-	// Get all valid receive links with energy
-	let validLinks = _.filter(this.room.find(FIND_MY_STRUCTURES), s => {
-		return s.structureType == "link" && s.energy > 0 && this.pos.getRangeTo(s.pos) <= distance
-			&& _.some(_.get(Memory, ["rooms", this.room.name, "links"]),
-				l => { return _.get(l, "id") == s.id && _.get(l, "dir") == "receive"; });
-	});
-
-	if (validLinks.length == 0) return;
-
-	// If we have storage, prioritize links closest to storage
+	// If we have storage, only consider links near storage
 	if (this.room.storage) {
+		// Get all valid receive links with energy that are near storage (within 10 tiles)
+		let validLinks = _.filter(this.room.find(FIND_MY_STRUCTURES), s => {
+			return s.structureType == "link" && s.energy > 0 
+				&& s.pos.getRangeTo(this.room.storage.pos) <= 10
+				&& this.pos.getRangeTo(s.pos) <= distance
+				&& _.some(_.get(Memory, ["rooms", this.room.name, "links"]),
+					l => { return _.get(l, "id") == s.id && _.get(l, "dir") == "receive"; });
+		});
+
+		if (validLinks.length == 0) return;
+
 		// Sort links by distance to storage (closest first)
 		let sortedLinks = _.sortBy(validLinks, link => {
 			return link.pos.getRangeTo(this.room.storage.pos);
@@ -535,7 +537,15 @@ Creep.prototype.getTask_Withdraw_Link = function getTask_Withdraw_Link(distance)
 			timer: 60
 		};
 	} else {
-		// No storage, use the closest link to the courier
+		// No storage, use the closest link to the courier (original behavior)
+		let validLinks = _.filter(this.room.find(FIND_MY_STRUCTURES), s => {
+			return s.structureType == "link" && s.energy > 0 && this.pos.getRangeTo(s.pos) <= distance
+				&& _.some(_.get(Memory, ["rooms", this.room.name, "links"]),
+					l => { return _.get(l, "id") == s.id && _.get(l, "dir") == "receive"; });
+		});
+
+		if (validLinks.length == 0) return;
+
 		let closestLink = _.head(_.sortBy(validLinks, link => {
 			return this.pos.getRangeTo(link.pos);
 		}));
