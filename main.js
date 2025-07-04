@@ -5457,6 +5457,8 @@ let Sites = {
 						Creep_Roles.Courier(creep);
 					} else if (creep.memory.role == "factory_operator") {
 						Creep_Roles.Factory_Operator(creep);
+					} else if (creep.memory.role == "factory_operator") {
+						Creep_Roles.Factory_Operator(creep);
 					}
 				});
 			},
