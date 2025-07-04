@@ -5694,7 +5694,7 @@ let Sites = {
 					// Factory has assignment - clean unnecessary items (following labs pattern)
 					let commodity = assignment.commodity;
 					let components = assignment.components || {};
-					let allowedResources = ["energy", commodity, ...Object.keys(components)];
+					let allowedResources = ["energy", commodity].concat(Object.keys(components));
 
 					for (let resource in factory.store) {
 						// If this resource is not allowed for current production, clean it immediately (priority 2)
@@ -8019,10 +8019,10 @@ let Console = {
 										}
 									}
 								} else {
-									// Factory has assignment - clean unnecessary items (following labs pattern)
-									let commodity = assignment.commodity;
-									let components = assignment.components || {};
-									let allowedResources = ["energy", commodity, ...Object.keys(components)];
+														// Factory has assignment - clean unnecessary items (following labs pattern)
+					let commodity = assignment.commodity;
+					let components = assignment.components || {};
+					let allowedResources = ["energy", commodity].concat(Object.keys(components));
 
 									for (let resource in factory.store) {
 										// If this resource is not allowed for current production, clean it immediately (priority 2)
