@@ -34,6 +34,9 @@ gcl_colonies = Gauge("screeps_gcl_colonies",        "Number of owned colonies")
 # Creeps
 creeps_total = Gauge("screeps_creeps_total", "Total number of creeps")
 
+# Market
+market_credits = Gauge("screeps_market_credits", "Available market credits")
+
 # Colony-level stats
 colony_rcl_level    = Gauge("screeps_colony_rcl_level",    "RCL Level per colony", ["colony"])
 colony_rcl_progress = Gauge("screeps_colony_rcl_progress", "RCL progress",         ["colony"])
@@ -128,7 +131,11 @@ def update_metrics(stats):
     creeps_info = stats.get("creeps", {})
     creeps_total.set(creeps_info.get("total", 0))
 
-    # 4. Colonies
+    # 4. Market
+    market_info = stats.get("market", {})
+    market_credits.set(market_info.get("credits", 0))
+
+    # 5. Colonies
     colonies = stats.get("colonies", {})
     colony_rcl_level.clear()
     colony_rcl_progress.clear()

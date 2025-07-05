@@ -9734,6 +9734,22 @@ let Console = {
 			return `<font color=\"#D3FFA3\">[Console]</font> Credit limit set to ${percentage}% of available credits.`;
 		};
 
+		help_resources.push("resources.credits()");
+		help_resources.push(" - Shows current available market credits");
+		help_resources.push(" - Displays credits and spending limits");
+
+		resources.credits = function () {
+			let availableCredits = Game.market.credits || 0;
+			let creditLimit = _.get(Memory, ["resources", "market_credit_limit"], 0.8);
+			let maxSpendable = availableCredits * creditLimit;
+			
+			console.log(`<font color=\"#D3FFA3\">[Credits]</font> <b>Available Credits:</b> ${availableCredits.toLocaleString()}`);
+			console.log(`<font color=\"#D3FFA3\">[Credits]</font> <b>Credit Limit:</b> ${(creditLimit * 100).toFixed(0)}%`);
+			console.log(`<font color=\"#D3FFA3\">[Credits]</font> <b>Max Spendable:</b> ${maxSpendable.toLocaleString()}`);
+			
+			return `<font color=\"#D3FFA3\">[Console]</font> Credit information displayed.`;
+		};
+
 
 		empire = new Object();
 
@@ -10342,6 +10358,9 @@ let Stats_Grafana = {
 			_.set(Memory, ["stats", "gcl", "progress_percent"], (Game.gcl.progress / Game.gcl.progressTotal * 100));
 
 			_.set(Memory, ["stats", "creeps", "total"], _.keys(Game.creeps).length);
+
+			// Track market credits
+			_.set(Memory, ["stats", "market", "credits"], Game.market.credits || 0);
 
 			_.each(_.get(Game, "spawns"), s => {
 				_.set(Memory, ["stats", "colonies", s.room.name, "spawns", s.name],
