@@ -5500,29 +5500,7 @@ let Sites = {
 						console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Total colony energy (${totalEnergy}) below threshold (${energyThreshold}). Creating market buy order for ${amountToBuy} energy at ${bestOrder.price} credits.`);
 					}
 
-					// Also try to buy batteries if available
-					let batteryOrders = _.sortBy(Game.market.getAllOrders(
-						order => order.type == "sell" && order.resourceType == "battery"
-					), order => order.price);
 
-					if (batteryOrders.length > 0) {
-						let bestBatteryOrder = batteryOrders[0];
-						let batteryAmount = Math.min(100, Math.floor((energyThreshold - totalEnergy) / 1000)); // 1 battery = 1000 energy
-
-						if (batteryAmount > 0) {
-							let batteryOrderName = `market_battery_emergency_${Game.time}`;
-							_.set(Memory, ["resources", "terminal_orders", batteryOrderName], {
-								market_id: bestBatteryOrder.id,
-								amount: batteryAmount,
-								to: rmColony,
-								priority: 1, // High priority for emergency batteries
-								automated: true,
-								emergency: true
-							});
-
-							console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Creating market buy order for ${batteryAmount} batteries at ${bestBatteryOrder.price} credits.`);
-						}
-					}
 				}
 			},
 
@@ -9596,19 +9574,7 @@ let Console = {
 				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> No energy sell orders available on market.`);
 			}
 
-			// Show available battery orders
-			let batteryOrders = _.sortBy(Game.market.getAllOrders(
-				order => order.type == "sell" && order.resourceType == "battery"
-			), order => order.price);
 
-			if (batteryOrders.length > 0) {
-				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> Available Battery Orders:`);
-				_.each(batteryOrders.slice(0, 5), (order, i) => {
-					console.log(`  ${i+1}. ${order.amount} batteries at ${order.price} credits from ${order.roomName}`);
-				});
-			} else {
-				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> No battery sell orders available on market.`);
-			}
 
 			// Debug emergency order creation
 			if (totalEnergy < energyThreshold) {
