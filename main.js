@@ -9538,51 +9538,108 @@ let Console = {
 
 			let energyThreshold = _.get(Memory, ["resources", "market_energy_threshold"], 1000000);
 			let status = totalEnergy >= energyThreshold ? "OK" : "LOW";
+			let statusColor = status === "OK" ? "#47FF3E" : "#FF6B6B";
 
-			console.log(`<font color=\"#D3FFA3\">[Market Status]</font> Total Colony Energy: ${totalEnergy.toLocaleString()}`);
-			console.log(`<font color=\"#D3FFA3\">[Market Status]</font> Energy Threshold: ${energyThreshold.toLocaleString()}`);
-			console.log(`<font color=\"#D3FFA3\">[Market Status]</font> Status: ${status}`);
+			// CSS styles for better table formatting
+			let tableStyle = "style=\"border-collapse: collapse; border: 1px solid #666; margin: 5px 0; width: 100%;\"";
+			let cellStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left;\"";
+			let headerStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left; background-color: #444; color: #D3FFA3; font-weight: bold;\"";
+			let statusCellStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left; color: " + statusColor + "; font-weight: bold;\"";
 
-			// Show current terminal orders
+			// Energy Status Table
+			console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>Energy Status:</b>`);
+			let energyTable = `<table ${tableStyle}>
+				<tr>
+					<th ${headerStyle}>Metric</th>
+					<th ${headerStyle}>Value</th>
+				</tr>
+				<tr>
+					<td ${cellStyle}>Total Colony Energy</td>
+					<td ${cellStyle}>${totalEnergy.toLocaleString()}</td>
+				</tr>
+				<tr>
+					<td ${cellStyle}>Energy Threshold</td>
+					<td ${cellStyle}>${energyThreshold.toLocaleString()}</td>
+				</tr>
+				<tr>
+					<td ${cellStyle}>Status</td>
+					<td ${statusCellStyle}>${status}</td>
+				</tr>
+			</table>`;
+			console.log(energyTable);
+
+			// Terminal Orders Table
 			let terminalOrders = _.get(Memory, ["resources", "terminal_orders"]);
 			if (terminalOrders && Object.keys(terminalOrders).length > 0) {
-				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> Current Terminal Orders:`);
+				console.log(`<br><font color=\"#D3FFA3\">[Market Status]</font> <b>Active Terminal Orders:</b>`);
+				let ordersTable = `<table ${tableStyle}>
+					<tr>
+						<th ${headerStyle}>Order Name</th>
+						<th ${headerStyle}>Type</th>
+						<th ${headerStyle}>Resource</th>
+						<th ${headerStyle}>Amount</th>
+						<th ${headerStyle}>Priority</th>
+						<th ${headerStyle}>Room</th>
+					</tr>`;
+				
 				_.each(terminalOrders, (order, orderName) => {
 					let orderType = order.market_id ? "Market" : "Internal";
 					let emergency = order.emergency ? " (EMERGENCY)" : "";
 					let priority = order.priority || "Unknown";
-					console.log(`  ${orderName}: ${orderType}${emergency} - Priority ${priority}`);
-					if (order.resource) console.log(`    Resource: ${order.resource}, Amount: ${order.amount}`);
-					if (order.market_id) console.log(`    Market ID: ${order.market_id}`);
-					if (order.room) console.log(`    Room: ${order.room}`);
+					let resource = order.resource || "N/A";
+					let amount = order.amount || "N/A";
+					let room = order.room || order.to || order.from || "N/A";
+					
+					ordersTable += `<tr>
+						<td ${cellStyle}>${orderName}</td>
+						<td ${cellStyle}>${orderType}${emergency}</td>
+						<td ${cellStyle}>${resource}</td>
+						<td ${cellStyle}>${amount}</td>
+						<td ${cellStyle}>${priority}</td>
+						<td ${cellStyle}>${room}</td>
+					</tr>`;
 				});
+				ordersTable += "</table>";
+				console.log(ordersTable);
 			} else {
-				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> No active terminal orders.`);
+				console.log(`<br><font color=\"#D3FFA3\">[Market Status]</font> <b>No active terminal orders.</b>`);
 			}
 
-			// Show available energy orders
+			// Available Market Orders Table
 			let energyOrders = _.sortBy(Game.market.getAllOrders(
 				order => order.type == "sell" && order.resourceType == "energy"
 			), order => order.price);
 
 			if (energyOrders.length > 0) {
-				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> Available Energy Orders:`);
+				console.log(`<br><font color=\"#D3FFA3\">[Market Status]</font> <b>Top 5 Cheapest Energy Orders:</b>`);
+				let marketTable = `<table ${tableStyle}>
+					<tr>
+						<th ${headerStyle}>#</th>
+						<th ${headerStyle}>Amount</th>
+						<th ${headerStyle}>Price</th>
+						<th ${headerStyle}>Room</th>
+					</tr>`;
+				
 				_.each(energyOrders.slice(0, 5), (order, i) => {
-					console.log(`  ${i+1}. ${order.amount.toLocaleString()} energy at ${order.price} credits from ${order.roomName}`);
+					marketTable += `<tr>
+						<td ${cellStyle}>${i+1}</td>
+						<td ${cellStyle}>${order.amount.toLocaleString()}</td>
+						<td ${cellStyle}>${order.price}</td>
+						<td ${cellStyle}>${order.roomName}</td>
+					</tr>`;
 				});
+				marketTable += "</table>";
+				console.log(marketTable);
 			} else {
-				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> No energy sell orders available on market.`);
+				console.log(`<br><font color=\"#D3FFA3\">[Market Status]</font> <b>No energy sell orders available on market.</b>`);
 			}
 
-
-
-			// Debug emergency order creation
+			// Emergency Status
 			if (totalEnergy < energyThreshold) {
-				console.log(`<font color=\"#FF6B6B\">[Market Status]</font> Energy is below threshold! Emergency orders should be created.`);
-				console.log(`<font color=\"#FF6B6B\">[Market Status]</font> Next emergency check will be at tick ${Math.ceil(Game.time / 50) * 50 + 1}`);
+				console.log(`<br><font color=\"#FF6B6B\">[Market Status]</font> <b>⚠️ Emergency Status:</b> Energy below threshold! Next emergency check at tick ${Math.ceil(Game.time / 50) * 50 + 1}`);
 			}
 
-			return `<font color=\"#D3FFA3\">[Console]</font> Market status displayed.`;
+			return `<font color=\"#D3FFA3\">[Console]</font> Market status displayed in tables.`;
 		};
 
 		help_resources.push("resources.clear_emergency_orders()");
