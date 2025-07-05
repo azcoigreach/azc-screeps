@@ -149,27 +149,27 @@ def update_metrics(stats):
     for colony_name, colony_data in colonies.items():
         # RCL info
         rcl_info = colony_data.get("rcl", {})
-        colony_rcl_level.labels(colony=colony_name).set(rcl_info.get("level", 0))
-        colony_rcl_progress.labels(colony=colony_name).set(rcl_info.get("progress", 0))
-        colony_rcl_total.labels(colony=colony_name).set(rcl_info.get("progress_total", 0))
-        colony_rcl_percent.labels(colony=colony_name).set(rcl_info.get("progress_percent", 0))
+        colony_rcl_level.labels(colony=colony_name).set(rcl_info.get("level", 0) or 0)
+        colony_rcl_progress.labels(colony=colony_name).set(rcl_info.get("progress", 0) or 0)
+        colony_rcl_total.labels(colony=colony_name).set(rcl_info.get("progress_total", 0) or 0)
+        colony_rcl_percent.labels(colony=colony_name).set(rcl_info.get("progress_percent", 0) or 0)
 
         # Remote mining
         remote_mining = colony_data.get("remote_mining", {})
-        colony_remote_rooms.labels(colony=colony_name).set(remote_mining.get("rooms", 0))
-        colony_remote_sources.labels(colony=colony_name).set(remote_mining.get("sources", 0))
-        colony_mining_sources.labels(colony=colony_name).set(colony_data.get("mining_sources", 0))
+        colony_remote_rooms.labels(colony=colony_name).set(remote_mining.get("rooms", 0) or 0)
+        colony_remote_sources.labels(colony=colony_name).set(remote_mining.get("sources", 0) or 0)
+        colony_mining_sources.labels(colony=colony_name).set(colony_data.get("mining_sources", 0) or 0)
 
         # Spawn statuses
         spawns_data = colony_data.get("spawns", {})
         for spawn_name, spawning_state in spawns_data.items():
-            colony_spawn_status.labels(colony=colony_name, spawn=spawn_name).set(spawning_state)
+            colony_spawn_status.labels(colony=colony_name, spawn=spawn_name).set(spawning_state or 0)
 
     # 5. Resources (global)
     resources = stats.get("resources", {})
     resource_amount.clear()
     for res_name, amount in resources.items():
-        resource_amount.labels(resource=res_name).set(amount)
+        resource_amount.labels(resource=res_name).set(amount or 0)
 
     # 6. Mining store percent
     mining_data = stats.get("mining", {})
