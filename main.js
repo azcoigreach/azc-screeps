@@ -5477,30 +5477,58 @@ let Sites = {
 				// Check if total energy is below threshold (1,000,000)
 				let energyThreshold = _.get(Memory, ["resources", "market_energy_threshold"], 1000000);
 				if (totalEnergy < energyThreshold) {
-					// Find best energy market orders
-					let energyOrders = _.sortBy(Game.market.getAllOrders(
+					// Find all energy sell orders and calculate average price
+					let energyOrders = Game.market.getAllOrders(
 						order => order.type == "sell" && order.resourceType == "energy"
-					), order => order.price);
-
+					);
+					
 					if (energyOrders.length > 0) {
-						let bestOrder = energyOrders[0];
-						let amountToBuy = Math.min(5000, energyThreshold - totalEnergy); // Buy in chunks of 5000
+						// Calculate average market price (excluding outliers)
+						let prices = energyOrders.map(order => order.price).sort((a, b) => a - b);
+						let avgPrice = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+						
+						// Calculate median price for better outlier detection
+						let medianPrice = prices[Math.floor(prices.length / 2)];
+						
+						// Get configurable price protection settings
+						let priceProtection = _.get(Memory, ["resources", "market_price_protection"], { avg_multiplier: 2.0, median_multiplier: 1.5 });
+						let creditLimit = _.get(Memory, ["resources", "market_credit_limit"], 0.8);
+						
+						// Filter out orders that are too expensive based on configurable thresholds
+						let maxPrice = Math.min(avgPrice * priceProtection.avg_multiplier, medianPrice * priceProtection.median_multiplier);
+						let reasonableOrders = energyOrders.filter(order => order.price <= maxPrice);
+						
+						if (reasonableOrders.length > 0) {
+							// Sort by price and find best order
+							let bestOrder = _.sortBy(reasonableOrders, order => order.price)[0];
+							let amountToBuy = Math.min(5000, energyThreshold - totalEnergy); // Buy in chunks of 5000
+							
+							// Check if we have enough credits to make this purchase
+							let totalCost = bestOrder.price * amountToBuy;
+							let availableCredits = Game.market.credits || 0;
+							
+							if (totalCost <= availableCredits * creditLimit) { // Use configurable credit limit
+								// Create market buy order
+								let orderName = `market_energy_emergency_${Game.time}`;
+								_.set(Memory, ["resources", "terminal_orders", orderName], {
+									market_id: bestOrder.id,
+									amount: amountToBuy,
+									to: rmColony,
+									priority: 1, // High priority for emergency energy
+									automated: true,
+									emergency: true
+								});
 
-						// Create market buy order
-						let orderName = `market_energy_emergency_${Game.time}`;
-						_.set(Memory, ["resources", "terminal_orders", orderName], {
-							market_id: bestOrder.id,
-							amount: amountToBuy,
-							to: rmColony,
-							priority: 1, // High priority for emergency energy
-							automated: true,
-							emergency: true
-						});
-
-						console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Total colony energy (${totalEnergy}) below threshold (${energyThreshold}). Creating market buy order for ${amountToBuy} energy at ${bestOrder.price} credits.`);
+								console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Total colony energy (${totalEnergy}) below threshold (${energyThreshold}). Creating market buy order for ${amountToBuy} energy at ${bestOrder.price} credits (avg: ${avgPrice.toFixed(2)}, median: ${medianPrice.toFixed(2)}).`);
+							} else {
+								console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Energy below threshold but insufficient credits. Need ${totalCost} credits, have ${availableCredits}.`);
+							}
+						} else {
+							console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Energy below threshold but all available orders are too expensive. Average price: ${avgPrice.toFixed(2)}, max acceptable: ${maxPrice.toFixed(2)}.`);
+						}
+					} else {
+						console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Energy below threshold but no energy sell orders available on market.`);
 					}
-
-
 				}
 			},
 
@@ -9566,23 +9594,80 @@ let Console = {
 				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>No active terminal orders.</b>`);
 			}
 
-			// Available Market Orders Summary
-			let energyOrders = _.sortBy(Game.market.getAllOrders(
+			// Available Market Orders Summary with Price Analysis
+			let energyOrders = Game.market.getAllOrders(
 				order => order.type == "sell" && order.resourceType == "energy"
-			), order => order.price);
+			);
 
 			if (energyOrders.length > 0) {
-				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>Top Energy Orders:</b>`);
-				_.each(energyOrders.slice(0, 5), (order, i) => {
-					console.log(`  ${i+1}. ${order.amount.toLocaleString()} energy @ ${order.price} credits from ${order.roomName}`);
-				});
+				// Calculate price statistics
+				let prices = energyOrders.map(order => order.price).sort((a, b) => a - b);
+				let avgPrice = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+				let medianPrice = prices[Math.floor(prices.length / 2)];
+				let minPrice = prices[0];
+				let maxPrice = prices[prices.length - 1];
+				
+				// Get configurable price protection settings
+				let priceProtection = _.get(Memory, ["resources", "market_price_protection"], { avg_multiplier: 2.0, median_multiplier: 1.5 });
+				let reasonablePrice = Math.min(avgPrice * priceProtection.avg_multiplier, medianPrice * priceProtection.median_multiplier);
+				
+				// Filter reasonable orders
+				let reasonableOrders = energyOrders.filter(order => order.price <= reasonablePrice);
+				let expensiveOrders = energyOrders.filter(order => order.price > reasonablePrice);
+				
+				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>Energy Market Analysis:</b>`);
+				console.log(`  <b>Price Stats:</b> Min: ${minPrice.toFixed(2)}, Avg: ${avgPrice.toFixed(2)}, Median: ${medianPrice.toFixed(2)}, Max: ${maxPrice.toFixed(2)}`);
+				console.log(`  <b>Reasonable Price Threshold:</b> ${reasonablePrice.toFixed(2)} (${priceProtection.avg_multiplier}x avg or ${priceProtection.median_multiplier}x median, whichever is lower)`);
+				console.log(`  <b>Available Orders:</b> ${reasonableOrders.length} reasonable, ${expensiveOrders.length} too expensive`);
+				
+				if (reasonableOrders.length > 0) {
+					console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>Top Reasonable Energy Orders:</b>`);
+					_.each(_.sortBy(reasonableOrders, order => order.price).slice(0, 5), (order, i) => {
+						console.log(`  ${i+1}. ${order.amount.toLocaleString()} energy @ ${order.price} credits from ${order.roomName}`);
+					});
+				} else {
+					console.log(`<font color=\"#FF6B6B\">[Market Status]</font> <b>⚠️ No reasonable energy orders available!</b> All orders are too expensive.`);
+				}
+				
+				if (expensiveOrders.length > 0) {
+					console.log(`<font color=\"#FFA500\">[Market Status]</font> <b>Expensive Orders (skipped):</b>`);
+					_.each(_.sortBy(expensiveOrders, order => order.price).slice(0, 3), (order, i) => {
+						console.log(`  ${i+1}. ${order.amount.toLocaleString()} energy @ ${order.price} credits from ${order.roomName} (${((order.price / avgPrice) * 100).toFixed(0)}% of avg)`);
+					});
+				}
 			} else {
 				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>No energy sell orders available on market.</b>`);
 			}
 
-			// Emergency Status
+			// Credit Status
+			let availableCredits = Game.market.credits || 0;
+			console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>Available Credits:</b> ${availableCredits.toLocaleString()}`);
+
+			// Emergency Status with Enhanced Information
 			if (totalEnergy < energyThreshold) {
-				console.log(`<font color=\"#FF6B6B\">[Market Status]</font> <b>⚠️ Emergency:</b> Energy below threshold! Next check at tick ${Math.ceil(Game.time / 50) * 50 + 1}`);
+				let nextCheckTick = Math.ceil(Game.time / 50) * 50 + 1;
+				console.log(`<font color=\"#FF6B6B\">[Market Status]</font> <b>⚠️ Emergency:</b> Energy below threshold! Next check at tick ${nextCheckTick}`);
+				
+				// Show why we might not be buying
+				if (energyOrders.length > 0) {
+					let prices = energyOrders.map(order => order.price);
+					let avgPrice = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+					let priceProtection = _.get(Memory, ["resources", "market_price_protection"], { avg_multiplier: 2.0, median_multiplier: 1.5 });
+					let creditLimit = _.get(Memory, ["resources", "market_credit_limit"], 0.8);
+					let reasonablePrice = Math.min(avgPrice * priceProtection.avg_multiplier, prices[Math.floor(prices.length / 2)] * priceProtection.median_multiplier);
+					let reasonableOrders = energyOrders.filter(order => order.price <= reasonablePrice);
+					
+					if (reasonableOrders.length == 0) {
+						console.log(`<font color=\"#FFA500\">[Market Status]</font> <b>Reason for not buying:</b> All energy orders are too expensive (above ${reasonablePrice.toFixed(2)} credits)`);
+					} else {
+						let bestOrder = _.sortBy(reasonableOrders, order => order.price)[0];
+						let totalCost = bestOrder.price * 5000; // Estimate cost for 5000 energy
+						
+						if (totalCost > availableCredits * creditLimit) {
+							console.log(`<font color=\"#FFA500\">[Market Status]</font> <b>Reason for not buying:</b> Insufficient credits. Need ~${totalCost.toLocaleString()} credits, have ${availableCredits.toLocaleString()} (limit: ${(creditLimit * 100).toFixed(0)}%)`);
+						}
+					}
+				}
 			}
 
 			return `<font color=\"#D3FFA3\">[Console]</font> Market status displayed.`;
@@ -9620,6 +9705,33 @@ let Console = {
 			// Call the emergency order creation function
 			Industry.checkColonyEnergyAndCreateMarketOrders(roomWithTerminal.name);
 			return `<font color=\"#D3FFA3\">[Console]</font> Emergency order creation triggered for ${roomWithTerminal.name}.`;
+		};
+
+		help_resources.push("resources.set_price_protection(avgMultiplier, medianMultiplier)");
+		help_resources.push(" - Sets the price protection multipliers for emergency energy purchases");
+		help_resources.push(" - avgMultiplier: maximum price as multiple of average (default: 2.0)");
+		help_resources.push(" - medianMultiplier: maximum price as multiple of median (default: 1.5)");
+		help_resources.push(" - Example: resources.set_price_protection(1.5, 1.2) for more conservative buying");
+
+		resources.set_price_protection = function (avgMultiplier, medianMultiplier) {
+			_.set(Memory, ["resources", "market_price_protection"], {
+				avg_multiplier: avgMultiplier || 2.0,
+				median_multiplier: medianMultiplier || 1.5
+			});
+			return `<font color=\"#D3FFA3\">[Console]</font> Price protection set to ${avgMultiplier || 2.0}x average and ${medianMultiplier || 1.5}x median.`;
+		};
+
+		help_resources.push("resources.set_credit_limit(percentage)");
+		help_resources.push(" - Sets the maximum percentage of available credits to spend on emergency energy");
+		help_resources.push(" - percentage: 0-100, default is 80%");
+		help_resources.push(" - Example: resources.set_credit_limit(50) to only spend 50% of available credits");
+
+		resources.set_credit_limit = function (percentage) {
+			if (percentage < 0 || percentage > 100) {
+				return `<font color=\"#FF6B6B\">[Console]</font> Error: Percentage must be between 0 and 100.`;
+			}
+			_.set(Memory, ["resources", "market_credit_limit"], percentage / 100);
+			return `<font color=\"#D3FFA3\">[Console]</font> Credit limit set to ${percentage}% of available credits.`;
 		};
 
 
