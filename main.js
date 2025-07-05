@@ -9543,25 +9543,25 @@ let Console = {
 			// Energy Status Summary
 			console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>Energy Status:</b> ${totalEnergy.toLocaleString()}/${energyThreshold.toLocaleString()} - <font color=\"${statusColor}\">${status}</font>`);
 
-			// Terminal Orders Summary
+			// Terminal Orders Table (CSS)
 			let terminalOrders = _.get(Memory, ["resources", "terminal_orders"]);
 			if (terminalOrders && Object.keys(terminalOrders).length > 0) {
-				let emergencyOrders = _.filter(terminalOrders, order => order.emergency);
-				let marketOrders = _.filter(terminalOrders, order => order.market_id);
-				let internalOrders = _.filter(terminalOrders, order => !order.market_id);
-				
-				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>Terminal Orders:</b> ${Object.keys(terminalOrders).length} total (${emergencyOrders.length} emergency, ${marketOrders.length} market, ${internalOrders.length} internal)`);
-				
-				// Show emergency orders if any
-				if (emergencyOrders.length > 0) {
-					console.log(`<font color=\"#FF6B6B\">[Market Status]</font> <b>Emergency Orders:</b>`);
-					_.each(emergencyOrders, (order, orderName) => {
-						let resource = order.resource || "N/A";
-						let amount = order.amount || "N/A";
-						let room = order.room || order.to || order.from || "N/A";
-						console.log(`  ${orderName}: ${resource} x${amount} -> ${room}`);
-					});
-				}
+				let tableStyle = "style=\"border-collapse: collapse; border: 1px solid #666; margin: 5px 0; width: 100%;\"";
+				let cellStyle = "style=\"border: 1px solid #666; padding: 2px 6px; text-align: left; font-size: 12px;\"";
+				let headerStyle = "style=\"border: 1px solid #666; padding: 2px 6px; text-align: left; background-color: #444; color: #D3FFA3; font-weight: bold; font-size: 13px;\"";
+				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>Terminal Orders:</b> ${Object.keys(terminalOrders).length}`);
+				let ordersTable = `<table ${tableStyle}><tr><th ${headerStyle}>Order Name</th><th ${headerStyle}>Type</th><th ${headerStyle}>Resource</th><th ${headerStyle}>Amount</th><th ${headerStyle}>Priority</th><th ${headerStyle}>Room</th></tr>`;
+				_.each(terminalOrders, (order, orderName) => {
+					let orderType = order.market_id ? "Market" : "Internal";
+					let emergency = order.emergency ? " (EMERGENCY)" : "";
+					let priority = order.priority || "";
+					let resource = order.resource || "";
+					let amount = order.amount || "";
+					let room = order.room || order.to || order.from || "";
+					ordersTable += `<tr><td ${cellStyle}>${orderName}</td><td ${cellStyle}>${orderType}${emergency}</td><td ${cellStyle}>${resource}</td><td ${cellStyle}>${amount}</td><td ${cellStyle}>${priority}</td><td ${cellStyle}>${room}</td></tr>`;
+				});
+				ordersTable += "</table>";
+				console.log(ordersTable);
 			} else {
 				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>No active terminal orders.</b>`);
 			}
