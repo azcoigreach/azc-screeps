@@ -9565,6 +9565,23 @@ let Console = {
 			console.log(`<font color=\"#D3FFA3\">[Market Status]</font> Energy Threshold: ${energyThreshold.toLocaleString()}`);
 			console.log(`<font color=\"#D3FFA3\">[Market Status]</font> Status: ${status}`);
 
+			// Show current terminal orders
+			let terminalOrders = _.get(Memory, ["resources", "terminal_orders"]);
+			if (terminalOrders && Object.keys(terminalOrders).length > 0) {
+				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> Current Terminal Orders:`);
+				_.each(terminalOrders, (order, orderName) => {
+					let orderType = order.market_id ? "Market" : "Internal";
+					let emergency = order.emergency ? " (EMERGENCY)" : "";
+					let priority = order.priority || "Unknown";
+					console.log(`  ${orderName}: ${orderType}${emergency} - Priority ${priority}`);
+					if (order.resource) console.log(`    Resource: ${order.resource}, Amount: ${order.amount}`);
+					if (order.market_id) console.log(`    Market ID: ${order.market_id}`);
+					if (order.room) console.log(`    Room: ${order.room}`);
+				});
+			} else {
+				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> No active terminal orders.`);
+			}
+
 			// Show available energy orders
 			let energyOrders = _.sortBy(Game.market.getAllOrders(
 				order => order.type == "sell" && order.resourceType == "energy"
@@ -9575,6 +9592,8 @@ let Console = {
 				_.each(energyOrders.slice(0, 5), (order, i) => {
 					console.log(`  ${i+1}. ${order.amount.toLocaleString()} energy at ${order.price} credits from ${order.roomName}`);
 				});
+			} else {
+				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> No energy sell orders available on market.`);
 			}
 
 			// Show available battery orders
@@ -9587,6 +9606,14 @@ let Console = {
 				_.each(batteryOrders.slice(0, 5), (order, i) => {
 					console.log(`  ${i+1}. ${order.amount} batteries at ${order.price} credits from ${order.roomName}`);
 				});
+			} else {
+				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> No battery sell orders available on market.`);
+			}
+
+			// Debug emergency order creation
+			if (totalEnergy < energyThreshold) {
+				console.log(`<font color=\"#FF6B6B\">[Market Status]</font> Energy is below threshold! Emergency orders should be created.`);
+				console.log(`<font color=\"#FF6B6B\">[Market Status]</font> Next emergency check will be at tick ${Math.ceil(Game.time / 50) * 50 + 1}`);
 			}
 
 			return `<font color=\"#D3FFA3\">[Console]</font> Market status displayed.`;
@@ -9608,6 +9635,22 @@ let Console = {
 				});
 			}
 			return `<font color=\"#D3FFA3\">[Console]</font> Cleared ${cleared} emergency market orders.`;
+		};
+
+		help_resources.push("resources.force_emergency_orders()");
+		help_resources.push(" - Manually triggers emergency market order creation");
+		help_resources.push(" - Useful for testing when energy is below threshold");
+
+		resources.force_emergency_orders = function () {
+			// Find a room with a terminal to trigger the emergency order creation
+			let roomWithTerminal = _.find(Game.rooms, r => r.controller && r.controller.my && r.terminal);
+			if (!roomWithTerminal) {
+				return `<font color=\"#D3FFA3\">[Console]</font> Error: No room with terminal found.`;
+			}
+
+			// Call the emergency order creation function
+			Industry.checkColonyEnergyAndCreateMarketOrders(roomWithTerminal.name);
+			return `<font color=\"#D3FFA3\">[Console]</font> Emergency order creation triggered for ${roomWithTerminal.name}.`;
 		};
 
 
