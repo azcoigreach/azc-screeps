@@ -4953,6 +4953,47 @@ let Sites = {
 	Industry: function (rmColony) {
 		let Industry = {
 
+			// Factory logging throttling system
+			factoryLogThrottle: {
+				lastLogTime: {},
+				logIntervals: {
+					'needs_components': 50,  // Log factory needs components every 50 ticks
+					'created_tasks': 30,     // Log created tasks every 30 ticks
+					'cleanup_skip': 100,     // Log cleanup skip every 100 ticks
+					'stockpile_cleanup': 200, // Log stockpile cleanup every 200 ticks
+					'assignment_debug': 500   // Log assignment debug every 500 ticks
+				},
+				
+				shouldLog: function(roomName, logType) {
+					let key = `${roomName}_${logType}`;
+					let currentTick = Game.time;
+					let lastTime = this.lastLogTime[key] || 0;
+					let interval = this.logIntervals[logType] || 50;
+					
+					if (currentTick - lastTime >= interval) {
+						this.lastLogTime[key] = currentTick;
+						return true;
+					}
+					return false;
+				},
+				
+				log: function(roomName, logType, message) {
+					if (this.shouldLog(roomName, logType)) {
+						console.log(`<font color=\"#FFA500\">[Factory]</font> ${message}`);
+					}
+				},
+				
+				// Clear old throttle data to prevent memory bloat
+				cleanup: function() {
+					let currentTick = Game.time;
+					for (let key in this.lastLogTime) {
+						if (currentTick - this.lastLogTime[key] > 1000) {
+							delete this.lastLogTime[key];
+						}
+					}
+				}
+			},
+
 			Run: function (rmColony) {
 				// Expanded scope variables:
 				labDefinitions = _.get(Memory, ["rooms", rmColony, "labs", "definitions"]);
@@ -5959,9 +6000,9 @@ let Sites = {
 				let assignmentsChanged = false;
 				let assignedFactories = new Set(); // Track factories assigned in this iteration
 
-				console.log(`<font color=\"#FFA500\">[Factory]</font> Existing assignments: ${Object.keys(existingAssignments).length}`);
+				this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Existing assignments: ${Object.keys(existingAssignments).length}`);
 				for (let factoryId in existingAssignments) {
-					console.log(`<font color=\"#FFA500\">[Factory]</font> Existing: ${factoryId} -> ${existingAssignments[factoryId].commodity}`);
+					this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Existing: ${factoryId} -> ${existingAssignments[factoryId].commodity}`);
 				}
 
 				// Create a list of commodities that need production (sorted by priority)
@@ -6010,7 +6051,7 @@ let Sites = {
 				let totalFactories = allFactories.length;
 				let consecutiveFailures = 0; // Track consecutive failures to prevent infinite loops
 
-				console.log(`<font color=\"#FFA500\">[Factory]</font> Starting assignment: ${totalFactories} total factories, ${commoditiesToProduce.length} commodities to produce`);
+				this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Starting assignment: ${totalFactories} total factories, ${commoditiesToProduce.length} commodities to produce`);
 
 				while (factoriesAssigned < totalFactories && commoditiesToProduce.length > 0 && consecutiveFailures < commoditiesToProduce.length) {
 					let commodityData = commoditiesToProduce[commodityIndex % commoditiesToProduce.length];
@@ -6025,7 +6066,7 @@ let Sites = {
 					
 					for (let factory of allFactories) {
 						if (factory.cooldown > 0) {
-							console.log(`<font color=\"#FFA500\">[Factory]</font> Factory ${factory.id} on cooldown`);
+							this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Factory ${factory.id} on cooldown`);
 							continue;
 						}
 
@@ -6048,7 +6089,7 @@ let Sites = {
 						assignedFactories.add(factory.id); // Mark this factory as assigned
 
 						// Log the assignment
-						console.log(`<font color=\"#FFA500\">[Factory]</font> Assigning ${factory.pos.roomName} factory ${factory.id} to create ${commodity} (priority ${priority}).`);
+						this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Assigning ${factory.pos.roomName} factory ${factory.id} to create ${commodity} (priority ${priority}).`);
 						assignmentsChanged = true;
 						
 						factoriesAssigned++;
@@ -6059,7 +6100,7 @@ let Sites = {
 
 					// If no factory was assigned for this commodity, move to next commodity
 					if (!factoryAssigned) {
-						console.log(`<font color=\"#FFA500\">[Factory]</font> No factory assigned for ${commodity}. Available: ${availableFactories}, Already assigned: ${assignedFactoriesCount}, Total assigned so far: ${factoriesAssigned}`);
+						this.factoryLogThrottle.log(rmColony, 'assignment_debug', `No factory assigned for ${commodity}. Available: ${availableFactories}, Already assigned: ${assignedFactoriesCount}, Total assigned so far: ${factoriesAssigned}`);
 						consecutiveFailures++;
 						commodityIndex++;
 					} else {
@@ -6068,7 +6109,7 @@ let Sites = {
 					}
 				}
 
-				console.log(`<font color=\"#FFA500\">[Factory]</font> Assignment complete: ${factoriesAssigned}/${totalFactories} factories assigned`);
+				this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Assignment complete: ${factoriesAssigned}/${totalFactories} factories assigned`);
 
 				// Update assignments
 				_.set(Memory, ["resources", "factories", "assignments"], newAssignments);
@@ -6080,6 +6121,11 @@ let Sites = {
 			},
 
 			createFactoryTasks: function (rmColony) {
+				// Clean up old throttle data periodically
+				if (Game.time % 1000 === 0) {
+					this.factoryLogThrottle.cleanup();
+				}
+				
 				let factories = _.filter(Game.rooms[rmColony].find(FIND_MY_STRUCTURES), 
 					s => s.structureType == "factory");
 				
@@ -6089,13 +6135,13 @@ let Sites = {
 
 				let targets = _.get(Memory, ["resources", "factories", "targets"]);
 				if (targets == null || Object.keys(targets).length == 0) {
-					console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: No factory targets set`);
+					this.factoryLogThrottle.log(rmColony, 'assignment_debug', `${rmColony}: No factory targets set`);
 					return;
 				}
 
 				let storage = Game.rooms[rmColony].storage;
 				if (storage == null) {
-					console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: No storage found`);
+					this.factoryLogThrottle.log(rmColony, 'assignment_debug', `${rmColony}: No storage found`);
 					return;
 				}
 
@@ -6149,7 +6195,7 @@ let Sites = {
 						}
 
 						if (!hasComponents) {
-							console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: Not enough components for ${commodity}, waiting for terminal orders to fill stockpile`);
+							this.factoryLogThrottle.log(rmColony, 'needs_components', `${rmColony}: Not enough components for ${commodity}, waiting for terminal orders to fill stockpile`);
 							continue;
 						}
 
@@ -6164,7 +6210,7 @@ let Sites = {
 						}
 
 						if (needsComponents) {
-							console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: Factory ${factory.id} needs components for ${commodity}`);
+							this.factoryLogThrottle.log(rmColony, 'needs_components', `${rmColony}: Factory ${factory.id} needs components for ${commodity}`);
 							// Create tasks to load components into factory
 							for (let component in components) {
 								let amount = components[component];
@@ -6174,7 +6220,7 @@ let Sites = {
 										{ type: "withdraw", resource: component, id: storage.id, timer: 60, priority: 2 },
 										{ type: "deposit", resource: component, id: factory.id, timer: 60, priority: 2 }
 									);
-									console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: Created loading tasks for ${component} (${needed} needed)`);
+									this.factoryLogThrottle.log(rmColony, 'created_tasks', `${rmColony}: Created loading tasks for ${component} (${needed} needed)`);
 								}
 							}
 						}
@@ -6232,7 +6278,7 @@ let Sites = {
 							// If not used by any commodity, remove the stockpile target
 							if (!isUsed) {
 								delete stockpile[resource];
-								console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: Removed stockpile target for unused component ${resource}`);
+								this.factoryLogThrottle.log(rmColony, 'stockpile_cleanup', `${rmColony}: Removed stockpile target for unused component ${resource}`);
 							}
 						}
 					}
@@ -6271,7 +6317,7 @@ let Sites = {
 						// If it's a factory component and not needed, remove the stockpile target
 						if (isFactoryComponent && !neededComponents.has(resource)) {
 							delete stockpile[resource];
-							console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: Removed stockpile target for unused component ${resource}`);
+							this.factoryLogThrottle.log(rmColony, 'stockpile_cleanup', `${rmColony}: Removed stockpile target for unused component ${resource}`);
 						}
 					}
 				}
@@ -6317,7 +6363,7 @@ let Sites = {
 				// Only run cleanup if there are no active component loading tasks
 				let activeLoadingTasks = _.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority == 2);
 				if (activeLoadingTasks.length > 0) {
-					console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: ${activeLoadingTasks.length} loading tasks active, skipping cleanup`);
+					this.factoryLogThrottle.log(rmColony, 'cleanup_skip', `${rmColony}: ${activeLoadingTasks.length} loading tasks active, skipping cleanup`);
 					return;
 				}
 
@@ -6325,6 +6371,8 @@ let Sites = {
 				this.cleanupFactoryStockpileTargets(rmColony);
 
 				let cleanupTasksCreated = 0;
+				let cleanupDetails = [];
+				
 				for (let factory of factories) {
 					let assignment = _.get(Memory, ["resources", "factories", "assignments", factory.id]);
 					
@@ -6336,6 +6384,7 @@ let Sites = {
 									{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 1 }
 								);
 								cleanupTasksCreated++;
+								cleanupDetails.push(`${factory.id}: ${resource}:${factory.store[resource]}`);
 							}
 						}
 						continue;
@@ -6353,6 +6402,7 @@ let Sites = {
 								{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 1 }
 							);
 							cleanupTasksCreated++;
+							cleanupDetails.push(`${factory.id}: ${resource}:${factory.store[resource]} (unwanted)`);
 							continue;
 						}
 
@@ -6391,7 +6441,7 @@ let Sites = {
 				}
 				
 				if (cleanupTasksCreated > 0) {
-					console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: Created ${cleanupTasksCreated} cleanup tasks`);
+					this.factoryLogThrottle.log(rmColony, 'cleanup_skip', `${rmColony}: Created ${cleanupTasksCreated} cleanup tasks${cleanupDetails.length > 0 ? ' - ' + cleanupDetails.join(', ') : ''}`);
 				}
 			},
 		};
@@ -9028,6 +9078,66 @@ let Console = {
 			
 			console.log(`<font color=\"#FFA500\">[Factory]</font> Maintenance intervals set: cleanup=${cleanupInterval}, assignments=${assignmentCheckInterval}`);
 			return `<font color=\"#FFA500\">[Factory]</font> Maintenance intervals updated.`;
+		};
+
+		help_factories.push("factories.set_log_intervals(needs_components, created_tasks, cleanup_skip, stockpile_cleanup, assignment_debug)");
+		help_factories.push(" - Sets factory logging intervals in ticks (default: 50, 30, 100, 200, 500)");
+
+		factories.set_log_intervals = function (needs_components = 50, created_tasks = 30, cleanup_skip = 100, stockpile_cleanup = 200, assignment_debug = 500) {
+			// This will be called from the console, so we need to access the Industry object
+			let Industry = Game.rooms[Object.keys(Game.rooms)[0]].Industry;
+			if (Industry && Industry.factoryLogThrottle) {
+				Industry.factoryLogThrottle.logIntervals = {
+					'needs_components': needs_components,
+					'created_tasks': created_tasks,
+					'cleanup_skip': cleanup_skip,
+					'stockpile_cleanup': stockpile_cleanup,
+					'assignment_debug': assignment_debug
+				};
+				console.log(`<font color=\"#FFA500\">[Factory]</font> Log intervals set: needs_components=${needs_components}, created_tasks=${created_tasks}, cleanup_skip=${cleanup_skip}, stockpile_cleanup=${stockpile_cleanup}, assignment_debug=${assignment_debug}`);
+				return `<font color=\"#FFA500\">[Factory]</font> Factory log intervals updated.`;
+			}
+			return `<font color=\"#FFA500\">[Factory]</font> Could not access factory log throttle system.`;
+		};
+
+		help_factories.push("factories.disable_logs()");
+		help_factories.push(" - Disables all factory console logging");
+
+		factories.disable_logs = function () {
+			// This will be called from the console, so we need to access the Industry object
+			let Industry = Game.rooms[Object.keys(Game.rooms)[0]].Industry;
+			if (Industry && Industry.factoryLogThrottle) {
+				Industry.factoryLogThrottle.logIntervals = {
+					'needs_components': 999999,
+					'created_tasks': 999999,
+					'cleanup_skip': 999999,
+					'stockpile_cleanup': 999999,
+					'assignment_debug': 999999
+				};
+				console.log(`<font color=\"#FFA500\">[Factory]</font> Factory logging disabled. Use factories.enable_logs() to re-enable.`);
+				return `<font color=\"#FFA500\">[Factory]</font> Factory logging disabled.`;
+			}
+			return `<font color=\"#FFA500\">[Factory]</font> Could not access factory log throttle system.`;
+		};
+
+		help_factories.push("factories.enable_logs()");
+		help_factories.push(" - Re-enables factory console logging with default intervals");
+
+		factories.enable_logs = function () {
+			// This will be called from the console, so we need to access the Industry object
+			let Industry = Game.rooms[Object.keys(Game.rooms)[0]].Industry;
+			if (Industry && Industry.factoryLogThrottle) {
+				Industry.factoryLogThrottle.logIntervals = {
+					'needs_components': 50,
+					'created_tasks': 30,
+					'cleanup_skip': 100,
+					'stockpile_cleanup': 200,
+					'assignment_debug': 500
+				};
+				console.log(`<font color=\"#FFA500\">[Factory]</font> Factory logging re-enabled with default intervals.`);
+				return `<font color=\"#FFA500\">[Factory]</font> Factory logging re-enabled.`;
+			}
+			return `<font color=\"#FFA500\">[Factory]</font> Could not access factory log throttle system.`;
 		};
 
 		factories.force_cleanup = function () {
