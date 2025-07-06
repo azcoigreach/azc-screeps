@@ -1553,6 +1553,13 @@ StructureLab.prototype.canBoost = function canBoost(mineral) {
 Room.prototype.store = function store(resource) {
 	let amount = (_.get(this, ["storage", "my"], false) ? _.get(this, ["storage", "store", resource], 0) : 0)
 		+ (_.get(this, ["terminal", "my"], false) ? _.get(this, ["terminal", "store", resource], 0) : 0);
+	
+	// Also include factory resources in the total
+	let factories = _.filter(this.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+	for (let factory of factories) {
+		amount += _.get(factory, ["store", resource], 0);
+	}
+	
 	return amount;
 };
 
@@ -5872,26 +5879,58 @@ let Sites = {
 			},
 
 			runTerminal_Empty: function (rmColony, storage, terminal, filling) {
-				// Create generic tasks for emptying terminal's minerals to storage
-				let resource_list = [
-					"energy",
-					"H", "O", "U", "L", "K", "Z", "X", "G",
-					"OH", "ZK", "UL",
-					"UH", "UO", "KH", "KO", "LH", "LO", "ZH", "ZO", "GH", "GO",
-					"UH2O", "UHO2", "KH2O", "KHO2", "LH2O", "LHO2", "ZH2O", "ZHO2", "GH2O", "GHO2",
-					"XUH2O", "XUHO2", "XKH2O", "XKHO2", "XLH2O", "XLHO2", "XZH2O", "XZHO2", "XGH2O", "XGHO2"];
+				// Dynamically get all resources in the terminal
+				let terminalResources = Object.keys(terminal.store);
+				
+				// Get all factory components that might be needed
+				let factoryComponents = new Set();
+				let factories = _.filter(Game.rooms[rmColony].find(FIND_MY_STRUCTURES), 
+					s => s.structureType == "factory");
+				
+				// Collect all components from active factory assignments
+				for (let factory of factories) {
+					let assignment = _.get(Memory, ["resources", "factories", "assignments", factory.id]);
+					if (assignment && assignment.components) {
+						for (let component in assignment.components) {
+							factoryComponents.add(component);
+						}
+					}
+				}
+				
+				// Also add common factory components that might not be in current assignments
+				let commonFactoryComponents = ["battery", "cell", "phlegm", "tissue", "muscle", "organoid", "organism"];
+				for (let component of commonFactoryComponents) {
+					factoryComponents.add(component);
+				}
 
-				for (let r in resource_list) {
-					let res = resource_list[r];
-
+				// Process each resource in the terminal
+				for (let res of terminalResources) {
+					// Skip if this resource is being filled or has no amount
 					if (filling.includes(res)
 						|| ((res != "energy" && (terminal.store[res] == null || terminal.store[res] == 0))
 							|| (res == "energy" && terminal.store[res] == 0)))
 						continue;
 
+					// Check if this resource is needed by any factory in the room
+					let isFactoryComponent = factoryComponents.has(res);
+					
+					// Check if this resource is needed by any active factory assignment
+					if (!isFactoryComponent) {
+						for (let factory of factories) {
+							let assignment = _.get(Memory, ["resources", "factories", "assignments", factory.id]);
+							if (assignment && assignment.components && assignment.components[res]) {
+								isFactoryComponent = true;
+								break;
+							}
+						}
+					}
+
+					// Use higher priority for factory components to ensure they get moved quickly
+					let priority = isFactoryComponent ? 1 : 6; // Priority 1 for factory components, 6 for others
+
 					Memory.rooms[rmColony].industry.tasks.push(
-						{ type: "withdraw", resource: res, id: terminal.id, timer: 60, priority: 6 },
-						{ type: "deposit", resource: res, id: storage.id, timer: 60, priority: 6 });
+						{ type: "withdraw", resource: res, id: terminal.id, timer: 60, priority: priority },
+						{ type: "deposit", resource: res, id: storage.id, timer: 60, priority: priority });
 				}
 			},
 
@@ -8486,6 +8525,12 @@ let Console = {
 		help_factories.push("factories.debug()");
 		help_factories.push(" - Shows detailed factory debugging information");
 
+		help_factories.push("factories.debug_resources()");
+		help_factories.push(" - Shows detailed resource tracking for factory components");
+
+		help_factories.push("factories.debug_terminal()");
+		help_factories.push(" - Shows terminal contents and emptying tasks");
+
 		help_factories.push("factories.list_commodities()");
 		help_factories.push(" - Lists all available commodities and their recipes");
 
@@ -9394,6 +9439,171 @@ let Console = {
 			}
 			
 			return `<font color=\"#D3FFA3\">[Factory]</font> Factory debug information displayed${roomFilter ? ` for ${roomFilter}` : ''}.`;
+		};
+
+		factories.debug_resources = function () {
+			console.log(`<font color=\"#FFA500\">[Factory]</font> <b>Factory Resource Tracking Debug:</b>`);
+			
+			// Get all factory components that might be in use
+			let allComponents = new Set();
+			let assignments = _.get(Memory, ["resources", "factories", "assignments"], {});
+			
+			// Collect all components from active assignments
+			for (let factoryId in assignments) {
+				let assignment = assignments[factoryId];
+				if (assignment && assignment.components) {
+					for (let component in assignment.components) {
+						allComponents.add(component);
+					}
+				}
+			}
+			
+			// Add common factory components
+			allComponents.add("battery");
+			allComponents.add("cell");
+			allComponents.add("phlegm");
+			allComponents.add("tissue");
+			allComponents.add("muscle");
+			allComponents.add("organoid");
+			allComponents.add("organism");
+			
+			let tableStyle = "style=\"border-collapse: collapse; border: 1px solid #666; margin: 5px 0;\"";
+			let cellStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left;\"";
+			let headerStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left; background-color: #444; color: #D3FFA3; font-weight: bold;\"";
+			
+			_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+				let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+				if (factories.length === 0) return;
+				
+				console.log(`<font color=\"#D3FFA3\">${room.name} Resource Tracking:</font>`);
+				
+				// Resource tracking table
+				let resourceTable = `<table ${tableStyle}><tr><th ${headerStyle}>Resource</th><th ${headerStyle}>Storage</th><th ${headerStyle}>Terminal</th><th ${headerStyle}>Factories</th><th ${headerStyle}>Total (room.store)</th><th ${headerStyle}>Status</th></tr>`;
+				
+				for (let component of allComponents) {
+					let storageAmount = room.storage ? _.get(room.storage, ["store", component], 0) : 0;
+					let terminalAmount = room.terminal ? _.get(room.terminal, ["store", component], 0) : 0;
+					let factoryAmount = 0;
+					
+					// Calculate factory amounts
+					for (let factory of factories) {
+						factoryAmount += _.get(factory, ["store", component], 0);
+					}
+					
+					let totalAmount = room.store(component);
+					let expectedTotal = storageAmount + terminalAmount + factoryAmount;
+					
+					let status = "✓ OK";
+					let statusColor = "green";
+					if (totalAmount !== expectedTotal) {
+						status = "⚠ Mismatch";
+						statusColor = "orange";
+					}
+					if (terminalAmount > 0) {
+						status += " (Terminal)";
+						statusColor = "yellow";
+					}
+					
+					resourceTable += `<tr><td ${cellStyle}>${component}</td><td ${cellStyle}>${storageAmount}</td><td ${cellStyle}>${terminalAmount}</td><td ${cellStyle}>${factoryAmount}</td><td ${cellStyle}>${totalAmount}</td><td ${cellStyle}><font color=\"${statusColor}\">${status}</font></td></tr>`;
+				}
+				
+				resourceTable += "</table>";
+				console.log(resourceTable);
+				
+				// Show terminal emptying tasks
+				let tasks = _.get(Memory, ["rooms", room.name, "industry", "tasks"]);
+				if (tasks && tasks.length > 0) {
+					let terminalTasks = _.filter(tasks, t => t.id && Game.getObjectById(t.id) && Game.getObjectById(t.id).structureType === "terminal");
+					if (terminalTasks.length > 0) {
+						console.log(`<font color=\"#D3FFA3\">${room.name} Terminal Tasks:</font>`);
+						let taskTable = `<table ${tableStyle}><tr><th ${headerStyle}>Type</th><th ${headerStyle}>Resource</th><th ${headerStyle}>Priority</th><th ${headerStyle}>Timer</th></tr>`;
+						
+						_.each(terminalTasks, task => {
+							taskTable += `<tr><td ${cellStyle}>${task.type}</td><td ${cellStyle}>${task.resource}</td><td ${cellStyle}>${task.priority}</td><td ${cellStyle}>${task.timer}</td></tr>`;
+						});
+						
+						taskTable += "</table>";
+						console.log(taskTable);
+					}
+				}
+			});
+			
+			return `<font color=\"#FFA500\">[Factory]</font> Resource tracking debug completed.`;
+		};
+
+		factories.debug_terminal = function () {
+			console.log(`<font color=\"#FFA500\">[Factory]</font> <b>Terminal Emptying Debug:</b>`);
+			
+			_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+				if (!room.terminal) return;
+				
+				let terminal = room.terminal;
+				let storage = room.storage;
+				let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+				
+				console.log(`<font color=\"#D3FFA3\">${room.name} Terminal Analysis:</font>`);
+				
+				let tableStyle = "style=\"border-collapse: collapse; border: 1px solid #666; margin: 5px 0;\"";
+				let cellStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left;\"";
+				let headerStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left; background-color: #444; color: #D3FFA3; font-weight: bold;\"";
+				
+				// Terminal contents table
+				let terminalTable = `<table ${tableStyle}><tr><th ${headerStyle}>Resource</th><th ${headerStyle}>Amount</th><th ${headerStyle}>Is Factory Component</th><th ${headerStyle}>Priority</th></tr>`;
+				
+				// Get all factory components that might be needed
+				let factoryComponents = new Set();
+				for (let factory of factories) {
+					let assignment = _.get(Memory, ["resources", "factories", "assignments", factory.id]);
+					if (assignment && assignment.components) {
+						for (let component in assignment.components) {
+							factoryComponents.add(component);
+						}
+					}
+				}
+				
+				// Add common factory components
+				let commonFactoryComponents = ["battery", "cell", "phlegm", "tissue", "muscle", "organoid", "organism"];
+				for (let component of commonFactoryComponents) {
+					factoryComponents.add(component);
+				}
+				
+				for (let resource in terminal.store) {
+					let amount = terminal.store[resource];
+					if (amount > 0) {
+						let isFactoryComponent = factoryComponents.has(resource);
+						let priority = isFactoryComponent ? 1 : 6;
+						let priorityText = isFactoryComponent ? "High (1)" : "Low (6)";
+						
+						terminalTable += `<tr><td ${cellStyle}>${resource}</td><td ${cellStyle}>${amount}</td><td ${cellStyle}>${isFactoryComponent ? "✓ Yes" : "✗ No"}</td><td ${cellStyle}>${priorityText}</td></tr>`;
+					}
+				}
+				
+				terminalTable += "</table>";
+				console.log(terminalTable);
+				
+				// Show terminal emptying tasks
+				let tasks = _.get(Memory, ["rooms", room.name, "industry", "tasks"]);
+				if (tasks && tasks.length > 0) {
+					let terminalTasks = _.filter(tasks, t => t.id && Game.getObjectById(t.id) && Game.getObjectById(t.id).structureType === "terminal");
+					if (terminalTasks.length > 0) {
+						console.log(`<font color=\"#D3FFA3\">${room.name} Terminal Emptying Tasks:</font>`);
+						let taskTable = `<table ${tableStyle}><tr><th ${headerStyle}>Type</th><th ${headerStyle}>Resource</th><th ${headerStyle}>Priority</th><th ${headerStyle}>Timer</th></tr>`;
+						
+						_.each(terminalTasks, task => {
+							taskTable += `<tr><td ${cellStyle}>${task.type}</td><td ${cellStyle}>${task.resource}</td><td ${cellStyle}>${task.priority}</td><td ${cellStyle}>${task.timer}</td></tr>`;
+						});
+						
+						taskTable += "</table>";
+						console.log(taskTable);
+					} else {
+						console.log(`<font color=\"#FFA500\">${room.name}: No terminal emptying tasks found.`);
+					}
+				} else {
+					console.log(`<font color=\"#FFA500\">${room.name}: No industry tasks found.`);
+				}
+			});
+			
+			return `<font color=\"#FFA500\">[Factory]</font> Terminal debugging completed.`;
 		};
 
 
