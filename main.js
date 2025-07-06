@@ -4608,22 +4608,49 @@ let Sites = {
 			surveyRoom: function (rmColony, rmHarvest) {
 				let visible = _.keys(Game.rooms).includes(rmHarvest);
 				_.set(Memory, ["sites", "mining", rmHarvest, "survey", "visible"], visible);
-				_.set(Memory, ["sites", "mining", rmHarvest, "survey", "has_minerals"],
-					visible ? _.filter(Game.rooms[rmHarvest].find(FIND_MINERALS), m => { return m.mineralAmount > 0; }).length > 0 : false);
-				if (_.get(Memory, ["sites", "mining", rmHarvest, "survey", "source_amount"], 0) == 0)
-					_.set(Memory, ["sites", "mining", rmHarvest, "survey", "source_amount"],
-						(visible ? Game.rooms[rmHarvest].findSources().length : 0));
-
-				let hostiles = visible
-					? _.filter(Game.rooms[rmHarvest].find(FIND_HOSTILE_CREEPS),
-						c => { return c.isHostile() && c.owner.username != "Source Keeper"; })
-					: new Array();
-
-				let invaderCore = visible
-					? _.head(_.filter(Game.rooms[rmHarvest].find(FIND_STRUCTURES),
-						s => s.structureType == "invaderCore"))
-					: null;
-
+				
+				// Cache survey data to avoid repeated calculations
+				let surveyData = _.get(Memory, ["sites", "mining", rmHarvest, "survey"]);
+				if (!surveyData) {
+					surveyData = {};
+					_.set(Memory, ["sites", "mining", rmHarvest, "survey"], surveyData);
+				}
+				
+				// Only calculate minerals and sources if not already cached
+				if (visible && surveyData.has_minerals === undefined) {
+					let minerals = Game.rooms[rmHarvest].find(FIND_MINERALS);
+					surveyData.has_minerals = minerals.some(m => m.mineralAmount > 0);
+					surveyData.source_amount = Game.rooms[rmHarvest].findSources().length;
+				} else if (!visible) {
+					surveyData.has_minerals = false;
+					surveyData.source_amount = 0;
+				}
+				
+				// Cache hostile detection
+				let hostiles = [];
+				let invaderCore = null;
+				
+				if (visible) {
+					// Optimize hostile detection with early exit
+					let allCreeps = Game.rooms[rmHarvest].find(FIND_HOSTILE_CREEPS);
+					for (let creep of allCreeps) {
+						if (creep.isHostile() && creep.owner.username !== "Source Keeper") {
+							hostiles.push(creep);
+						}
+					}
+					
+					// Only search for invader core if no hostiles found
+					if (hostiles.length === 0) {
+						let structures = Game.rooms[rmHarvest].find(FIND_STRUCTURES);
+						for (let structure of structures) {
+							if (structure.structureType === "invaderCore") {
+								invaderCore = structure;
+								break;
+							}
+						}
+					}
+				}
+				
 				let is_safe = visible && hostiles.length == 0 && invaderCore == null;
 				_.set(Memory, ["rooms", rmHarvest, "defense", "is_safe"], is_safe);
 				_.set(Memory, ["sites", "mining", rmHarvest, "defense", "is_safe"], is_safe);
@@ -4631,29 +4658,38 @@ let Sites = {
 
 				// Can only mine a site/room if it is not reserved, or is reserved by the player
 				let reservation = _.get(Game, ["rooms", rmHarvest, "controller", "reservation"], null);
-				let can_mine = visible && (reservation == null || _.get(reservation, "username", null) == getUsername())
+				let can_mine = visible && (reservation == null || _.get(reservation, "username", null) == getUsername());
 				_.set(Memory, ["sites", "mining", rmHarvest, "can_mine"], can_mine);
 
 				// Tally energy sitting in containers awaiting carriers to take to storage...
 				if (_.get(Game, ["rooms", rmColony, "storage"], null) != null) {
-					let containers = !visible ? null
-						: _.filter(Game.rooms[rmHarvest].find(FIND_STRUCTURES),
-							s => { return s.structureType == STRUCTURE_CONTAINER; });
+					let containers = null;
+					if (visible) {
+						let allStructures = Game.rooms[rmHarvest].find(FIND_STRUCTURES);
+						containers = allStructures.filter(s => s.structureType === STRUCTURE_CONTAINER);
+					}
 
-					if (containers == null) {
+					if (!containers || containers.length === 0) {
 						_.set(Memory, ["sites", "mining", rmHarvest, "store_total"], 0);
 						_.set(Memory, ["sites", "mining", rmHarvest, "store_percent"], 0);
 					} else {
-						let store_energy = _.sum(containers, c => { return c.store["energy"]; });
+						let store_energy = 0;
+						for (let container of containers) {
+							store_energy += container.store["energy"] || 0;
+						}
 						let store_capacity = containers.length * 2000;
 						_.set(Memory, ["sites", "mining", rmHarvest, "store_total"], store_energy);
 						_.set(Memory, ["sites", "mining", rmHarvest, "store_percent"], store_energy / store_capacity);
 					}
 				}
 
-				_.set(Memory, ["sites", "mining", rmHarvest, "survey", "reserve_access"],
-					(!visible || _.get(Game, ["rooms", rmHarvest, "controller", "pos"], null) == null) ? 0
-						: Game.rooms[rmHarvest].controller.pos.getAccessAmount(false));
+				// Only calculate reserve access if controller exists
+				if (visible && Game.rooms[rmHarvest].controller && Game.rooms[rmHarvest].controller.pos) {
+					_.set(Memory, ["sites", "mining", rmHarvest, "survey", "reserve_access"], 
+						Game.rooms[rmHarvest].controller.pos.getAccessAmount(false));
+				} else {
+					_.set(Memory, ["sites", "mining", rmHarvest, "survey", "reserve_access"], 0);
+				}
 			},
 
 			runPopulation: function (rmColony, rmHarvest, listCreeps, listSpawnRooms, hasKeepers) {
@@ -4895,35 +4931,52 @@ let Sites = {
 			},
 
 			runCreeps: function (rmColony, rmHarvest, listCreeps, hasKeepers, listRoute) {
+				// Cache safety and mining status to avoid repeated memory lookups
 				let is_safe = _.get(Memory, ["sites", "mining", rmHarvest, "defense", "is_safe"]);
 				let can_mine = _.get(Memory, ["sites", "mining", rmHarvest, "can_mine"]);
 
+				// Cache route assignment to avoid repeated memory writes
+				if (listRoute && listRoute.length > 0) {
+					_.each(listCreeps, creep => {
+						if (!creep.memory.list_route || creep.memory.list_route.length !== listRoute.length) {
+							creep.memory.list_route = listRoute;
+						}
+					});
+				}
+
 				_.each(listCreeps, creep => {
-					_.set(creep, ["memory", "list_route"], listRoute);
-
-					switch (_.get(creep, ["memory", "role"])) {
-						case "scout": Creep_Roles.Scout(creep); break;
-						case "extractor": Creep_Roles.Extractor(creep, is_safe); break;
-						case "reserver": Creep_Roles.Reserver(creep); break;
-						case "healer": Creep_Roles.Healer(creep, true); break;
-
-						case "miner": case "burrower": case "carrier":
+					let role = creep.memory.role;
+					
+					switch (role) {
+						case "scout": 
+							Creep_Roles.Scout(creep); 
+							break;
+						case "extractor": 
+							Creep_Roles.Extractor(creep, is_safe); 
+							break;
+						case "reserver": 
+							Creep_Roles.Reserver(creep); 
+							break;
+						case "healer": 
+							Creep_Roles.Healer(creep, true); 
+							break;
+						case "miner": 
+						case "burrower": 
+						case "carrier":
 							Creep_Roles.Mining(creep, is_safe, can_mine);
 							break;
-
 						case "dredger":
 							// This role hasn't been implemented yet...
 							//Creep_Roles.Dredger(creep, can_mine);
 							break;
-
-						case "soldier": case "paladin":
+						case "soldier": 
+						case "paladin":
 							Creep_Roles.Soldier(creep, false, true);
 							break;
-
-						case "ranger": case "archer":
+						case "ranger": 
+						case "archer":
 							Creep_Roles.Archer(creep, false, true);
 							break;
-
 						case "multirole":
 							if (hasKeepers || (is_safe && can_mine))
 								Creep_Roles.Worker(creep, is_safe);
@@ -4959,54 +5012,6 @@ let Sites = {
 
 	Industry: function (rmColony) {
 		let Industry = {
-
-			// Factory logging throttling system
-			factoryLogThrottle: {
-				lastLogTime: {},
-				logIntervals: {
-					'needs_components': 50,  // Log factory needs components every 50 ticks
-					'created_tasks': 30,     // Log created tasks every 30 ticks
-					'cleanup_skip': 100,     // Log cleanup skip every 100 ticks
-					'stockpile_cleanup': 200, // Log stockpile cleanup every 200 ticks
-					'assignment_debug': 500   // Log assignment debug every 500 ticks
-				},
-				
-				shouldLog: function(roomName, logType) {
-					let key = `${roomName}_${logType}`;
-					let currentTick = Game.time;
-					let lastTime = this.lastLogTime[key] || 0;
-					
-					// Check for custom intervals from Memory first, then fall back to defaults
-					let interval = 50; // default
-					if (Memory.factories && Memory.factories.logIntervals && Memory.factories.logIntervals[logType]) {
-						interval = Memory.factories.logIntervals[logType];
-					} else {
-						interval = this.logIntervals[logType] || 50;
-					}
-					
-					if (currentTick - lastTime >= interval) {
-						this.lastLogTime[key] = currentTick;
-						return true;
-					}
-					return false;
-				},
-				
-				log: function(roomName, logType, message) {
-					if (this.shouldLog(roomName, logType)) {
-						console.log(`<font color=\"#FFA500\">[Factory]</font> ${message}`);
-					}
-				},
-				
-				// Clear old throttle data to prevent memory bloat
-				cleanup: function() {
-					let currentTick = Game.time;
-					for (let key in this.lastLogTime) {
-						if (currentTick - this.lastLogTime[key] > 1000) {
-							delete this.lastLogTime[key];
-						}
-					}
-				}
-			},
 
 			Run: function (rmColony) {
 				// Expanded scope variables:
@@ -5677,12 +5682,7 @@ let Sites = {
 						continue;
 					}
 
-					// Debug emergency orders (only show once per order)
-					if (order.emergency && order.debug_shown != Game.time) {
-						let orderType = order.terminal_fuel ? "TERMINAL FUEL" : "MARKET";
-						console.log(`<font color=\"#FFA500\">[Debug]</font> Processing emergency order ${order.name}: type=${orderType}, market_id=${order.market_id}, to=${order.to}, amount=${order.amount}`);
-						order.debug_shown = Game.time;
-					}
+					// Debug logging removed for CPU optimization
 
 					if ((order["market_id"] == null && order["room"] != rmColony)
 						|| (order["market_id"] != null && order["type"] == "buy" && order["from"] == rmColony)) {
@@ -5693,9 +5693,8 @@ let Sites = {
 						// Sell order means I'm buying...
 						if (this.runOrder_Receive(rmColony, order, storage, terminal, filling) == true)
 							return;
-					} else if (order.emergency && order.debug_not_processed != Game.time) {
-						console.log(`<font color=\"#FFA500\">[Debug]</font> Emergency order ${order.name} not processed: market_id=${order.market_id}, type=${order.type}, to=${order.to}`);
-						order.debug_not_processed = Game.time;
+					} else if (order.emergency) {
+						// Debug logging removed for CPU optimization
 					}
 				}
 			},
@@ -5829,9 +5828,7 @@ let Sites = {
 				 */
 
 				if (terminal.cooldown > 0) {
-					if (order.emergency) {
-						console.log(`<font color=\"#FFA500\">[Debug]</font> Emergency order ${order.name} blocked by terminal cooldown: ${terminal.cooldown}`);
-					}
+					// Debug logging removed for CPU optimization
 					return false;
 				}
 
@@ -5858,9 +5855,7 @@ let Sites = {
 							+ ` ${amount} of ${res} ${order["room"]} -> ${rmColony} (code: ${result})`);
 					}
 				} else {
-					if (order.emergency) {
-						console.log(`<font color=\"#FFA500\">[Debug]</font> Emergency order ${order.name} blocked by insufficient terminal energy: need ${cost}, have ${_.get(terminal, ["store", "energy"], 0)}`);
-					}
+					// Debug logging removed for CPU optimization
 					
 					// For emergency orders, create a high-priority energy order to get energy to the terminal
 					if (order.emergency) {
@@ -5954,8 +5949,12 @@ let Sites = {
 			},
 
 			runFactories: function (rmColony) {
-				let factories = _.filter(Game.rooms[rmColony].find(FIND_MY_STRUCTURES), 
-					s => s.structureType == "factory");
+				// Cache factory structures to avoid repeated find() calls
+				if (!Game.rooms[rmColony]._cachedFactories) {
+					Game.rooms[rmColony]._cachedFactories = _.filter(Game.rooms[rmColony].find(FIND_MY_STRUCTURES), 
+						s => s.structureType == "factory");
+				}
+				let factories = Game.rooms[rmColony]._cachedFactories;
 				
 				if (factories.length == 0) return;
 
@@ -5972,15 +5971,23 @@ let Sites = {
 				let targets = _.get(Memory, ["resources", "factories", "targets"]);
 				if (targets == null || Object.keys(targets).length == 0) return;
 
+				// Cache commodity counts to avoid repeated room iterations
+				if (!Memory._commodityCounts || Game.time % 10 == 0) {
+					Memory._commodityCounts = {};
+					_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+						for (let commodity in targets) {
+							if (!Memory._commodityCounts[commodity]) Memory._commodityCounts[commodity] = 0;
+							Memory._commodityCounts[commodity] += room.store(commodity);
+						}
+					});
+				}
+
 				// Sort targets by priority (lower number = higher priority)
 				let sortedTargets = _.sortBy(targets, "priority");
 
 				for (let target of sortedTargets) {
 					let commodity = target.commodity;
-					let current = 0;
-					_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
-						current += room.store(commodity);
-					});
+					let current = Memory._commodityCounts[commodity] || 0;
 
 					// If we've reached the target, skip this commodity
 					if (current >= target.amount) continue;
@@ -6021,12 +6028,17 @@ let Sites = {
 					return;
 				}
 
-				// Get all factories across all rooms
-				let allFactories = [];
-				_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
-					let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
-					allFactories = allFactories.concat(factories);
-				});
+				// Cache all factories to avoid repeated find() calls
+				if (!Memory._cachedAllFactories || Game.time % 20 == 0) {
+					Memory._cachedAllFactories = [];
+					_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+						if (!room._cachedFactories) {
+							room._cachedFactories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+						}
+						Memory._cachedAllFactories = Memory._cachedAllFactories.concat(room._cachedFactories);
+					});
+				}
+				let allFactories = Memory._cachedAllFactories;
 				
 				if (allFactories.length == 0) return;
 
@@ -6046,19 +6058,33 @@ let Sites = {
 				let assignmentsChanged = false;
 				let assignedFactories = new Set(); // Track factories assigned in this iteration
 
-				this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Existing assignments: ${Object.keys(existingAssignments).length}`);
-				for (let factoryId in existingAssignments) {
-					this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Existing: ${factoryId} -> ${existingAssignments[factoryId].commodity}`);
-				}
-
 				// Create a list of commodities that need production (sorted by priority)
 				let commoditiesToProduce = [];
+				
+				// Use cached commodity counts if available
+				let commodityCounts = Memory._commodityCounts || {};
+				let componentCounts = Memory._componentCounts || {};
+				
+				// Cache component counts if not available
+				if (!Memory._componentCounts || Game.time % 15 == 0) {
+					Memory._componentCounts = {};
+					_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+						for (let target of sortedTargets) {
+							let components = this.getCommodityComponents(target.commodity);
+							if (components) {
+								for (let component in components) {
+									if (!Memory._componentCounts[component]) Memory._componentCounts[component] = 0;
+									Memory._componentCounts[component] += room.store(component);
+								}
+							}
+						}
+					});
+					componentCounts = Memory._componentCounts;
+				}
+				
 				for (let target of sortedTargets) {
 					let commodity = target.commodity;
-					let current = 0;
-					_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
-						current += room.store(commodity);
-					});
+					let current = commodityCounts[commodity] || 0;
 
 					// If we've reached the target, skip this commodity
 					if (current >= target.amount) continue;
@@ -6067,14 +6093,11 @@ let Sites = {
 					let components = this.getCommodityComponents(commodity);
 					if (components == null) continue;
 
-					// Check if we have enough components available
+					// Check if we have enough components available using cached counts
 					let hasComponents = true;
 					for (let component in components) {
 						let amount = components[component];
-						let available = 0;
-						_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
-							available += room.store(component);
-						});
+						let available = componentCounts[component] || 0;
 						if (available < amount) {
 							hasComponents = false;
 							break;
@@ -6097,7 +6120,7 @@ let Sites = {
 				let totalFactories = allFactories.length;
 				let consecutiveFailures = 0; // Track consecutive failures to prevent infinite loops
 
-				this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Starting assignment: ${totalFactories} total factories, ${commoditiesToProduce.length} commodities to produce`);
+				// Debug logging removed for CPU optimization
 
 				while (factoriesAssigned < totalFactories && commoditiesToProduce.length > 0 && consecutiveFailures < commoditiesToProduce.length) {
 					let commodityData = commoditiesToProduce[commodityIndex % commoditiesToProduce.length];
@@ -6112,7 +6135,7 @@ let Sites = {
 					
 					for (let factory of allFactories) {
 						if (factory.cooldown > 0) {
-							this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Factory ${factory.id} on cooldown`);
+							// Debug logging removed for CPU optimization
 							continue;
 						}
 
@@ -6134,8 +6157,7 @@ let Sites = {
 						newAssignments[factory.id] = newAssignment;
 						assignedFactories.add(factory.id); // Mark this factory as assigned
 
-						// Log the assignment
-						this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Assigning ${factory.pos.roomName} factory ${factory.id} to create ${commodity} (priority ${priority}).`);
+						// Assignment logged for CPU optimization
 						assignmentsChanged = true;
 						
 						factoriesAssigned++;
@@ -6146,7 +6168,7 @@ let Sites = {
 
 					// If no factory was assigned for this commodity, move to next commodity
 					if (!factoryAssigned) {
-						this.factoryLogThrottle.log(rmColony, 'assignment_debug', `No factory assigned for ${commodity}. Available: ${availableFactories}, Already assigned: ${assignedFactoriesCount}, Total assigned so far: ${factoriesAssigned}`);
+						// Debug logging removed for CPU optimization
 						consecutiveFailures++;
 						commodityIndex++;
 					} else {
@@ -6155,7 +6177,7 @@ let Sites = {
 					}
 				}
 
-				this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Assignment complete: ${factoriesAssigned}/${totalFactories} factories assigned`);
+				// Debug logging removed for CPU optimization
 
 				// Update assignments
 				_.set(Memory, ["resources", "factories", "assignments"], newAssignments);
@@ -6167,10 +6189,7 @@ let Sites = {
 			},
 
 			createFactoryTasks: function (rmColony) {
-				// Clean up old throttle data periodically
-				if (Game.time % 1000 === 0) {
-					this.factoryLogThrottle.cleanup();
-				}
+				// Throttle cleanup removed for CPU optimization
 				
 				let factories = _.filter(Game.rooms[rmColony].find(FIND_MY_STRUCTURES), 
 					s => s.structureType == "factory");
@@ -6181,13 +6200,13 @@ let Sites = {
 
 				let targets = _.get(Memory, ["resources", "factories", "targets"]);
 				if (targets == null || Object.keys(targets).length == 0) {
-					this.factoryLogThrottle.log(rmColony, 'assignment_debug', `${rmColony}: No factory targets set`);
+					// Debug logging removed for CPU optimization
 					return;
 				}
 
 				let storage = Game.rooms[rmColony].storage;
 				if (storage == null) {
-					this.factoryLogThrottle.log(rmColony, 'assignment_debug', `${rmColony}: No storage found`);
+					// Debug logging removed for CPU optimization
 					return;
 				}
 
@@ -6197,7 +6216,6 @@ let Sites = {
 				// Check if there are active cleanup tasks - if so, don't create loading tasks
 				let activeCleanupTasks = _.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority == 1);
 				if (activeCleanupTasks.length > 0) {
-					console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: ${activeCleanupTasks.length} cleanup tasks active, skipping loading tasks`);
 					// Create tasks for factory operators to move produced commodities to storage
 					this.createFactoryOperatorTasks(rmColony);
 					return; // Don't create loading tasks while cleanup is in progress
@@ -6241,7 +6259,7 @@ let Sites = {
 						}
 
 						if (!hasComponents) {
-							this.factoryLogThrottle.log(rmColony, 'needs_components', `${rmColony}: Not enough components for ${commodity}, waiting for terminal orders to fill stockpile`);
+							// Debug logging removed for CPU optimization
 							continue;
 						}
 
@@ -6256,7 +6274,7 @@ let Sites = {
 						}
 
 						if (needsComponents) {
-							this.factoryLogThrottle.log(rmColony, 'needs_components', `${rmColony}: Factory ${factory.id} needs components for ${commodity}`);
+							// Debug logging removed for CPU optimization
 							// Create tasks to load components into factory
 							for (let component in components) {
 								let amount = components[component];
@@ -6266,7 +6284,7 @@ let Sites = {
 										{ type: "withdraw", resource: component, id: storage.id, timer: 60, priority: 2 },
 										{ type: "deposit", resource: component, id: factory.id, timer: 60, priority: 2 }
 									);
-									this.factoryLogThrottle.log(rmColony, 'created_tasks', `${rmColony}: Created loading tasks for ${component} (${needed} needed)`);
+									// Debug logging removed for CPU optimization
 								}
 							}
 						}
@@ -6324,7 +6342,7 @@ let Sites = {
 							// If not used by any commodity, remove the stockpile target
 							if (!isUsed) {
 								delete stockpile[resource];
-								this.factoryLogThrottle.log(rmColony, 'stockpile_cleanup', `${rmColony}: Removed stockpile target for unused component ${resource}`);
+								// Debug logging removed for CPU optimization
 							}
 						}
 					}
@@ -6363,7 +6381,7 @@ let Sites = {
 						// If it's a factory component and not needed, remove the stockpile target
 						if (isFactoryComponent && !neededComponents.has(resource)) {
 							delete stockpile[resource];
-							this.factoryLogThrottle.log(rmColony, 'stockpile_cleanup', `${rmColony}: Removed stockpile target for unused component ${resource}`);
+							// Debug logging removed for CPU optimization
 						}
 					}
 				}
@@ -6409,7 +6427,7 @@ let Sites = {
 				// Only run cleanup if there are no active component loading tasks
 				let activeLoadingTasks = _.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority == 2);
 				if (activeLoadingTasks.length > 0) {
-					this.factoryLogThrottle.log(rmColony, 'cleanup_skip', `${rmColony}: ${activeLoadingTasks.length} loading tasks active, skipping cleanup`);
+					// Debug logging removed for CPU optimization
 					return;
 				}
 
@@ -6487,7 +6505,7 @@ let Sites = {
 				}
 				
 				if (cleanupTasksCreated > 0) {
-					this.factoryLogThrottle.log(rmColony, 'cleanup_skip', `${rmColony}: Created ${cleanupTasksCreated} cleanup tasks${cleanupDetails.length > 0 ? ' - ' + cleanupDetails.join(', ') : ''}`);
+					// Debug logging removed for CPU optimization
 				}
 			},
 		};
@@ -7168,13 +7186,14 @@ let Control = {
 		Stats_CPU.Start("Hive", "initMemory");
 
 		// Use odd intervals or odd numbers to prevent stacking multiple pulses on one tick
-		this.setPulse("defense", 4, 8);
-		this.setPulse("short", 9, 60);
-		this.setPulse("mid", 19, 90);
-		this.setPulse("long", 49, 200);
-		this.setPulse("spawn", 14, 30);
+		// Optimized intervals for reduced CPU usage
+		this.setPulse("defense", 8, 16);
+		this.setPulse("short", 19, 120);
+		this.setPulse("mid", 39, 180);
+		this.setPulse("long", 99, 400);
+		this.setPulse("spawn", 29, 60);
 		this.setPulse("lab", 1999, 2000);
-		this.setPulse("blueprint", 99, 500);
+		this.setPulse("blueprint", 199, 1000);
 
 		if (_.get(Memory, ["rooms"]) == null) _.set(Memory, ["rooms"], new Object());
 		if (_.get(Memory, ["hive", "allies"]) == null) _.set(Memory, ["hive", "allies"], new Array());
@@ -7265,65 +7284,131 @@ let Control = {
 
 		Stats_CPU.Start("Hive", "processSpawnRequests");
 
-		let requests_group = _.groupBy(_.get(Memory, ["hive", "spawn_requests"]),
-			r => { return _.get(r, "room"); });
-		let listRequests = new Array();
+		// Cache spawn requests to avoid repeated memory lookups
+		let spawnRequests = _.get(Memory, ["hive", "spawn_requests"]);
+		if (!spawnRequests || spawnRequests.length == 0) {
+			Stats_CPU.End("Hive", "processSpawnRequests");
+			return;
+		}
 
-		_.each(requests_group, r => {
-			listRequests.push(_.head(_.sortBy(r, req => { return _.get(req, "priority"); })))
-		});
+		// Cache available spawns once
+		let availableSpawns = [];
+		let spawnsByRoom = {};
+		for (let spawnName in Game["spawns"]) {
+			let spawn = Game["spawns"][spawnName];
+			if (spawn.spawning == null) {
+				availableSpawns.push(spawnName);
+				if (!spawnsByRoom[spawn.room.name]) {
+					spawnsByRoom[spawn.room.name] = [];
+				}
+				spawnsByRoom[spawn.room.name].push(spawnName);
+			}
+		}
 
-		let listSpawns = _.filter(Object.keys(Game["spawns"]), s => { return Game["spawns"][s].spawning == null; });
+		if (availableSpawns.length == 0) {
+			Stats_CPU.End("Hive", "processSpawnRequests");
+			return;
+		}
 
-		for (let i = 0; i < listRequests.length; i++) {
-			let request = listRequests[i];
+		// Group requests by room and get highest priority per room
+		let requestsByRoom = {};
+		for (let request of spawnRequests) {
+			let room = _.get(request, "room");
+			if (!requestsByRoom[room]) {
+				requestsByRoom[room] = [];
+			}
+			requestsByRoom[room].push(request);
+		}
 
-			_.each(_.sortBy(Object.keys(listSpawns),
-				s => { return request != null && _.get(Game, ["spawns", listSpawns[s], "room", "name"]) == _.get(request, ["room"]); }),
-				s => {
+		// Process each room's highest priority request
+		for (let room in requestsByRoom) {
+			if (availableSpawns.length == 0) break;
 
-					if (listSpawns[s] != null && listRequests[i] != null) {
-						let spawn = Game["spawns"][listSpawns[s]];
-						if (spawn.room.name == request.room || (request.listRooms != null && _.find(request.listRooms, r => { return r == spawn.room.name; }) != null)) {
+			// Sort by priority and get highest priority request
+			let roomRequests = requestsByRoom[room].sort((a, b) => _.get(a, "priority", 999) - _.get(b, "priority", 999));
+			let request = roomRequests[0];
+			if (!request) continue;
 
-							_.set(Memory, ["rooms", request.room, "population", "total"],
-								(_.get(Memory, ["rooms", request.room, "population", "actual"]) / _.get(Memory, ["rooms", request.room, "population", "target"])));
+			// Find best spawn for this request
+			let bestSpawn = null;
+			let bestSpawnName = null;
 
-							let level = (_.get(request, ["scale"], true) == false)
-								? Math.min(request.level, spawn.room.getLevel())
-								: Math.max(1, Math.min(Math.round(Memory["rooms"][request.room]["population"]["total"] * request.level),
-									spawn.room.getLevel()));
-							request.args["level"] = level;
-
-							let body = Creep_Body.getBody(request.body, level);
-							let name = request.name != null ? request.name
-								: request.args["role"].substring(0, 4)
-								+ (request.args["subrole"] == null ? "" : `-${request.args["subrole"].substring(0, 2)}`)
-								+ ":xxxx".replace(/[xy]/g, (c) => {
-									let r = Math.random() * 16 | 0, v = c == "x" ? r : (r & 0x3 | 0x8);
-									return v.toString(16);
-								});
-							let storage = _.get(spawn.room, "storage");
-							let energies = storage == null ? null : _.sortBy(_.filter(spawn.room.find(FIND_MY_STRUCTURES),
-								s => { return s.isActive() && (s.structureType == "extension" || s.structureType == "spawn"); }),
-								s => { return s.pos.getRangeTo(storage); });
-							let result = energies == null
-								? spawn.spawnCreep(body, name, { memory: request.args })
-								: spawn.spawnCreep(body, name, { memory: request.args, energyStructures: energies });
-
-							if (result == OK) {
-								console.log(`<font color=\"#19C800\">[Spawns]</font> Spawning `
-									+ (spawn.room.name == request.room ? `${request.room}  ` : `${spawn.room.name} -> ${request.room}  `)
-									+ `${level} / ${request.level}  ${name} : ${request.args["role"]}`
-									+ `${request.args["subrole"] == null ? "" : ", " + request.args["subrole"]} `
-									+ `(${request.body})`);
-
-								listSpawns[s] = null;
-								listRequests[i] = null;
-							}
+			// Prefer spawns in the same room
+			if (spawnsByRoom[room] && spawnsByRoom[room].length > 0) {
+				bestSpawnName = spawnsByRoom[room][0];
+				bestSpawn = Game["spawns"][bestSpawnName];
+			} else {
+				// Check listRooms for alternative spawns
+				let listRooms = _.get(request, "listRooms");
+				if (listRooms) {
+					for (let altRoom of listRooms) {
+						if (spawnsByRoom[altRoom] && spawnsByRoom[altRoom].length > 0) {
+							bestSpawnName = spawnsByRoom[altRoom][0];
+							bestSpawn = Game["spawns"][bestSpawnName];
+							break;
 						}
 					}
+				}
+			}
+
+			if (!bestSpawn) continue;
+
+			// Calculate population ratio once
+			let populationActual = _.get(Memory, ["rooms", room, "population", "actual"], 0);
+			let populationTarget = _.get(Memory, ["rooms", room, "population", "target"], 1);
+			let populationRatio = populationActual / populationTarget;
+			_.set(Memory, ["rooms", room, "population", "total"], populationRatio);
+
+			// Calculate level once
+			let scale = _.get(request, "scale", true);
+			let level = scale == false
+				? Math.min(request.level, bestSpawn.room.getLevel())
+				: Math.max(1, Math.min(Math.round(populationRatio * request.level), bestSpawn.room.getLevel()));
+			request.args["level"] = level;
+
+			let body = Creep_Body.getBody(request.body, level);
+			let name = request.name != null ? request.name
+				: request.args["role"].substring(0, 4)
+				+ (request.args["subrole"] == null ? "" : `-${request.args["subrole"].substring(0, 2)}`)
+				+ ":xxxx".replace(/[xy]/g, (c) => {
+					let r = Math.random() * 16 | 0, v = c == "x" ? r : (r & 0x3 | 0x8);
+					return v.toString(16);
 				});
+
+			// Optimize energy structures lookup - only if storage exists
+			let energies = null;
+			if (bestSpawn.room.storage) {
+				energies = bestSpawn.room.find(FIND_MY_STRUCTURES).filter(s => { 
+					return s.isActive() && (s.structureType == "extension" || s.structureType == "spawn"); 
+				}).sort(s => { return s.pos.getRangeTo(bestSpawn.room.storage); });
+			}
+
+			let result = energies == null
+				? bestSpawn.spawnCreep(body, name, { memory: request.args })
+				: bestSpawn.spawnCreep(body, name, { memory: request.args, energyStructures: energies });
+
+			if (result == OK) {
+				console.log(`<font color=\"#19C800\">[Spawns]</font> Spawning `
+					+ (bestSpawn.room.name == room ? `${room}  ` : `${bestSpawn.room.name} -> ${room}  `)
+					+ `${level} / ${request.level}  ${name} : ${request.args["role"]}`
+					+ `${request.args["subrole"] == null ? "" : ", " + request.args["subrole"]} `
+					+ `(${request.body})`);
+
+				// Remove the used spawn from all tracking arrays
+				let spawnIndex = availableSpawns.indexOf(bestSpawnName);
+				if (spawnIndex > -1) {
+					availableSpawns.splice(spawnIndex, 1);
+				}
+				
+				// Remove from spawnsByRoom
+				for (let roomName in spawnsByRoom) {
+					let roomSpawns = spawnsByRoom[roomName];
+					let roomIndex = roomSpawns.indexOf(bestSpawnName);
+					if (roomIndex > -1) {
+						roomSpawns.splice(roomIndex, 1);
+					}
+				}
+			}
 		}
 
 		Stats_CPU.End("Hive", "processSpawnRequests");
@@ -7332,16 +7417,25 @@ let Control = {
 	processSpawnRenewing: function () {
 		Stats_CPU.Start("Hive", "processSpawnRenewing");
 
-		let listSpawns = Object.keys(Game["spawns"]).filter((a) => { return Game.spawns[a].spawning == null && Game.spawns[a].room.energyAvailable > 300; });
+		// Cache spawns that are available and have energy
+		let availableSpawns = [];
+		for (let spawnName in Game["spawns"]) {
+			let spawn = Game["spawns"][spawnName];
+			if (spawn.spawning == null && spawn.room.energyAvailable > 300) {
+				availableSpawns.push(spawn);
+			}
+		}
 
-		for (let s in listSpawns) {
-			let spawn = Game["spawns"][listSpawns[s]];
-			let creeps = _.filter(spawn.pos.findInRange(FIND_MY_CREEPS, 1),
-				c => { return !c.isBoosted() && _.get(c, ["memory", "spawn_renew"], true); });
-
-			for (let c in creeps) {
-				if (spawn.renewCreep(creeps[c]) == OK)
-					break;
+		// Process each available spawn
+		for (let spawn of availableSpawns) {
+			// Find creeps in range that need renewal (optimized filter)
+			let nearbyCreeps = spawn.pos.findInRange(FIND_MY_CREEPS, 1);
+			for (let creep of nearbyCreeps) {
+				if (!creep.isBoosted() && creep.memory.spawn_renew !== false) {
+					if (spawn.renewCreep(creep) == OK) {
+						break; // Only renew one creep per spawn per tick
+					}
+				}
 			}
 		}
 
@@ -8382,6 +8476,7 @@ let Console = {
 
 		help_profiler.push("profiler.run(cycles)");
 		help_profiler.push("profiler.stop()");
+		help_profiler.push("profiler.analyze()");
 
 
 
@@ -8673,6 +8768,11 @@ let Console = {
 			if (totalTasks > 0) {
 				console.log(`<font color=\"#FFA500\">[Factory]</font> <b>Industry Tasks:</b> ${totalTasks} total (P2: ${priority2Tasks}, P3: ${priority3Tasks}, P5: ${priority5Tasks})`);
 			}
+
+			// CPU Usage Information
+			let cpuUsed = Game.cpu.getUsed();
+			let cpuBucket = Game.cpu.bucket;
+			console.log(`<font color=\"#FFA500\">[Factory]</font> <b>CPU Status:</b> Used: ${cpuUsed.toFixed(2)}, Bucket: ${cpuBucket.toFixed(0)}`);
 
 			return `<font color=\"#FFA500\">[Factory]</font> Factory status displayed.`;
 		};
@@ -10087,6 +10187,11 @@ let Console = {
 			let availableCredits = Game.market.credits || 0;
 			console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>Available Credits:</b> ${availableCredits.toLocaleString()}`);
 
+			// CPU Usage Information
+			let cpuUsed = Game.cpu.getUsed();
+			let cpuBucket = Game.cpu.bucket;
+			console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>CPU Status:</b> Used: ${cpuUsed.toFixed(2)}, Bucket: ${cpuBucket.toFixed(0)}`);
+
 			// Emergency Status with Enhanced Information
 			if (totalEnergy < energyThreshold) {
 				let nextCheckTick = Math.ceil(Game.time / 50) * 50 + 1;
@@ -10177,6 +10282,57 @@ let Console = {
 			} else {
 				return `<font color=\"#FF6B6B\">[Console]</font> Unknown config key: ${key}. Available: market_min_energy_gain`;
 			}
+		};
+
+		help_resources.push("resources.system_status()");
+		help_resources.push(" - Shows comprehensive system status including CPU, memory, and performance metrics");
+
+		resources.system_status = function() {
+			// CPU Usage
+			let cpuUsed = Game.cpu.getUsed();
+			let cpuBucket = Game.cpu.bucket;
+			let cpuLimit = Game.cpu.limit;
+			let cpuPercent = (cpuUsed / cpuLimit) * 100;
+			
+			console.log(`<font color=\"#D3FFA3\">[System Status]</font> <b>CPU Performance:</b>`);
+			console.log(`  Used: ${cpuUsed.toFixed(2)}/${cpuLimit} (${cpuPercent.toFixed(1)}%)`);
+			console.log(`  Bucket: ${cpuBucket.toFixed(0)}`);
+			console.log(`  Status: ${cpuPercent > 80 ? "⚠️ High" : cpuPercent > 60 ? "⚡ Medium" : "✅ Good"}`);
+			
+			// Memory Usage
+			let memorySize = JSON.stringify(Memory).length;
+			let memoryKB = (memorySize / 1024).toFixed(1);
+			console.log(`<font color=\"#D3FFA3\">[System Status]</font> <b>Memory Usage:</b> ${memoryKB} KB`);
+			
+			// Colony Status
+			let colonies = _.filter(Game.rooms, r => r.controller && r.controller.my);
+			let totalCreeps = Object.keys(Game.creeps).length;
+			let totalStructures = Object.keys(Game.structures).length;
+			
+			console.log(`<font color=\"#D3FFA3\">[System Status]</font> <b>Colony Status:</b>`);
+			console.log(`  Colonies: ${colonies.length}`);
+			console.log(`  Creeps: ${totalCreeps}`);
+			console.log(`  Structures: ${totalStructures}`);
+			
+			// Energy Status
+			let totalEnergy = 0;
+			_.each(colonies, colony => {
+				totalEnergy += colony.store("energy");
+			});
+			console.log(`<font color=\"#D3FFA3\">[System Status]</font> <b>Total Energy:</b> ${totalEnergy.toLocaleString()}`);
+			
+			// Market Status
+			let availableCredits = Game.market.credits || 0;
+			console.log(`<font color=\"#D3FFA3\">[System Status]</font> <b>Market Credits:</b> ${availableCredits.toLocaleString()}`);
+			
+			// Pulse Status
+			console.log(`<font color=\"#D3FFA3\">[System Status]</font> <b>Pulse Status:</b>`);
+			console.log(`  Defense: ${isPulse_Defense() ? "✅ Active" : "⏸️ Inactive"}`);
+			console.log(`  Short: ${isPulse_Short() ? "✅ Active" : "⏸️ Inactive"}`);
+			console.log(`  Mid: ${isPulse_Mid() ? "✅ Active" : "⏸️ Inactive"}`);
+			console.log(`  Spawn: ${isPulse_Spawn() ? "✅ Active" : "⏸️ Inactive"}`);
+			
+			return `<font color=\"#D3FFA3\">[System Status]</font> System status displayed.`;
 		};
 
 		help_resources.push("resources.fuel_terminals()");
@@ -10949,6 +11105,94 @@ let Stats_CPU = {
 		profiler.stop = function () {
 			_.set(Memory, ["hive", "profiler", "cycles"], 0);
 			return "<font color=\"#D3FFA3\">[CPU]</font> Profiler stopped"
+		};
+
+		// Enhanced profiling with optimization analysis
+		profiler.analyze = function () {
+			let current = _.get(Memory, ["hive", "profiler", "current"]);
+			if (!current) return "<font color=\"#FF6B6B\">[CPU]</font> No profiling data available. Run profiler.run() first.";
+			
+			let analysis = {
+				hotspots: [],
+				recommendations: [],
+				totalCPU: 0,
+				roomBreakdown: {}
+			};
+			
+			// Analyze each room's CPU usage
+			for (let room in current) {
+				let roomCPU = 0;
+				let roomFunctions = [];
+				
+				for (let func in current[room]) {
+					let funcData = current[room][func];
+					let totalUsed = 0;
+					let cycles = Object.keys(funcData).length;
+					
+					_.forEach(funcData, cycle => {
+						totalUsed += _.get(cycle, "used", 0);
+					});
+					
+					let avgCPU = totalUsed / cycles;
+					roomCPU += totalUsed;
+					
+					roomFunctions.push({
+						name: func,
+						total: totalUsed,
+						average: avgCPU,
+						cycles: cycles
+					});
+					
+					// Identify hotspots (>0.5 CPU average)
+					if (avgCPU > 0.5) {
+						analysis.hotspots.push({
+							room: room,
+							function: func,
+							avgCPU: avgCPU,
+							totalCPU: totalUsed
+						});
+					}
+				}
+				
+				analysis.roomBreakdown[room] = {
+					totalCPU: roomCPU,
+					functions: roomFunctions
+				};
+				analysis.totalCPU += roomCPU;
+			}
+			
+			// Generate optimization recommendations
+			analysis.hotspots.sort((a, b) => b.avgCPU - a.avgCPU);
+			
+			// Console output
+			console.log(`<font color=\"#D3FFA3\">[CPU Analysis]</font> <b>Performance Analysis:</b>`);
+			console.log(`<font color=\"#D3FFA3\">[CPU Analysis]</font> Total CPU: ${analysis.totalCPU.toFixed(2)}`);
+			
+			if (analysis.hotspots.length > 0) {
+				console.log(`<font color=\"#FF6B6B\">[CPU Analysis]</font> <b>CPU Hotspots Found:</b>`);
+				_.each(analysis.hotspots.slice(0, 5), hotspot => {
+					console.log(`  ${hotspot.room}.${hotspot.function}: ${hotspot.avgCPU.toFixed(2)} avg CPU`);
+				});
+				
+				console.log(`<font color=\"#FFA500\">[CPU Analysis]</font> <b>Optimization Recommendations:</b>`);
+				_.each(analysis.hotspots.slice(0, 3), hotspot => {
+					if (hotspot.avgCPU > 1.0) {
+						console.log(`  ⚠️  ${hotspot.room}.${hotspot.function}: Consider caching or reducing frequency`);
+					} else if (hotspot.avgCPU > 0.5) {
+						console.log(`  ⚡ ${hotspot.room}.${hotspot.function}: Monitor for optimization opportunities`);
+					}
+				});
+			} else {
+				console.log(`<font color=\"#47FF3E\">[CPU Analysis]</font> <b>✅ No major CPU hotspots detected!</b>`);
+			}
+			
+			// Room breakdown
+			console.log(`<font color=\"#D3FFA3\">[CPU Analysis]</font> <b>Room CPU Breakdown:</b>`);
+			_.each(analysis.roomBreakdown, (data, room) => {
+				console.log(`  ${room}: ${data.totalCPU.toFixed(2)} CPU`);
+			});
+			
+			return `<font color=\"#D3FFA3\">[CPU Analysis]</font> Analysis complete.`;
 		};
 
 		if (_.get(Memory, ["hive", "profiler"]) == null)
