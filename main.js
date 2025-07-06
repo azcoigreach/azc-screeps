@@ -5508,18 +5508,72 @@ let Sites = {
 							let availableCredits = Game.market.credits || 0;
 							
 							if (totalCost <= availableCredits * creditLimit) { // Use configurable credit limit
+								// Calculate energy cost for the transaction
+								let energyCost = Game.market.calcTransactionCost(amountToBuy, bestOrder.roomName, rmColony);
+								let netEnergyGained = amountToBuy - energyCost;
+								
+								// Check if this transaction is profitable (we gain more energy than we spend)
+								if (netEnergyGained <= 0) {
+									console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Transaction not profitable: buying ${amountToBuy} energy costs ${energyCost} energy (net gain: ${netEnergyGained}). Skipping.`);
+									return;
+								}
+								
+								// Check if the energy gain is significant enough to make a difference
+								let minSignificantGain = _.get(Memory, ["resources", "market_min_energy_gain"], 1000); // Minimum 1000 net energy gain
+								if (netEnergyGained < minSignificantGain) {
+									console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Energy gain too small: ${netEnergyGained} net energy (minimum: ${minSignificantGain}). Skipping.`);
+									return;
+								}
+								
+								// Find the best room to receive the energy (one with terminal and sufficient energy for transaction costs)
+								let bestReceivingRoom = null;
+								let bestRoomEnergy = 0;
+								let bestRoomScore = -1;
+								
+								_.each(colonies, colony => {
+									if (colony.terminal && colony.terminal.my) {
+										let terminalEnergy = colony.terminal.store.energy || 0;
+										// Score rooms by terminal energy, prioritizing rooms with enough energy for the transaction
+										let score = terminalEnergy >= energyCost ? terminalEnergy + 10000 : terminalEnergy;
+										if (score > bestRoomScore) {
+											bestRoomScore = score;
+											bestRoomEnergy = terminalEnergy;
+											bestReceivingRoom = colony.name;
+										}
+									}
+								});
+								
+								// If no room has sufficient terminal energy, create a high-priority energy order first
+								if (bestRoomEnergy < energyCost) {
+									let energyNeeded = energyCost + 1000; // Add buffer
+									let energyOrderName = `${rmColony}-energy_emergency_terminal`;
+									_.set(Memory, ["resources", "terminal_orders", energyOrderName], {
+										room: rmColony,
+										resource: "energy",
+										amount: energyNeeded,
+										automated: true,
+										priority: 0, // Super high priority (higher than 1)
+										terminal_fuel: true, // Mark as terminal fuel order
+										emergency: true // Mark as emergency to get special handling
+									});
+									console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Terminal in ${rmColony} needs ${energyNeeded} energy for transaction. Creating high-priority energy order.`);
+									return; // Wait for terminal to get energy first
+								}
+								
 								// Create market buy order
 								let orderName = `market_energy_emergency_${Game.time}`;
 								_.set(Memory, ["resources", "terminal_orders", orderName], {
 									market_id: bestOrder.id,
 									amount: amountToBuy,
-									to: rmColony,
+									to: bestReceivingRoom,
 									priority: 1, // High priority for emergency energy
 									automated: true,
-									emergency: true
+									emergency: true,
+									energy_cost: energyCost,
+									net_gain: netEnergyGained
 								});
 
-								console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Total colony energy (${totalEnergy}) below threshold (${energyThreshold}). Creating market buy order for ${amountToBuy} energy at ${bestOrder.price} credits (avg: ${avgPrice.toFixed(2)}, median: ${medianPrice.toFixed(2)}).`);
+								console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Creating market buy order: ${amountToBuy} energy at ${bestOrder.price} credits (cost: ${energyCost} energy, net gain: ${netEnergyGained}) to ${bestReceivingRoom} (terminal energy: ${bestRoomEnergy}).`);
 							} else {
 								console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Energy below threshold but insufficient credits. Need ${totalCost} credits, have ${availableCredits}.`);
 							}
@@ -5549,11 +5603,27 @@ let Sites = {
 				for (let n in orders) {
 					let order = orders[n];
 
-					if (_.get(order, "active", true) == false)
+					if (_.get(order, "active", true) == false) {
+						if (order.emergency) {
+							console.log(`<font color=\"#FFA500\">[Debug]</font> Emergency order ${order.name} skipped - inactive`);
+						}
 						continue;
+					}
 
 					if (this.runOrder_Sync(order, rmColony) == false)
 						continue;
+
+					// Only process emergency orders in the room they're supposed to be processed in
+					if (order.emergency && order.to != rmColony) {
+						continue;
+					}
+
+					// Debug emergency orders (only show once per order)
+					if (order.emergency && order.debug_shown != Game.time) {
+						let orderType = order.terminal_fuel ? "TERMINAL FUEL" : "MARKET";
+						console.log(`<font color=\"#FFA500\">[Debug]</font> Processing emergency order ${order.name}: type=${orderType}, market_id=${order.market_id}, to=${order.to}, amount=${order.amount}`);
+						order.debug_shown = Game.time;
+					}
 
 					if ((order["market_id"] == null && order["room"] != rmColony)
 						|| (order["market_id"] != null && order["type"] == "buy" && order["from"] == rmColony)) {
@@ -5564,6 +5634,9 @@ let Sites = {
 						// Sell order means I'm buying...
 						if (this.runOrder_Receive(rmColony, order, storage, terminal, filling) == true)
 							return;
+					} else if (order.emergency && order.debug_not_processed != Game.time) {
+						console.log(`<font color=\"#FFA500\">[Debug]</font> Emergency order ${order.name} not processed: market_id=${order.market_id}, type=${order.type}, to=${order.to}`);
+						order.debug_not_processed = Game.time;
 					}
 				}
 			},
@@ -5602,6 +5675,9 @@ let Sites = {
 							} else {
 								console.log(`<font color=\"#00F0FF\">[Market]</font> No replacement market order found for ${o}; order deleted!`);
 
+								if (order.emergency) {
+									console.log(`<font color=\"#FFA500\">[Debug]</font> Emergency order ${o} deleted - no replacement found`);
+								}
 								delete Memory["resources"]["terminal_orders"][o];
 								return false;
 							}
@@ -5693,8 +5769,12 @@ let Sites = {
 				 * And always buy in small amounts! ~500-5000
 				 */
 
-				if (terminal.cooldown > 0)
+				if (terminal.cooldown > 0) {
+					if (order.emergency) {
+						console.log(`<font color=\"#FFA500\">[Debug]</font> Emergency order ${order.name} blocked by terminal cooldown: ${terminal.cooldown}`);
+					}
 					return false;
+				}
 
 				let o = order["name"];
 				let res = order["resource"];
@@ -5719,6 +5799,18 @@ let Sites = {
 							+ ` ${amount} of ${res} ${order["room"]} -> ${rmColony} (code: ${result})`);
 					}
 				} else {
+					if (order.emergency) {
+						console.log(`<font color=\"#FFA500\">[Debug]</font> Emergency order ${order.name} blocked by insufficient terminal energy: need ${cost}, have ${_.get(terminal, ["store", "energy"], 0)}`);
+					}
+					
+					// For emergency orders, create a high-priority energy order to get energy to the terminal
+					if (order.emergency) {
+						let energyNeeded = Math.max(cost + 1000, 5000); // Need cost + buffer
+						_.set(Memory, ["resources", "terminal_orders", `${rmColony}-energy_emergency`], 
+							{ room: rmColony, resource: "energy", amount: energyNeeded, automated: true, priority: 1 });
+						console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Creating emergency energy order for terminal in ${rmColony}: ${energyNeeded} energy needed`);
+					}
+					
 					if (_.get(storage, ["store", "energy"]) > room.getCriticalEnergy()) {
 						filling.push("energy");
 
@@ -9670,6 +9762,32 @@ let Console = {
 				}
 			}
 
+			// Transaction Cost Analysis
+			if (energyOrders.length > 0) {
+				let bestOrder = _.sortBy(energyOrders, order => order.price)[0];
+				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>Transaction Cost Analysis (Best Order: ${bestOrder.price} credits):</b>`);
+				
+				_.each(colonies, colony => {
+					if (colony.terminal && colony.terminal.my) {
+						let terminalEnergy = colony.terminal.store.energy || 0;
+						let sampleAmount = 5000; // Sample transaction size
+						let energyCost = Game.market.calcTransactionCost(sampleAmount, bestOrder.roomName, colony.name);
+						let netGain = sampleAmount - energyCost;
+						let costPerUnit = energyCost / sampleAmount;
+						let profitMargin = (netGain / sampleAmount) * 100;
+						
+						let statusColor = netGain > 0 ? "#47FF3E" : "#FF6B6B";
+						let energyStatus = terminalEnergy >= energyCost ? "✅" : "⚠️";
+						
+						console.log(`  ${colony.name}: ${energyStatus} Terminal energy: ${terminalEnergy}, Cost for ${sampleAmount} energy: ${energyCost} (${costPerUnit.toFixed(3)} per unit), Net gain: ${netGain} (<font color=\"${statusColor}\">${profitMargin.toFixed(1)}% profit</font>)`);
+						
+						if (terminalEnergy < energyCost) {
+							console.log(`    ⚠️  Terminal needs ${energyCost - terminalEnergy} more energy for transaction`);
+						}
+					}
+				});
+			}
+
 			return `<font color=\"#D3FFA3\">[Console]</font> Market status displayed.`;
 		};
 
@@ -9695,6 +9813,52 @@ let Console = {
 		help_resources.push(" - Manually triggers emergency market order creation");
 		help_resources.push(" - Useful for testing when energy is below threshold");
 
+		help_resources.push("resources.set_market_config(key, value)");
+		help_resources.push(" - Sets market configuration values");
+		help_resources.push(" - Keys: market_min_energy_gain (minimum net energy gain for transactions)");
+		help_resources.push(" - Example: resources.set_market_config('market_min_energy_gain', 2000)");
+
+		resources.set_market_config = function(key, value) {
+			if (key === 'market_min_energy_gain') {
+				_.set(Memory, ["resources", key], parseInt(value));
+				return `<font color=\"#D3FFA3\">[Console]</font> Set ${key} to ${value}.`;
+			} else {
+				return `<font color=\"#FF6B6B\">[Console]</font> Unknown config key: ${key}. Available: market_min_energy_gain`;
+			}
+		};
+
+		help_resources.push("resources.fuel_terminals()");
+		help_resources.push(" - Manually creates terminal fuel orders for all rooms");
+		help_resources.push(" - Useful for testing terminal energy distribution");
+
+		resources.fuel_terminals = function() {
+			let colonies = _.filter(Game.rooms, r => r.controller && r.controller.my);
+			let fueled = 0;
+			
+			_.each(colonies, colony => {
+				if (colony.terminal && colony.terminal.my) {
+					let terminalEnergy = colony.terminal.store.energy || 0;
+					if (terminalEnergy < 5000) { // Fuel terminals to 5000 energy
+						let energyNeeded = 5000 - terminalEnergy;
+						let energyOrderName = `${colony.name}-energy_terminal_fuel`;
+						_.set(Memory, ["resources", "terminal_orders", energyOrderName], {
+							room: colony.name,
+							resource: "energy",
+							amount: energyNeeded,
+							automated: true,
+							priority: 0, // Super high priority
+							terminal_fuel: true,
+							emergency: true
+						});
+						fueled++;
+						console.log(`<font color=\"#D3FFA3\">[Console]</font> Created terminal fuel order for ${colony.name}: ${energyNeeded} energy (current: ${terminalEnergy})`);
+					}
+				}
+			});
+			
+			return `<font color=\"#D3FFA3\">[Console]</font> Created ${fueled} terminal fuel orders.`;
+		};
+
 		resources.force_emergency_orders = function () {
 			// Find a room with a terminal to trigger the emergency order creation
 			let roomWithTerminal = _.find(Game.rooms, r => r.controller && r.controller.my && r.terminal);
@@ -9702,9 +9866,210 @@ let Console = {
 				return `<font color=\"#D3FFA3\">[Console]</font> Error: No room with terminal found.`;
 			}
 
-			// Call the emergency order creation function
-			Industry.checkColonyEnergyAndCreateMarketOrders(roomWithTerminal.name);
+			// Implement the emergency order creation logic directly
+			let totalEnergy = 0;
+			let colonies = _.filter(Game.rooms, r => r.controller && r.controller.my);
+			_.each(colonies, colony => {
+				totalEnergy += colony.store("energy");
+			});
+
+			let energyThreshold = _.get(Memory, ["resources", "market_energy_threshold"], 1000000);
+			if (totalEnergy < energyThreshold) {
+				let energyOrders = Game.market.getAllOrders(
+					order => order.type == "sell" && order.resourceType == "energy"
+				);
+				
+				if (energyOrders.length > 0) {
+					let prices = energyOrders.map(order => order.price).sort((a, b) => a - b);
+					let avgPrice = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+					let medianPrice = prices[Math.floor(prices.length / 2)];
+					
+					let priceProtection = _.get(Memory, ["resources", "market_price_protection"], { avg_multiplier: 2.0, median_multiplier: 1.5 });
+					let creditLimit = _.get(Memory, ["resources", "market_credit_limit"], 0.8);
+					
+					let maxPrice = Math.min(avgPrice * priceProtection.avg_multiplier, medianPrice * priceProtection.median_multiplier);
+					let reasonableOrders = energyOrders.filter(order => order.price <= maxPrice);
+					
+					if (reasonableOrders.length > 0) {
+						let bestOrder = _.sortBy(reasonableOrders, order => order.price)[0];
+						let amountToBuy = Math.min(5000, energyThreshold - totalEnergy);
+						
+						let totalCost = bestOrder.price * amountToBuy;
+						let availableCredits = Game.market.credits || 0;
+						
+						if (totalCost <= availableCredits * creditLimit) {
+							// Calculate energy cost for the transaction
+							let energyCost = Game.market.calcTransactionCost(amountToBuy, bestOrder.roomName, roomWithTerminal.name);
+							let netEnergyGained = amountToBuy - energyCost;
+							
+							// Check if this transaction is profitable
+							if (netEnergyGained <= 0) {
+								console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Transaction not profitable: buying ${amountToBuy} energy costs ${energyCost} energy (net gain: ${netEnergyGained}). Skipping.`);
+								return;
+							}
+							
+							// Check if the energy gain is significant enough
+							let minSignificantGain = _.get(Memory, ["resources", "market_min_energy_gain"], 1000);
+							if (netEnergyGained < minSignificantGain) {
+								console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Energy gain too small: ${netEnergyGained} net energy (minimum: ${minSignificantGain}). Skipping.`);
+								return;
+							}
+							
+							// Find the best room to receive the energy
+							let bestReceivingRoom = null;
+							let bestRoomEnergy = 0;
+							let bestRoomScore = -1;
+							
+							_.each(colonies, colony => {
+								if (colony.terminal && colony.terminal.my) {
+									let terminalEnergy = colony.terminal.store.energy || 0;
+									let score = terminalEnergy >= energyCost ? terminalEnergy + 10000 : terminalEnergy;
+									if (score > bestRoomScore) {
+										bestRoomScore = score;
+										bestRoomEnergy = terminalEnergy;
+										bestReceivingRoom = colony.name;
+									}
+								}
+							});
+							
+							// If no room has sufficient terminal energy, create a high-priority energy order first
+							if (bestRoomEnergy < energyCost) {
+								let energyNeeded = energyCost + 1000;
+								let energyOrderName = `${roomWithTerminal.name}-energy_emergency_terminal`;
+								_.set(Memory, ["resources", "terminal_orders", energyOrderName], {
+									room: roomWithTerminal.name,
+									resource: "energy",
+									amount: energyNeeded,
+									automated: true,
+									priority: 0, // Super high priority
+									terminal_fuel: true,
+									emergency: true
+								});
+								console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Terminal in ${roomWithTerminal.name} needs ${energyNeeded} energy for transaction. Creating high-priority energy order.`);
+								return;
+							}
+							
+							let orderName = `market_energy_emergency_${Game.time}`;
+							_.set(Memory, ["resources", "terminal_orders", orderName], {
+								market_id: bestOrder.id,
+								amount: amountToBuy,
+								to: bestReceivingRoom,
+								priority: 1,
+								automated: true,
+								emergency: true,
+								energy_cost: energyCost,
+								net_gain: netEnergyGained
+							});
+
+							console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Creating market buy order: ${amountToBuy} energy at ${bestOrder.price} credits (cost: ${energyCost} energy, net gain: ${netEnergyGained}) to ${bestReceivingRoom} (terminal energy: ${bestRoomEnergy}).`);
+						} else {
+							console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Insufficient credits. Need ${totalCost} credits, have ${availableCredits}.`);
+						}
+					} else {
+						console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: All energy orders too expensive. Average price: ${avgPrice.toFixed(2)}, max acceptable: ${maxPrice.toFixed(2)}.`);
+					}
+				} else {
+					console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: No energy sell orders available on market.`);
+				}
+			} else {
+				console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Energy above threshold (${totalEnergy}/${energyThreshold}).`);
+			}
+			
 			return `<font color=\"#D3FFA3\">[Console]</font> Emergency order creation triggered for ${roomWithTerminal.name}.`;
+		};
+
+		help_resources.push("resources.clear_and_force_emergency()");
+		help_resources.push(" - Clears all existing emergency orders and forces creation of new ones");
+		help_resources.push(" - Useful when emergency orders are stuck due to terminal energy issues");
+
+		resources.clear_and_force_emergency = function () {
+			// Clear existing emergency orders
+			let cleared = 0;
+			let orders = _.get(Memory, ["resources", "terminal_orders"]);
+			if (orders) {
+				_.each(Object.keys(orders), orderName => {
+					if (orders[orderName].emergency) {
+						delete orders[orderName];
+						cleared++;
+					}
+				});
+			}
+			
+			// Force creation of new emergency orders by implementing the logic directly
+			let totalEnergy = 0;
+			let colonies = _.filter(Game.rooms, r => r.controller && r.controller.my);
+			_.each(colonies, colony => {
+				totalEnergy += colony.store("energy");
+			});
+
+			let energyThreshold = _.get(Memory, ["resources", "market_energy_threshold"], 1000000);
+			if (totalEnergy < energyThreshold) {
+				let energyOrders = Game.market.getAllOrders(
+					order => order.type == "sell" && order.resourceType == "energy"
+				);
+				
+				if (energyOrders.length > 0) {
+					let prices = energyOrders.map(order => order.price).sort((a, b) => a - b);
+					let avgPrice = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+					let medianPrice = prices[Math.floor(prices.length / 2)];
+					
+					let priceProtection = _.get(Memory, ["resources", "market_price_protection"], { avg_multiplier: 2.0, median_multiplier: 1.5 });
+					let creditLimit = _.get(Memory, ["resources", "market_credit_limit"], 0.8);
+					
+					let maxPrice = Math.min(avgPrice * priceProtection.avg_multiplier, medianPrice * priceProtection.median_multiplier);
+					let reasonableOrders = energyOrders.filter(order => order.price <= maxPrice);
+					
+					if (reasonableOrders.length > 0) {
+						let bestOrder = _.sortBy(reasonableOrders, order => order.price)[0];
+						let amountToBuy = Math.min(5000, energyThreshold - totalEnergy);
+						
+						let totalCost = bestOrder.price * amountToBuy;
+						let availableCredits = Game.market.credits || 0;
+						
+						if (totalCost <= availableCredits * creditLimit) {
+							// Find the best room to receive the energy
+							let bestReceivingRoom = null;
+							let bestRoomEnergy = 0;
+							
+							_.each(colonies, colony => {
+								if (colony.terminal && colony.terminal.my) {
+									let terminalEnergy = colony.terminal.store.energy || 0;
+									if (terminalEnergy > bestRoomEnergy) {
+										bestRoomEnergy = terminalEnergy;
+										bestReceivingRoom = colony.name;
+									}
+								}
+							});
+							
+							if (!bestReceivingRoom) {
+								bestReceivingRoom = colonies[0].name;
+							}
+							
+							let orderName = `market_energy_emergency_${Game.time}`;
+							_.set(Memory, ["resources", "terminal_orders", orderName], {
+								market_id: bestOrder.id,
+								amount: amountToBuy,
+								to: bestReceivingRoom,
+								priority: 1,
+								automated: true,
+								emergency: true
+							});
+
+							console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Creating market buy order for ${amountToBuy} energy at ${bestOrder.price} credits to ${bestReceivingRoom} (terminal energy: ${bestRoomEnergy}).`);
+						} else {
+							console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Insufficient credits. Need ${totalCost} credits, have ${availableCredits}.`);
+						}
+					} else {
+						console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: All energy orders too expensive. Average price: ${avgPrice.toFixed(2)}, max acceptable: ${maxPrice.toFixed(2)}.`);
+					}
+				} else {
+					console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: No energy sell orders available on market.`);
+				}
+			} else {
+				console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Energy above threshold (${totalEnergy}/${energyThreshold}).`);
+			}
+			
+			return `<font color=\"#D3FFA3\">[Console]</font> Cleared ${cleared} emergency orders and triggered new emergency order creation.`;
 		};
 
 		help_resources.push("resources.set_price_protection(avgMultiplier, medianMultiplier)");
