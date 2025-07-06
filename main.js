@@ -85,6 +85,10 @@ isPulse_Lab = function () {
 	return _.get(Memory, ["hive", "pulses", "lab", "active"], true);
 };
 
+isPulse_Factory = function () {
+	return _.get(Memory, ["hive", "pulses", "factory", "active"], false);
+};
+
 isPulse_Blueprint = function () {
 	return _.get(Memory, ["hive", "pulses", "blueprint", "active"], true);
 };
@@ -582,8 +586,9 @@ Creep.prototype.getTask_Withdraw_Storage = function getTask_Withdraw_Storage(res
 			id: this.room.storage.id,
 			timer: 60
 		};
-	} else
+	} else {
 		return;
+	}
 };
 
 Creep.prototype.getTask_Withdraw_Container = function getTask_Withdraw_Container(resource, is_critical) {
@@ -1083,6 +1088,88 @@ Creep.prototype.getTask_Wait = function getTask_Wait(ticks) {
 	};
 };
 
+Creep.prototype.getTask_Withdraw_Controller_Link = function getTask_Withdraw_Controller_Link() {
+	if (!_.get(this.room, ["controller", "my"], false))
+		return;
+
+	// Find links near the controller that have energy
+	let controllerLinks = _.filter(this.room.find(FIND_MY_STRUCTURES), s => {
+		return s.structureType == "link" && s.energy > 0 
+			&& s.pos.getRangeTo(this.room.controller.pos) <= 3
+			&& _.some(_.get(Memory, ["rooms", this.room.name, "links"]),
+				l => { return _.get(l, "id") == s.id && _.get(l, "dir") == "receive"; });
+	});
+
+
+
+	if (controllerLinks.length > 0) {
+		let closestLink = _.head(_.sortBy(controllerLinks, link => {
+			return link.pos.getRangeTo(this.room.controller.pos);
+		}));
+		
+		return {
+			type: "withdraw",
+			structure: "link",
+			resource: "energy",
+			id: closestLink.id,
+			timer: 60
+		};
+	}
+};
+
+Creep.prototype.getTask_Withdraw_Controller_Container = function getTask_Withdraw_Controller_Container() {
+	if (!_.get(this.room, ["controller", "my"], false))
+		return;
+
+	// Find containers near the controller that have energy
+	let controllerContainers = _.filter(this.room.find(FIND_STRUCTURES), s => {
+		return s.structureType == "container" && s.store.energy > 0
+			&& s.pos.getRangeTo(this.room.controller.pos) <= 3;
+	});
+
+
+
+	if (controllerContainers.length > 0) {
+		let closestContainer = _.head(_.sortBy(controllerContainers, container => {
+			return container.pos.getRangeTo(this.room.controller.pos);
+		}));
+		
+		return {
+			type: "withdraw",
+			resource: "energy",
+			id: closestContainer.id,
+			timer: 60
+		};
+	}
+};
+
+Creep.prototype.getTask_Withdraw_Storage_Link = function getTask_Withdraw_Storage_Link() {
+	if (!this.room.storage)
+		return;
+
+	// Only get energy from the link nearest to storage (within 3 tiles)
+	let storageLinks = _.filter(this.room.find(FIND_MY_STRUCTURES), s => {
+		return s.structureType == "link" && s.energy > 0 
+			&& s.pos.getRangeTo(this.room.storage.pos) <= 3
+			&& _.some(_.get(Memory, ["rooms", this.room.name, "links"]),
+				l => { return _.get(l, "id") == s.id && _.get(l, "dir") == "receive"; });
+	});
+
+	if (storageLinks.length > 0) {
+		let closestLink = _.head(_.sortBy(storageLinks, link => {
+			return link.pos.getRangeTo(this.room.storage.pos);
+		}));
+		
+		return {
+			type: "withdraw",
+			structure: "link",
+			resource: "energy",
+			id: closestLink.id,
+			timer: 60
+		};
+	}
+};
+
 
 /* ***********************************************************
  *	[sec01d] OVERLOADS: CREEP TRAVEL
@@ -1466,6 +1553,13 @@ StructureLab.prototype.canBoost = function canBoost(mineral) {
 Room.prototype.store = function store(resource) {
 	let amount = (_.get(this, ["storage", "my"], false) ? _.get(this, ["storage", "store", resource], 0) : 0)
 		+ (_.get(this, ["terminal", "my"], false) ? _.get(this, ["terminal", "store", resource], 0) : 0);
+	
+	// Also include factory resources in the total
+	let factories = _.filter(this.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+	for (let factory of factories) {
+		amount += _.get(factory, ["store", resource], 0);
+	}
+	
 	return amount;
 };
 
@@ -1806,10 +1900,10 @@ Population_Colony = {
 		2: { worker: { level: 2, amount: 5, body: "worker_at" } },
 		3: { worker: { level: 3, amount: 6, body: "worker_at" } },
 		4: { worker: { level: 4, amount: 6, body: "worker_at" } },
-		5: { worker: { level: 4, amount: 6, body: "worker_at" } },
-		6: { worker: { level: 4, amount: 6 } },
-		7: { worker: { level: 7, amount: 5 } },
-		8: { worker: { level: 7, amount: 4 } }
+		5: { worker: { level: 4, amount: 6, body: "worker_at" }, upgrader: { level: 5, amount: 1, body: "upgrader" } },
+		6: { worker: { level: 4, amount: 4 }, upgrader: { level: 6, amount: 1, body: "upgrader" } },
+		7: { worker: { level: 7, amount: 4 }, upgrader: { level: 7, amount: 1, body: "upgrader" } },
+		8: { worker: { level: 7, amount: 3 }, upgrader: { level: 8, amount: 1, body: "upgrader" } }
 	},
 
 	Assisted: {
@@ -1817,10 +1911,10 @@ Population_Colony = {
 		2: { worker: { level: 3, amount: 4, body: "worker_at" } },
 		3: { worker: { level: 4, amount: 6, body: "worker_at" } },
 		4: { worker: { level: 5, amount: 6, body: "worker_at" } },
-		5: { worker: { level: 6, amount: 6, body: "worker_at" } },
-		6: { worker: { level: 6, amount: 6 } },
-		7: { worker: { level: 7, amount: 5 } },
-		8: { worker: { level: 7, amount: 4 } }
+		5: { worker: { level: 6, amount: 6, body: "worker_at" }, upgrader: { level: 5, amount: 1, body: "upgrader" } },
+		6: { worker: { level: 6, amount: 5 }, upgrader: { level: 6, amount: 1, body: "upgrader" } },
+		7: { worker: { level: 7, amount: 4 }, upgrader: { level: 7, amount: 1, body: "upgrader" } },
+		8: { worker: { level: 7, amount: 3 }, upgrader: { level: 8, amount: 1, body: "upgrader" } }
 	}
 };
 
@@ -2117,6 +2211,7 @@ let Creep_Body = {
 			case "extractor_rem": return this.getBody_Extractor_REM(level);
 			case "reserver": return this.getBody_Reserver(level);
 			case "reserver_at": return this.getBody_Reserver_AT(level);
+			case "upgrader": return this.getBody_Upgrader(level);
 
 			case "worker": return this.getBody_Worker(level);
 			case "worker_at": return this.getBody_Worker_AT(level);
@@ -2916,6 +3011,29 @@ let Creep_Body = {
 					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
 		}
 	},
+
+	getBody_Upgrader: function (level) {
+		switch (level) {
+			case 1: case 2: case 3: case 4: case 5:
+				return [ // Prevent spawn locking with null body
+					MOVE];
+			case 6:
+				return [ // 650 energy, 4x WORK, 1x CARRY, 2x MOVE
+					WORK, WORK, WORK, WORK,
+					CARRY,
+					MOVE, MOVE];
+			case 7:
+				return [ // 1050 energy, 6x WORK, 2x CARRY, 4x MOVE
+					WORK, WORK, WORK, WORK, WORK, WORK,
+					CARRY, CARRY,
+					MOVE, MOVE, MOVE, MOVE];
+			case 8:
+				return [ // 1450 energy, 8x WORK, 2x CARRY, 6x MOVE
+					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
+					CARRY, CARRY,
+					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
+		}
+	},
 };
 
 
@@ -3003,12 +3121,24 @@ let Creep_Roles = {
 				if (this.goToRoom(creep, creep.memory.room, false))
 					return;
 
-				creep.memory.task = creep.memory.task || creep.getTask_Upgrade(true);
+				// Check if room has reached RCL 6+ and has upgraders
+				let roomLevel = creep.room.controller.level;
+				let hasUpgraders = _.filter(Game.creeps, c => 
+					c.memory.role == "upgrader" && c.memory.room == creep.room.name).length > 0;
+				let isCriticalDowngrade = _.get(Memory, ["rooms", creep.room.name, "survey", "downgrade_critical"], false);
+
+				// Only upgrade if room is below RCL 6, or if critical downgrade and no upgraders available
+				let shouldUpgrade = roomLevel < 6 || (isCriticalDowngrade && !hasUpgraders);
+
+				if (shouldUpgrade) {
+					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(true);
+					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
+				}
+
 				creep.memory.task = creep.memory.task || creep.getTask_Sign();
 				creep.memory.task = creep.memory.task || creep.getTask_Repair(true);
 				creep.memory.task = creep.memory.task || creep.getTask_Build();
 				creep.memory.task = creep.memory.task || creep.getTask_Repair(false);
-				creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
 				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 
 				creep.runTask(creep);
@@ -3127,7 +3257,7 @@ let Creep_Roles = {
 				return;
 
 			creep.memory.task = creep.memory.task || creep.getTask_Industry_Withdraw();
-			creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Link(50);
+			creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage_Link();
 			creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 
 			creep.runTask(creep);
@@ -3505,6 +3635,67 @@ let Creep_Roles = {
 		} else {
 			Creep_Roles_Combat.acquireCamp(creep);
 			Creep_Roles_Combat.travelCamp(creep);
+			return;
+		}
+	},
+
+	Upgrader: function (creep, isSafe) {
+		let hostile = isSafe ? null
+			: _.head(creep.pos.findInRange(FIND_HOSTILE_CREEPS, 5, {
+				filter:
+					c => { return c.isHostile(); }
+			}));
+
+		if (hostile == null) {
+			if (creep.memory.state == "refueling") {
+				if (_.sum(creep.carry) == creep.carryCapacity) {
+					creep.memory.state = "upgrading";
+					delete creep.memory.task;
+					return;
+				}
+
+				// Only get energy tasks if we're not full
+				if (_.sum(creep.carry) < creep.carryCapacity) {
+					creep.memory.task = creep.memory.task || creep.getTask_Boost();
+
+					if (!creep.memory.task && this.goToRoom(creep, creep.memory.room, true))
+						return;
+
+					// Priority: Controller links -> Controller containers -> Storage
+					creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Controller_Link();
+					creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Controller_Container();
+					creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage("energy", true);
+					creep.memory.task = creep.memory.task || creep.getTask_Pickup("energy");
+					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+
+					
+
+					creep.runTask(creep);
+					return;
+				}
+			} else if (creep.memory.state == "upgrading") {
+				if (creep.carry["energy"] == 0) {
+					creep.memory.state = "refueling";
+					delete creep.memory.task;
+					return;
+				}
+
+				if (this.goToRoom(creep, creep.memory.room, false))
+					return;
+
+				// Only upgrade the controller, no other tasks
+				creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
+				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+
+				creep.runTask(creep);
+				return;
+
+			} else {
+				creep.memory.state = "refueling";
+				return;
+			}
+		} else if (hostile != null) {
+			creep.moveFrom(creep, hostile);
 			return;
 		}
 	},
@@ -3957,6 +4148,10 @@ let Sites = {
 							let role = _.get(c, ["memory", "role"]);
 							popActual[role] = _.get(popActual, role, 0) + 1;
 							break;
+						
+						case "upgrader":
+							popActual["upgrader"] = _.get(popActual, "upgrader", 0) + 1;
+							break;
 					}
 				});
 
@@ -4042,6 +4237,56 @@ let Sites = {
 						name: null, args: { role: "worker", room: rmColony }
 					});
 				}
+
+				// Check for force spawn request
+				let forceSpawn = _.get(Memory, ["rooms", rmColony, "upgrader_force_spawn"]);
+				if (forceSpawn && forceSpawn.timestamp == Game.time) {
+					for (let i = 0; i < forceSpawn.amount; i++) {
+						Memory["hive"]["spawn_requests"].push({
+							room: rmColony, listRooms: listSpawnRooms,
+							priority: 1, // High priority for force spawn
+							level: room_level,
+							scale: true,
+							body: "upgrader",
+							name: null, args: { role: "upgrader", room: rmColony }
+						});
+					}
+					delete Memory.rooms[rmColony].upgrader_force_spawn;
+				}
+
+				// Check if room has reached RCL 5+ and should spawn upgraders
+				let roomLevel = Game.rooms[rmColony].controller.level;
+				if (roomLevel >= 5) {
+					// Calculate upgrader amount based on remote mining sources
+					let remoteMiningSources = 0;
+					let remote_mining = _.get(Memory, ["sites", "mining"]);
+					if (remote_mining) {
+						let remote_list = _.filter(Object.keys(remote_mining), rem => { 
+							return rem != rmColony && _.get(remote_mining[rem], "colony") == rmColony; 
+						});
+						_.each(remote_list, rem => { 
+							remoteMiningSources += _.get(Memory, ["sites", "mining", rem, "survey", "source_amount"], 0); 
+						});
+					}
+					
+					// Base upgrader amount: 1 for every room level 5+
+					// Additional upgrader for every 2 remote mining sources
+					let baseUpgraders = 1;
+					let additionalUpgraders = Math.floor(remoteMiningSources / 2);
+					let totalUpgraders = baseUpgraders + additionalUpgraders;
+					
+					// Check if we need upgraders
+					if (_.get(popActual, "upgrader", 0) < totalUpgraders) {
+						Memory["hive"]["spawn_requests"].push({
+							room: rmColony, listRooms: listSpawnRooms,
+							priority: Math.lerpSpawnPriority(20, 22, _.get(popActual, "upgrader", 0), totalUpgraders),
+							level: _.get(popTarget, ["upgrader", "level"], room_level),
+							scale: _.get(popTarget, ["upgrader", "scale"], true),
+							body: _.get(popTarget, ["upgrader", "body"], "upgrader"),
+							name: null, args: { role: "upgrader", room: rmColony }
+						});
+					}
+				}
 			},
 
 
@@ -4051,6 +4296,7 @@ let Sites = {
 
 					switch (_.get(creep, ["memory", "role"])) {
 						case "worker": Creep_Roles.Worker(creep); break;
+						case "upgrader": Creep_Roles.Upgrader(creep, _.get(Memory, ["rooms", rmColony, "defense", "is_safe"], true)); break;
 						case "healer": Creep_Roles.Healer(creep, true); break;
 
 						case "soldier": case "paladin":
@@ -4714,6 +4960,54 @@ let Sites = {
 	Industry: function (rmColony) {
 		let Industry = {
 
+			// Factory logging throttling system
+			factoryLogThrottle: {
+				lastLogTime: {},
+				logIntervals: {
+					'needs_components': 50,  // Log factory needs components every 50 ticks
+					'created_tasks': 30,     // Log created tasks every 30 ticks
+					'cleanup_skip': 100,     // Log cleanup skip every 100 ticks
+					'stockpile_cleanup': 200, // Log stockpile cleanup every 200 ticks
+					'assignment_debug': 500   // Log assignment debug every 500 ticks
+				},
+				
+				shouldLog: function(roomName, logType) {
+					let key = `${roomName}_${logType}`;
+					let currentTick = Game.time;
+					let lastTime = this.lastLogTime[key] || 0;
+					
+					// Check for custom intervals from Memory first, then fall back to defaults
+					let interval = 50; // default
+					if (Memory.factories && Memory.factories.logIntervals && Memory.factories.logIntervals[logType]) {
+						interval = Memory.factories.logIntervals[logType];
+					} else {
+						interval = this.logIntervals[logType] || 50;
+					}
+					
+					if (currentTick - lastTime >= interval) {
+						this.lastLogTime[key] = currentTick;
+						return true;
+					}
+					return false;
+				},
+				
+				log: function(roomName, logType, message) {
+					if (this.shouldLog(roomName, logType)) {
+						console.log(`<font color=\"#FFA500\">[Factory]</font> ${message}`);
+					}
+				},
+				
+				// Clear old throttle data to prevent memory bloat
+				cleanup: function() {
+					let currentTick = Game.time;
+					for (let key in this.lastLogTime) {
+						if (currentTick - this.lastLogTime[key] > 1000) {
+							delete this.lastLogTime[key];
+						}
+					}
+				}
+			},
+
 			Run: function (rmColony) {
 				// Expanded scope variables:
 				labDefinitions = _.get(Memory, ["rooms", rmColony, "labs", "definitions"]);
@@ -5188,6 +5482,9 @@ let Sites = {
 					let energy_level = room.store("energy");
 					let energy_critical = room.getCriticalEnergy();
 
+					// Check total colony energy and create market orders if needed
+					this.checkColonyEnergyAndCreateMarketOrders(rmColony);
+
 					// Create orders to request resources to meet per-room stockpile
 					for (let res in _.get(Memory, ["rooms", rmColony, "stockpile"])) {
 						shortage[res] = _.get(Memory, ["rooms", rmColony, "stockpile", res]) - room.store(res);
@@ -5225,6 +5522,129 @@ let Sites = {
 				}
 			},
 
+			checkColonyEnergyAndCreateMarketOrders: function (rmColony) {
+				// Only check every 50 ticks to avoid spam
+				if (Game.time % 50 != 0) return;
+
+				// Calculate total energy across all colonies
+				let totalEnergy = 0;
+				let colonies = _.filter(Game.rooms, r => r.controller && r.controller.my);
+				_.each(colonies, colony => {
+					totalEnergy += colony.store("energy");
+				});
+
+				// Check if total energy is below threshold (1,000,000)
+				let energyThreshold = _.get(Memory, ["resources", "market_energy_threshold"], 1000000);
+				if (totalEnergy < energyThreshold) {
+					// Find all energy sell orders and calculate average price
+					let energyOrders = Game.market.getAllOrders(
+						order => order.type == "sell" && order.resourceType == "energy"
+					);
+					
+					if (energyOrders.length > 0) {
+						// Calculate average market price (excluding outliers)
+						let prices = energyOrders.map(order => order.price).sort((a, b) => a - b);
+						let avgPrice = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+						
+						// Calculate median price for better outlier detection
+						let medianPrice = prices[Math.floor(prices.length / 2)];
+						
+						// Get configurable price protection settings
+						let priceProtection = _.get(Memory, ["resources", "market_price_protection"], { avg_multiplier: 2.0, median_multiplier: 1.5 });
+						let creditLimit = _.get(Memory, ["resources", "market_credit_limit"], 0.8);
+						
+						// Filter out orders that are too expensive based on configurable thresholds
+						let maxPrice = Math.min(avgPrice * priceProtection.avg_multiplier, medianPrice * priceProtection.median_multiplier);
+						let reasonableOrders = energyOrders.filter(order => order.price <= maxPrice);
+						
+						if (reasonableOrders.length > 0) {
+							// Sort by price and find best order
+							let bestOrder = _.sortBy(reasonableOrders, order => order.price)[0];
+							let amountToBuy = Math.min(5000, energyThreshold - totalEnergy); // Buy in chunks of 5000
+							
+							// Check if we have enough credits to make this purchase
+							let totalCost = bestOrder.price * amountToBuy;
+							let availableCredits = Game.market.credits || 0;
+							
+							if (totalCost <= availableCredits * creditLimit) { // Use configurable credit limit
+								// Calculate energy cost for the transaction
+								let energyCost = Game.market.calcTransactionCost(amountToBuy, bestOrder.roomName, rmColony);
+								let netEnergyGained = amountToBuy - energyCost;
+								
+								// Check if this transaction is profitable (we gain more energy than we spend)
+								if (netEnergyGained <= 0) {
+									console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Transaction not profitable: buying ${amountToBuy} energy costs ${energyCost} energy (net gain: ${netEnergyGained}). Skipping.`);
+									return;
+								}
+								
+								// Check if the energy gain is significant enough to make a difference
+								let minSignificantGain = _.get(Memory, ["resources", "market_min_energy_gain"], 1000); // Minimum 1000 net energy gain
+								if (netEnergyGained < minSignificantGain) {
+									console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Energy gain too small: ${netEnergyGained} net energy (minimum: ${minSignificantGain}). Skipping.`);
+									return;
+								}
+								
+								// Find the best room to receive the energy (one with terminal and sufficient energy for transaction costs)
+								let bestReceivingRoom = null;
+								let bestRoomEnergy = 0;
+								let bestRoomScore = -1;
+								
+								_.each(colonies, colony => {
+									if (colony.terminal && colony.terminal.my) {
+										let terminalEnergy = colony.terminal.store.energy || 0;
+										// Score rooms by terminal energy, prioritizing rooms with enough energy for the transaction
+										let score = terminalEnergy >= energyCost ? terminalEnergy + 10000 : terminalEnergy;
+										if (score > bestRoomScore) {
+											bestRoomScore = score;
+											bestRoomEnergy = terminalEnergy;
+											bestReceivingRoom = colony.name;
+										}
+									}
+								});
+								
+								// If no room has sufficient terminal energy, create a high-priority energy order first
+								if (bestRoomEnergy < energyCost) {
+									let energyNeeded = energyCost + 1000; // Add buffer
+									let energyOrderName = `${rmColony}-energy_emergency_terminal`;
+									_.set(Memory, ["resources", "terminal_orders", energyOrderName], {
+										room: rmColony,
+										resource: "energy",
+										amount: energyNeeded,
+										automated: true,
+										priority: 0, // Super high priority (higher than 1)
+										terminal_fuel: true, // Mark as terminal fuel order
+										emergency: true // Mark as emergency to get special handling
+									});
+									console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Terminal in ${rmColony} needs ${energyNeeded} energy for transaction. Creating high-priority energy order.`);
+									return; // Wait for terminal to get energy first
+								}
+								
+								// Create market buy order
+								let orderName = `market_energy_emergency_${Game.time}`;
+								_.set(Memory, ["resources", "terminal_orders", orderName], {
+									market_id: bestOrder.id,
+									amount: amountToBuy,
+									to: bestReceivingRoom,
+									priority: 1, // High priority for emergency energy
+									automated: true,
+									emergency: true,
+									energy_cost: energyCost,
+									net_gain: netEnergyGained
+								});
+
+								console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Creating market buy order: ${amountToBuy} energy at ${bestOrder.price} credits (cost: ${energyCost} energy, net gain: ${netEnergyGained}) to ${bestReceivingRoom} (terminal energy: ${bestRoomEnergy}).`);
+							} else {
+								console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Energy below threshold but insufficient credits. Need ${totalCost} credits, have ${availableCredits}.`);
+							}
+						} else {
+							console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Energy below threshold but all available orders are too expensive. Average price: ${avgPrice.toFixed(2)}, max acceptable: ${maxPrice.toFixed(2)}.`);
+						}
+					} else {
+						console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Energy below threshold but no energy sell orders available on market.`);
+					}
+				}
+			},
+
 			runTerminal_Orders: function (rmColony, storage, terminal, shortage, filling) {
 				/* Priority list for terminal orders:
 				 * 	1: console injected...
@@ -5242,11 +5662,27 @@ let Sites = {
 				for (let n in orders) {
 					let order = orders[n];
 
-					if (_.get(order, "active", true) == false)
+					if (_.get(order, "active", true) == false) {
+						if (order.emergency) {
+							console.log(`<font color=\"#FFA500\">[Debug]</font> Emergency order ${order.name} skipped - inactive`);
+						}
 						continue;
+					}
 
 					if (this.runOrder_Sync(order, rmColony) == false)
 						continue;
+
+					// Only process emergency orders in the room they're supposed to be processed in
+					if (order.emergency && order.to != rmColony) {
+						continue;
+					}
+
+					// Debug emergency orders (only show once per order)
+					if (order.emergency && order.debug_shown != Game.time) {
+						let orderType = order.terminal_fuel ? "TERMINAL FUEL" : "MARKET";
+						console.log(`<font color=\"#FFA500\">[Debug]</font> Processing emergency order ${order.name}: type=${orderType}, market_id=${order.market_id}, to=${order.to}, amount=${order.amount}`);
+						order.debug_shown = Game.time;
+					}
 
 					if ((order["market_id"] == null && order["room"] != rmColony)
 						|| (order["market_id"] != null && order["type"] == "buy" && order["from"] == rmColony)) {
@@ -5257,6 +5693,9 @@ let Sites = {
 						// Sell order means I'm buying...
 						if (this.runOrder_Receive(rmColony, order, storage, terminal, filling) == true)
 							return;
+					} else if (order.emergency && order.debug_not_processed != Game.time) {
+						console.log(`<font color=\"#FFA500\">[Debug]</font> Emergency order ${order.name} not processed: market_id=${order.market_id}, type=${order.type}, to=${order.to}`);
+						order.debug_not_processed = Game.time;
 					}
 				}
 			},
@@ -5295,6 +5734,9 @@ let Sites = {
 							} else {
 								console.log(`<font color=\"#00F0FF\">[Market]</font> No replacement market order found for ${o}; order deleted!`);
 
+								if (order.emergency) {
+									console.log(`<font color=\"#FFA500\">[Debug]</font> Emergency order ${o} deleted - no replacement found`);
+								}
 								delete Memory["resources"]["terminal_orders"][o];
 								return false;
 							}
@@ -5386,8 +5828,12 @@ let Sites = {
 				 * And always buy in small amounts! ~500-5000
 				 */
 
-				if (terminal.cooldown > 0)
+				if (terminal.cooldown > 0) {
+					if (order.emergency) {
+						console.log(`<font color=\"#FFA500\">[Debug]</font> Emergency order ${order.name} blocked by terminal cooldown: ${terminal.cooldown}`);
+					}
 					return false;
+				}
 
 				let o = order["name"];
 				let res = order["resource"];
@@ -5412,6 +5858,18 @@ let Sites = {
 							+ ` ${amount} of ${res} ${order["room"]} -> ${rmColony} (code: ${result})`);
 					}
 				} else {
+					if (order.emergency) {
+						console.log(`<font color=\"#FFA500\">[Debug]</font> Emergency order ${order.name} blocked by insufficient terminal energy: need ${cost}, have ${_.get(terminal, ["store", "energy"], 0)}`);
+					}
+					
+					// For emergency orders, create a high-priority energy order to get energy to the terminal
+					if (order.emergency) {
+						let energyNeeded = Math.max(cost + 1000, 5000); // Need cost + buffer
+						_.set(Memory, ["resources", "terminal_orders", `${rmColony}-energy_emergency`], 
+							{ room: rmColony, resource: "energy", amount: energyNeeded, automated: true, priority: 1 });
+						console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Creating emergency energy order for terminal in ${rmColony}: ${energyNeeded} energy needed`);
+					}
+					
 					if (_.get(storage, ["store", "energy"]) > room.getCriticalEnergy()) {
 						filling.push("energy");
 
@@ -5428,26 +5886,58 @@ let Sites = {
 			},
 
 			runTerminal_Empty: function (rmColony, storage, terminal, filling) {
-				// Create generic tasks for emptying terminal's minerals to storage
-				let resource_list = [
-					"energy",
-					"H", "O", "U", "L", "K", "Z", "X", "G",
-					"OH", "ZK", "UL",
-					"UH", "UO", "KH", "KO", "LH", "LO", "ZH", "ZO", "GH", "GO",
-					"UH2O", "UHO2", "KH2O", "KHO2", "LH2O", "LHO2", "ZH2O", "ZHO2", "GH2O", "GHO2",
-					"XUH2O", "XUHO2", "XKH2O", "XKHO2", "XLH2O", "XLHO2", "XZH2O", "XZHO2", "XGH2O", "XGHO2"];
+				// Dynamically get all resources in the terminal
+				let terminalResources = Object.keys(terminal.store);
+				
+				// Get all factory components that might be needed
+				let factoryComponents = new Set();
+				let factories = _.filter(Game.rooms[rmColony].find(FIND_MY_STRUCTURES), 
+					s => s.structureType == "factory");
+				
+				// Collect all components from active factory assignments
+				for (let factory of factories) {
+					let assignment = _.get(Memory, ["resources", "factories", "assignments", factory.id]);
+					if (assignment && assignment.components) {
+						for (let component in assignment.components) {
+							factoryComponents.add(component);
+						}
+					}
+				}
+				
+				// Also add common factory components that might not be in current assignments
+				let commonFactoryComponents = ["battery", "cell", "phlegm", "tissue", "muscle", "organoid", "organism"];
+				for (let component of commonFactoryComponents) {
+					factoryComponents.add(component);
+				}
 
-				for (let r in resource_list) {
-					let res = resource_list[r];
-
+				// Process each resource in the terminal
+				for (let res of terminalResources) {
+					// Skip if this resource is being filled or has no amount
 					if (filling.includes(res)
 						|| ((res != "energy" && (terminal.store[res] == null || terminal.store[res] == 0))
 							|| (res == "energy" && terminal.store[res] == 0)))
 						continue;
 
+					// Check if this resource is needed by any factory in the room
+					let isFactoryComponent = factoryComponents.has(res);
+					
+					// Check if this resource is needed by any active factory assignment
+					if (!isFactoryComponent) {
+						for (let factory of factories) {
+							let assignment = _.get(Memory, ["resources", "factories", "assignments", factory.id]);
+							if (assignment && assignment.components && assignment.components[res]) {
+								isFactoryComponent = true;
+								break;
+							}
+						}
+					}
+
+					// Use higher priority for factory components to ensure they get moved quickly
+					let priority = isFactoryComponent ? 1 : 6; // Priority 1 for factory components, 6 for others
+
 					Memory.rooms[rmColony].industry.tasks.push(
-						{ type: "withdraw", resource: res, id: terminal.id, timer: 60, priority: 6 },
-						{ type: "deposit", resource: res, id: storage.id, timer: 60, priority: 6 });
+						{ type: "withdraw", resource: res, id: terminal.id, timer: 60, priority: priority },
+						{ type: "deposit", resource: res, id: storage.id, timer: 60, priority: priority });
 				}
 			},
 
@@ -5472,6 +5962,11 @@ let Sites = {
 				// Initialize commodity cache if needed
 				if (_.get(Memory, ["resources", "factories", "commodity_cache"]) == null) {
 					this.cacheCommodityData();
+				}
+
+				// Assign factories based on priority (like labs do) - only on factory pulse
+				if (isPulse_Factory()) {
+					this.assignFactories(rmColony);
 				}
 
 				let targets = _.get(Memory, ["resources", "factories", "targets"]);
@@ -5518,41 +6013,46 @@ let Sites = {
 					}
 				}
 			},
-
-			createFactoryTasks: function (rmColony) {
-				let factories = _.filter(Game.rooms[rmColony].find(FIND_MY_STRUCTURES), 
-					s => s.structureType == "factory");
-				
-				if (factories.length == 0) {
+		
+			assignFactories: function (rmColony) {
+				// This function is called per room, but we need to do global assignment
+				// Only run the global assignment once per pulse
+				if (rmColony !== _.get(Memory, ["hive", "pulses", "factory", "processing_room"])) {
 					return;
 				}
+
+				// Get all factories across all rooms
+				let allFactories = [];
+				_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+					let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+					allFactories = allFactories.concat(factories);
+				});
+				
+				if (allFactories.length == 0) return;
 
 				let targets = _.get(Memory, ["resources", "factories", "targets"]);
 				if (targets == null || Object.keys(targets).length == 0) {
-					console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: No factory targets set`);
+					// Clear assignments if no targets
+					delete Memory["resources"]["factories"]["assignments"];
 					return;
 				}
 
-				let storage = Game.rooms[rmColony].storage;
-				if (storage == null) {
-					console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: No storage found`);
-					return;
-				}
-
-				// Create cleanup tasks for factories first (priority 1)
-				this.createFactoryCleanupTasks(rmColony);
-				
-				// Check if there are active cleanup tasks - if so, don't create loading tasks
-				let activeCleanupTasks = _.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority == 1);
-				if (activeCleanupTasks.length > 0) {
-					// Create tasks for factory operators to move produced commodities to storage
-					this.createFactoryOperatorTasks(rmColony);
-					return; // Don't create loading tasks while cleanup is in progress
-				}
-
-				// Sort targets by priority
+				// Sort targets by priority (lower number = higher priority)
 				let sortedTargets = _.sortBy(targets, "priority");
 
+				// Store existing assignments to check for changes
+				let existingAssignments = _.get(Memory, ["resources", "factories", "assignments"], {});
+				let newAssignments = {};
+				let assignmentsChanged = false;
+				let assignedFactories = new Set(); // Track factories assigned in this iteration
+
+				this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Existing assignments: ${Object.keys(existingAssignments).length}`);
+				for (let factoryId in existingAssignments) {
+					this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Existing: ${factoryId} -> ${existingAssignments[factoryId].commodity}`);
+				}
+
+				// Create a list of commodities that need production (sorted by priority)
+				let commoditiesToProduce = [];
 				for (let target of sortedTargets) {
 					let commodity = target.commodity;
 					let current = 0;
@@ -5563,23 +6063,11 @@ let Sites = {
 					// If we've reached the target, skip this commodity
 					if (current >= target.amount) continue;
 
-					// Get commodity components from Screeps API
+					// Get commodity components
 					let components = this.getCommodityComponents(commodity);
-					if (components == null) {
-						console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: No recipe found for ${commodity}`);
-						continue;
-					}
+					if (components == null) continue;
 
-					// Set stockpile targets for components (like labs do for reagents)
-					for (let component in components) {
-						let amount = components[component];
-						// Set stockpile target to 2x the amount needed for one production cycle
-						// This ensures we have enough for production and some buffer
-						let stockpileTarget = amount * 2;
-						_.set(Memory, ["rooms", rmColony, "stockpile", component], stockpileTarget);
-					}
-
-					// Check if we have enough components
+					// Check if we have enough components available
 					let hasComponents = true;
 					for (let component in components) {
 						let amount = components[component];
@@ -5593,16 +6081,171 @@ let Sites = {
 						}
 					}
 
-					if (!hasComponents) {
-						console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: Not enough components for ${commodity}, waiting for terminal orders to fill stockpile`);
-						continue;
+					if (!hasComponents) continue;
+
+					// Add this commodity to our production list
+					commoditiesToProduce.push({
+						commodity: commodity,
+						components: components,
+						priority: target.priority
+					});
+				}
+
+				// Round-robin assignment: cycle through commodities until all factories are assigned
+				let commodityIndex = 0;
+				let factoriesAssigned = 0;
+				let totalFactories = allFactories.length;
+				let consecutiveFailures = 0; // Track consecutive failures to prevent infinite loops
+
+				this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Starting assignment: ${totalFactories} total factories, ${commoditiesToProduce.length} commodities to produce`);
+
+				while (factoriesAssigned < totalFactories && commoditiesToProduce.length > 0 && consecutiveFailures < commoditiesToProduce.length) {
+					let commodityData = commoditiesToProduce[commodityIndex % commoditiesToProduce.length];
+					let commodity = commodityData.commodity;
+					let components = commodityData.components;
+					let priority = commodityData.priority;
+
+					// Find an available factory for this commodity
+					let factoryAssigned = false;
+					let availableFactories = 0;
+					let assignedFactoriesCount = 0;
+					
+					for (let factory of allFactories) {
+						if (factory.cooldown > 0) {
+							this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Factory ${factory.id} on cooldown`);
+							continue;
+						}
+
+						// Check if this factory is already assigned in this iteration
+						if (assignedFactories.has(factory.id)) {
+							assignedFactoriesCount++;
+							continue;
+						}
+
+						availableFactories++;
+
+						// Assign this factory to produce this commodity
+						let newAssignment = {
+							commodity: commodity,
+							components: components,
+							room: factory.pos.roomName
+						};
+						
+						newAssignments[factory.id] = newAssignment;
+						assignedFactories.add(factory.id); // Mark this factory as assigned
+
+						// Log the assignment
+						this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Assigning ${factory.pos.roomName} factory ${factory.id} to create ${commodity} (priority ${priority}).`);
+						assignmentsChanged = true;
+						
+						factoriesAssigned++;
+						factoryAssigned = true;
+						consecutiveFailures = 0; // Reset failure counter on success
+						break; // Move to next commodity after assigning this factory
 					}
 
-					// Find a factory that needs components loaded
-					for (let factory of factories) {
-						if (factory.cooldown > 0) continue;
+					// If no factory was assigned for this commodity, move to next commodity
+					if (!factoryAssigned) {
+						this.factoryLogThrottle.log(rmColony, 'assignment_debug', `No factory assigned for ${commodity}. Available: ${availableFactories}, Already assigned: ${assignedFactoriesCount}, Total assigned so far: ${factoriesAssigned}`);
+						consecutiveFailures++;
+						commodityIndex++;
+					} else {
+						// Move to next commodity for next factory
+						commodityIndex++;
+					}
+				}
 
-						// Check if factory needs components
+				this.factoryLogThrottle.log(rmColony, 'assignment_debug', `Assignment complete: ${factoriesAssigned}/${totalFactories} factories assigned`);
+
+				// Update assignments
+				_.set(Memory, ["resources", "factories", "assignments"], newAssignments);
+
+				// Only clear factory pulse if assignments actually changed
+				if (assignmentsChanged) {
+					delete Memory["hive"]["pulses"]["factory"];
+				}
+			},
+
+			createFactoryTasks: function (rmColony) {
+				// Clean up old throttle data periodically
+				if (Game.time % 1000 === 0) {
+					this.factoryLogThrottle.cleanup();
+				}
+				
+				let factories = _.filter(Game.rooms[rmColony].find(FIND_MY_STRUCTURES), 
+					s => s.structureType == "factory");
+				
+				if (factories.length == 0) {
+					return;
+				}
+
+				let targets = _.get(Memory, ["resources", "factories", "targets"]);
+				if (targets == null || Object.keys(targets).length == 0) {
+					this.factoryLogThrottle.log(rmColony, 'assignment_debug', `${rmColony}: No factory targets set`);
+					return;
+				}
+
+				let storage = Game.rooms[rmColony].storage;
+				if (storage == null) {
+					this.factoryLogThrottle.log(rmColony, 'assignment_debug', `${rmColony}: No storage found`);
+					return;
+				}
+
+				// Create cleanup tasks for factories first (priority 1)
+				this.createFactoryCleanupTasks(rmColony);
+				
+				// Check if there are active cleanup tasks - if so, don't create loading tasks
+				let activeCleanupTasks = _.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority == 1);
+				if (activeCleanupTasks.length > 0) {
+					console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: ${activeCleanupTasks.length} cleanup tasks active, skipping loading tasks`);
+					// Create tasks for factory operators to move produced commodities to storage
+					this.createFactoryOperatorTasks(rmColony);
+					return; // Don't create loading tasks while cleanup is in progress
+				}
+
+				// Process factory assignments (created by assignFactories)
+				let assignments = _.get(Memory, ["resources", "factories", "assignments"]);
+				if (assignments) {
+					for (let factoryId in assignments) {
+						let assignment = assignments[factoryId];
+						let factory = Game.getObjectById(factoryId);
+						if (!factory) continue;
+
+						// Only process factories that are in this room
+						if (factory.pos.roomName !== rmColony) continue;
+
+						let commodity = assignment.commodity;
+						let components = assignment.components;
+
+						// Set stockpile targets for components (like labs do for reagents)
+						for (let component in components) {
+							let amount = components[component];
+							// Set stockpile target to 2x the amount needed for one production cycle
+							// This ensures we have enough for production and some buffer
+							let stockpileTarget = amount * 2;
+							_.set(Memory, ["rooms", rmColony, "stockpile", component], stockpileTarget);
+						}
+
+						// Check if we have enough components
+						let hasComponents = true;
+						for (let component in components) {
+							let amount = components[component];
+							let available = 0;
+							_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+								available += room.store(component);
+							});
+							if (available < amount) {
+								hasComponents = false;
+								break;
+							}
+						}
+
+						if (!hasComponents) {
+							this.factoryLogThrottle.log(rmColony, 'needs_components', `${rmColony}: Not enough components for ${commodity}, waiting for terminal orders to fill stockpile`);
+							continue;
+						}
+
+						// Check if factory needs components loaded
 						let needsComponents = false;
 						for (let component in components) {
 							let amount = components[component];
@@ -5613,13 +6256,7 @@ let Sites = {
 						}
 
 						if (needsComponents) {
-							// Assign this factory to produce this commodity
-							_.set(Memory, ["resources", "factories", "assignments", factory.id], {
-								commodity: commodity,
-								components: components,
-								room: rmColony
-							});
-							
+							this.factoryLogThrottle.log(rmColony, 'needs_components', `${rmColony}: Factory ${factory.id} needs components for ${commodity}`);
 							// Create tasks to load components into factory
 							for (let component in components) {
 								let amount = components[component];
@@ -5629,14 +6266,11 @@ let Sites = {
 										{ type: "withdraw", resource: component, id: storage.id, timer: 60, priority: 2 },
 										{ type: "deposit", resource: component, id: factory.id, timer: 60, priority: 2 }
 									);
+									this.factoryLogThrottle.log(rmColony, 'created_tasks', `${rmColony}: Created loading tasks for ${component} (${needed} needed)`);
 								}
 							}
-							break;
 						}
 					}
-
-					// Only process one commodity at a time to avoid overwhelming the system
-					break;
 				}
 
 				// Create tasks for factory operators to move produced commodities to storage
@@ -5690,7 +6324,7 @@ let Sites = {
 							// If not used by any commodity, remove the stockpile target
 							if (!isUsed) {
 								delete stockpile[resource];
-								console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: Removed stockpile target for unused component ${resource}`);
+								this.factoryLogThrottle.log(rmColony, 'stockpile_cleanup', `${rmColony}: Removed stockpile target for unused component ${resource}`);
 							}
 						}
 					}
@@ -5729,7 +6363,7 @@ let Sites = {
 						// If it's a factory component and not needed, remove the stockpile target
 						if (isFactoryComponent && !neededComponents.has(resource)) {
 							delete stockpile[resource];
-							console.log(`<font color=\"#FFA500\">[Factory]</font> ${rmColony}: Removed stockpile target for unused component ${resource}`);
+							this.factoryLogThrottle.log(rmColony, 'stockpile_cleanup', `${rmColony}: Removed stockpile target for unused component ${resource}`);
 						}
 					}
 				}
@@ -5774,11 +6408,17 @@ let Sites = {
 
 				// Only run cleanup if there are no active component loading tasks
 				let activeLoadingTasks = _.filter(Memory.rooms[rmColony].industry.tasks, t => t.priority == 2);
-				if (activeLoadingTasks.length > 0) return;
+				if (activeLoadingTasks.length > 0) {
+					this.factoryLogThrottle.log(rmColony, 'cleanup_skip', `${rmColony}: ${activeLoadingTasks.length} loading tasks active, skipping cleanup`);
+					return;
+				}
 
 				// Clean up stockpile targets for components that are no longer needed
 				this.cleanupFactoryStockpileTargets(rmColony);
 
+				let cleanupTasksCreated = 0;
+				let cleanupDetails = [];
+				
 				for (let factory of factories) {
 					let assignment = _.get(Memory, ["resources", "factories", "assignments", factory.id]);
 					
@@ -5789,6 +6429,8 @@ let Sites = {
 								Memory.rooms[rmColony].industry.tasks.push(
 									{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 1 }
 								);
+								cleanupTasksCreated++;
+								cleanupDetails.push(`${factory.id}: ${resource}:${factory.store[resource]}`);
 							}
 						}
 						continue;
@@ -5805,6 +6447,8 @@ let Sites = {
 							Memory.rooms[rmColony].industry.tasks.push(
 								{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 1 }
 							);
+							cleanupTasksCreated++;
+							cleanupDetails.push(`${factory.id}: ${resource}:${factory.store[resource]} (unwanted)`);
 							continue;
 						}
 
@@ -5821,6 +6465,7 @@ let Sites = {
 									Memory.rooms[rmColony].industry.tasks.push(
 										{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 1, amount: excess }
 									);
+									cleanupTasksCreated++;
 								}
 							}
 							
@@ -5834,10 +6479,15 @@ let Sites = {
 									Memory.rooms[rmColony].industry.tasks.push(
 										{ type: "withdraw", resource: resource, id: factory.id, timer: 60, priority: 1, amount: excess }
 									);
+									cleanupTasksCreated++;
 								}
 							}
 						}
 					}
+				}
+				
+				if (cleanupTasksCreated > 0) {
+					this.factoryLogThrottle.log(rmColony, 'cleanup_skip', `${rmColony}: Created ${cleanupTasksCreated} cleanup tasks${cleanupDetails.length > 0 ? ' - ' + cleanupDetails.join(', ') : ''}`);
 				}
 			},
 		};
@@ -7882,6 +8532,12 @@ let Console = {
 		help_factories.push("factories.debug()");
 		help_factories.push(" - Shows detailed factory debugging information");
 
+		help_factories.push("factories.debug_resources()");
+		help_factories.push(" - Shows detailed resource tracking for factory components");
+
+		help_factories.push("factories.debug_terminal()");
+		help_factories.push(" - Shows terminal contents and emptying tasks");
+
 		help_factories.push("factories.list_commodities()");
 		help_factories.push(" - Lists all available commodities and their recipes");
 
@@ -8476,6 +9132,69 @@ let Console = {
 			return `<font color=\"#FFA500\">[Factory]</font> Maintenance intervals updated.`;
 		};
 
+		help_factories.push("factories.set_log_intervals(needs_components, created_tasks, cleanup_skip, stockpile_cleanup, assignment_debug)");
+		help_factories.push(" - Sets factory logging intervals in ticks (default: 50, 30, 100, 200, 500)");
+
+		factories.set_log_intervals = function (needs_components = 50, created_tasks = 30, cleanup_skip = 100, stockpile_cleanup = 200, assignment_debug = 500) {
+			// Store log intervals in Memory for the Industry object to access
+			if (!Memory.factories) {
+				Memory.factories = {};
+			}
+			
+			Memory.factories.logIntervals = {
+				'needs_components': needs_components,
+				'created_tasks': created_tasks,
+				'cleanup_skip': cleanup_skip,
+				'stockpile_cleanup': stockpile_cleanup,
+				'assignment_debug': assignment_debug
+			};
+			
+			console.log(`<font color=\"#FFA500\">[Factory]</font> Log intervals set: needs_components=${needs_components}, created_tasks=${created_tasks}, cleanup_skip=${cleanup_skip}, stockpile_cleanup=${stockpile_cleanup}, assignment_debug=${assignment_debug}`);
+			return `<font color=\"#FFA500\">[Factory]</font> Factory log intervals updated.`;
+		};
+
+		help_factories.push("factories.disable_logs()");
+		help_factories.push(" - Disables all factory console logging");
+
+		factories.disable_logs = function () {
+			// Store disabled log intervals in Memory
+			if (!Memory.factories) {
+				Memory.factories = {};
+			}
+			
+			Memory.factories.logIntervals = {
+				'needs_components': 999999,
+				'created_tasks': 999999,
+				'cleanup_skip': 999999,
+				'stockpile_cleanup': 999999,
+				'assignment_debug': 999999
+			};
+			
+			console.log(`<font color=\"#FFA500\">[Factory]</font> Factory logging disabled. Use factories.enable_logs() to re-enable.`);
+			return `<font color=\"#FFA500\">[Factory]</font> Factory logging disabled.`;
+		};
+
+		help_factories.push("factories.enable_logs()");
+		help_factories.push(" - Re-enables factory console logging with default intervals");
+
+		factories.enable_logs = function () {
+			// Store default log intervals in Memory
+			if (!Memory.factories) {
+				Memory.factories = {};
+			}
+			
+			Memory.factories.logIntervals = {
+				'needs_components': 50,
+				'created_tasks': 30,
+				'cleanup_skip': 100,
+				'stockpile_cleanup': 200,
+				'assignment_debug': 500
+			};
+			
+			console.log(`<font color=\"#FFA500\">[Factory]</font> Factory logging re-enabled with default intervals.`);
+			return `<font color=\"#FFA500\">[Factory]</font> Factory logging re-enabled.`;
+		};
+
 		factories.force_cleanup = function () {
 			console.log(`<font color=\"#FFA500\">[Factory]</font> Force cleanup initiated - this will clear all priority 2 tasks and clean factories aggressively.`);
 			return this.cleanup(1);
@@ -8591,173 +9310,40 @@ let Console = {
 		factories.renew_assignments = function () {
 			console.log(`<font color=\"#FFA500\">[Factory]</font> Renewing factory assignments...`);
 			
-			// Clear existing assignments
+			// Clear existing assignments to force fresh assignment
 			delete Memory["resources"]["factories"]["assignments"];
 			
-			// Get current targets
-			let targets = _.get(Memory, ["resources", "factories", "targets"]);
-			if (targets == null || Object.keys(targets).length == 0) {
-				console.log(`<font color=\"#FFA500\">[Factory]</font> No factory targets set. No assignments to create.`);
-				return `<font color=\"#FFA500\">[Factory]</font> No factory targets set. No assignments to create.`;
-			}
-			
-			// Initialize commodity cache if needed
-			if (_.get(Memory, ["resources", "factories", "commodity_cache"]) == null) {
-				let Industry = {
-					cacheCommodityData: function () {
-						_.set(Memory, ["resources", "factories", "commodity_cache"], COMMODITIES);
-					}
-				};
-				Industry.cacheCommodityData();
-			}
-			
-			let assignmentsCreated = 0;
-			let assignmentData = [];
-			
-			// Process each room with factories
-			_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
-				let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
-				if (factories.length == 0) return;
-				
-				// Sort targets by priority (lower number = higher priority)
-				let sortedTargets = _.sortBy(targets, "priority");
-				
-				// Try to assign each factory to a commodity
-				for (let factory of factories) {
-					if (factory.cooldown > 0) {
-						assignmentData.push({
-							room: room.name,
-							factory: factory.id,
-							status: `Cooldown: ${factory.cooldown}`,
-							commodity: "N/A",
-							components: "N/A"
-						});
-						continue;
-					}
-					
-					// Find the highest priority commodity that needs production
-					for (let target of sortedTargets) {
-						let commodity = target.commodity;
-						
-						// Check current amount of this commodity
-						let current = 0;
-						_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
-							current += room.store(commodity);
-						});
-						
-						// If we've reached the target, skip this commodity
-						if (current >= target.amount) {
-							assignmentData.push({
-								room: room.name,
-								factory: factory.id,
-								status: "Target Reached",
-								commodity: commodity,
-								components: `Current: ${current}/${target.amount}`
-							});
-							continue;
-						}
-						
-						// Get commodity components
-						let cache = _.get(Memory, ["resources", "factories", "commodity_cache"]);
-						let recipe = cache[commodity];
-						if (recipe == null) {
-							assignmentData.push({
-								room: room.name,
-								factory: factory.id,
-								status: "No Recipe",
-								commodity: commodity,
-								components: "N/A"
-							});
-							continue;
-						}
-						
-						// Extract components from recipe (handle both API format and fallback format)
-						let components = recipe.components || recipe;
-						
-						// Check if we have enough components available
-						let hasComponents = true;
-						let componentStatus = [];
-						for (let component in components) {
-							let amount = components[component];
-							let available = 0;
-							_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
-								// Count in storage
-								available += room.store(component);
-								
-								// Count in factories
-								let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
-								_.each(factories, factory => {
-									if (factory.store[component]) {
-										available += factory.store[component];
-									}
-								});
-							});
-							
-							let status = available >= amount ? "✓" : "✗";
-							componentStatus.push(`${component}: ${available}/${amount} ${status}`);
-							
-							if (available < amount) {
-								hasComponents = false;
-							}
-						}
-						
-						if (!hasComponents) {
-							assignmentData.push({
-								room: room.name,
-								factory: factory.id,
-								status: "Missing Components",
-								commodity: commodity,
-								components: componentStatus.join(", ")
-							});
-							continue;
-						}
-						
-						// Assign this factory to produce this commodity
-						_.set(Memory, ["resources", "factories", "assignments", factory.id], {
-							commodity: commodity,
-							components: components,
-							room: room.name
-						});
-						
-						assignmentData.push({
-							room: room.name,
-							factory: factory.id,
-							status: "✓ Assigned",
-							commodity: commodity,
-							components: componentStatus.join(", ")
-						});
-						
-						assignmentsCreated++;
-						
-						// Only assign one commodity per factory
-						break;
-					}
+			// Trigger factory pulse to reassign factories based on priority
+			// Use the first room with a controller as the processing room
+			let processingRoom = null;
+			for (let roomName in Game.rooms) {
+				let room = Game.rooms[roomName];
+				if (room.controller && room.controller.my) {
+					processingRoom = roomName;
+					break;
 				}
+			}
+			
+			_.set(Memory, ["hive", "pulses", "factory"], { 
+				active: true,
+				processing_room: processingRoom
 			});
 			
-			// Display consolidated assignment table
-			if (assignmentData.length > 0) {
-				let tableStyle = "style=\"border-collapse: collapse; border: 1px solid #666; margin: 5px 0;\"";
-				let cellStyle = "style=\"border: 1px solid #666; padding: 6px 8px; text-align: left; font-size: 12px;\"";
-				let headerStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left; background-color: #FFA500; color: white; font-weight: bold;\"";
-				
-				let assignmentTable = `<table ${tableStyle}><tr><th ${headerStyle}>Room</th><th ${headerStyle}>Factory</th><th ${headerStyle}>Status</th><th ${headerStyle}>Commodity</th><th ${headerStyle}>Components</th></tr>`;
-				
-				_.each(assignmentData, data => {
-					let statusColor = data.status.includes("✓") ? "green" : data.status.includes("✗") ? "red" : "orange";
-					assignmentTable += `<tr><td ${cellStyle}>${data.room}</td><td ${cellStyle}>${data.factory}</td><td ${cellStyle}><font color=\"${statusColor}\">${data.status}</font></td><td ${cellStyle}>${data.commodity}</td><td ${cellStyle}>${data.components}</td></tr>`;
-				});
-				
-				assignmentTable += "</table>";
-				console.log(`<font color=\"#FFA500\">[Factory]</font> <b>Assignment Summary:</b><br>${assignmentTable}`);
+			return `<font color=\"#FFA500\">[Factory]</font> Factory assignments will be renewed next tick based on current priorities.`;
+		};
+
+		factories.show_assignments = function () {
+			let assignments = _.get(Memory, ["resources", "factories", "assignments"], {});
+			if (Object.keys(assignments).length === 0) {
+				return `<font color=\"#FFA500\">[Factory]</font> No factory assignments found.`;
 			}
 			
-			console.log(`<font color=\"#FFA500\">[Factory]</font> Created ${assignmentsCreated} factory assignments.`);
-			
-			// Trigger cleanup to remove any unnecessary items from factories
-			this.cleanup();
-			
-			return `<font color=\"#FFA500\">[Factory]</font> Renewed ${assignmentsCreated} factory assignments and triggered cleanup.`;
+			let result = `<font color=\"#FFA500\">[Factory]</font> Current factory assignments:\n`;
+			for (let factoryId in assignments) {
+				let assignment = assignments[factoryId];
+				result += `Factory ${factoryId}: ${assignment.commodity} in ${assignment.room}\n`;
+			}
+			return result;
 		};
 
 		factories.debug = function (roomFilter = null) {
@@ -8863,6 +9449,171 @@ let Console = {
 			}
 			
 			return `<font color=\"#D3FFA3\">[Factory]</font> Factory debug information displayed${roomFilter ? ` for ${roomFilter}` : ''}.`;
+		};
+
+		factories.debug_resources = function () {
+			console.log(`<font color=\"#FFA500\">[Factory]</font> <b>Factory Resource Tracking Debug:</b>`);
+			
+			// Get all factory components that might be in use
+			let allComponents = new Set();
+			let assignments = _.get(Memory, ["resources", "factories", "assignments"], {});
+			
+			// Collect all components from active assignments
+			for (let factoryId in assignments) {
+				let assignment = assignments[factoryId];
+				if (assignment && assignment.components) {
+					for (let component in assignment.components) {
+						allComponents.add(component);
+					}
+				}
+			}
+			
+			// Add common factory components
+			allComponents.add("battery");
+			allComponents.add("cell");
+			allComponents.add("phlegm");
+			allComponents.add("tissue");
+			allComponents.add("muscle");
+			allComponents.add("organoid");
+			allComponents.add("organism");
+			
+			let tableStyle = "style=\"border-collapse: collapse; border: 1px solid #666; margin: 5px 0;\"";
+			let cellStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left;\"";
+			let headerStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left; background-color: #444; color: #D3FFA3; font-weight: bold;\"";
+			
+			_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+				let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+				if (factories.length === 0) return;
+				
+				console.log(`<font color=\"#D3FFA3\">${room.name} Resource Tracking:</font>`);
+				
+				// Resource tracking table
+				let resourceTable = `<table ${tableStyle}><tr><th ${headerStyle}>Resource</th><th ${headerStyle}>Storage</th><th ${headerStyle}>Terminal</th><th ${headerStyle}>Factories</th><th ${headerStyle}>Total (room.store)</th><th ${headerStyle}>Status</th></tr>`;
+				
+				for (let component of allComponents) {
+					let storageAmount = room.storage ? _.get(room.storage, ["store", component], 0) : 0;
+					let terminalAmount = room.terminal ? _.get(room.terminal, ["store", component], 0) : 0;
+					let factoryAmount = 0;
+					
+					// Calculate factory amounts
+					for (let factory of factories) {
+						factoryAmount += _.get(factory, ["store", component], 0);
+					}
+					
+					let totalAmount = room.store(component);
+					let expectedTotal = storageAmount + terminalAmount + factoryAmount;
+					
+					let status = "✓ OK";
+					let statusColor = "green";
+					if (totalAmount !== expectedTotal) {
+						status = "⚠ Mismatch";
+						statusColor = "orange";
+					}
+					if (terminalAmount > 0) {
+						status += " (Terminal)";
+						statusColor = "yellow";
+					}
+					
+					resourceTable += `<tr><td ${cellStyle}>${component}</td><td ${cellStyle}>${storageAmount}</td><td ${cellStyle}>${terminalAmount}</td><td ${cellStyle}>${factoryAmount}</td><td ${cellStyle}>${totalAmount}</td><td ${cellStyle}><font color=\"${statusColor}\">${status}</font></td></tr>`;
+				}
+				
+				resourceTable += "</table>";
+				console.log(resourceTable);
+				
+				// Show terminal emptying tasks
+				let tasks = _.get(Memory, ["rooms", room.name, "industry", "tasks"]);
+				if (tasks && tasks.length > 0) {
+					let terminalTasks = _.filter(tasks, t => t.id && Game.getObjectById(t.id) && Game.getObjectById(t.id).structureType === "terminal");
+					if (terminalTasks.length > 0) {
+						console.log(`<font color=\"#D3FFA3\">${room.name} Terminal Tasks:</font>`);
+						let taskTable = `<table ${tableStyle}><tr><th ${headerStyle}>Type</th><th ${headerStyle}>Resource</th><th ${headerStyle}>Priority</th><th ${headerStyle}>Timer</th></tr>`;
+						
+						_.each(terminalTasks, task => {
+							taskTable += `<tr><td ${cellStyle}>${task.type}</td><td ${cellStyle}>${task.resource}</td><td ${cellStyle}>${task.priority}</td><td ${cellStyle}>${task.timer}</td></tr>`;
+						});
+						
+						taskTable += "</table>";
+						console.log(taskTable);
+					}
+				}
+			});
+			
+			return `<font color=\"#FFA500\">[Factory]</font> Resource tracking debug completed.`;
+		};
+
+		factories.debug_terminal = function () {
+			console.log(`<font color=\"#FFA500\">[Factory]</font> <b>Terminal Emptying Debug:</b>`);
+			
+			_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+				if (!room.terminal) return;
+				
+				let terminal = room.terminal;
+				let storage = room.storage;
+				let factories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+				
+				console.log(`<font color=\"#D3FFA3\">${room.name} Terminal Analysis:</font>`);
+				
+				let tableStyle = "style=\"border-collapse: collapse; border: 1px solid #666; margin: 5px 0;\"";
+				let cellStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left;\"";
+				let headerStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left; background-color: #444; color: #D3FFA3; font-weight: bold;\"";
+				
+				// Terminal contents table
+				let terminalTable = `<table ${tableStyle}><tr><th ${headerStyle}>Resource</th><th ${headerStyle}>Amount</th><th ${headerStyle}>Is Factory Component</th><th ${headerStyle}>Priority</th></tr>`;
+				
+				// Get all factory components that might be needed
+				let factoryComponents = new Set();
+				for (let factory of factories) {
+					let assignment = _.get(Memory, ["resources", "factories", "assignments", factory.id]);
+					if (assignment && assignment.components) {
+						for (let component in assignment.components) {
+							factoryComponents.add(component);
+						}
+					}
+				}
+				
+				// Add common factory components
+				let commonFactoryComponents = ["battery", "cell", "phlegm", "tissue", "muscle", "organoid", "organism"];
+				for (let component of commonFactoryComponents) {
+					factoryComponents.add(component);
+				}
+				
+				for (let resource in terminal.store) {
+					let amount = terminal.store[resource];
+					if (amount > 0) {
+						let isFactoryComponent = factoryComponents.has(resource);
+						let priority = isFactoryComponent ? 1 : 6;
+						let priorityText = isFactoryComponent ? "High (1)" : "Low (6)";
+						
+						terminalTable += `<tr><td ${cellStyle}>${resource}</td><td ${cellStyle}>${amount}</td><td ${cellStyle}>${isFactoryComponent ? "✓ Yes" : "✗ No"}</td><td ${cellStyle}>${priorityText}</td></tr>`;
+					}
+				}
+				
+				terminalTable += "</table>";
+				console.log(terminalTable);
+				
+				// Show terminal emptying tasks
+				let tasks = _.get(Memory, ["rooms", room.name, "industry", "tasks"]);
+				if (tasks && tasks.length > 0) {
+					let terminalTasks = _.filter(tasks, t => t.id && Game.getObjectById(t.id) && Game.getObjectById(t.id).structureType === "terminal");
+					if (terminalTasks.length > 0) {
+						console.log(`<font color=\"#D3FFA3\">${room.name} Terminal Emptying Tasks:</font>`);
+						let taskTable = `<table ${tableStyle}><tr><th ${headerStyle}>Type</th><th ${headerStyle}>Resource</th><th ${headerStyle}>Priority</th><th ${headerStyle}>Timer</th></tr>`;
+						
+						_.each(terminalTasks, task => {
+							taskTable += `<tr><td ${cellStyle}>${task.type}</td><td ${cellStyle}>${task.resource}</td><td ${cellStyle}>${task.priority}</td><td ${cellStyle}>${task.timer}</td></tr>`;
+						});
+						
+						taskTable += "</table>";
+						console.log(taskTable);
+					} else {
+						console.log(`<font color=\"#FFA500\">${room.name}: No terminal emptying tasks found.`);
+					}
+				} else {
+					console.log(`<font color=\"#FFA500\">${room.name}: No industry tasks found.`);
+				}
+			});
+			
+			return `<font color=\"#FFA500\">[Factory]</font> Terminal debugging completed.`;
 		};
 
 
@@ -9164,6 +9915,8 @@ let Console = {
 
 
 		help_resources.push("resources.overflow_cap(capAmount)");
+		help_resources.push(" - Sets the energy overflow cap for automatic market selling");
+		help_resources.push(" - When total colony energy exceeds this amount, excess energy is sold to market");
 
 		resources = new Object();
 		resources.overflow_cap = function (amount) {
@@ -9172,6 +9925,9 @@ let Console = {
 		};
 
 		help_resources.push("resources.market_cap(resource, capAmount)");
+		help_resources.push(" - Sets market overflow cap for a specific resource");
+		help_resources.push(" - When resource amount exceeds this cap, excess is automatically sold to market");
+		help_resources.push(" - Example: resources.market_cap('energy', 1000000)");
 
 		resources.market_cap = function (resource, amount) {
 			_.set(Memory, ["resources", "to_market", resource], amount);
@@ -9179,6 +9935,10 @@ let Console = {
 		};
 
 		help_resources.push("resources.send(orderName, rmFrom, rmTo, resource, amount)");
+		help_resources.push(" - Creates a terminal order to send resources between your rooms");
+		help_resources.push(" - orderName: unique identifier for the order");
+		help_resources.push(" - rmFrom: source room name, rmTo: destination room name");
+		help_resources.push(" - resource: resource type (energy, battery, etc.), amount: quantity to transfer");
 
 		resources.send = function (orderName, rmFrom, rmTo, resource, amount) {
 			_.set(Memory, ["resources", "terminal_orders", orderName], { room: rmTo, from: rmFrom, resource: resource, amount: amount, priority: 1 });
@@ -9186,6 +9946,10 @@ let Console = {
 		};
 
 		help_resources.push("resources.market_sell(orderName, marketOrderID, rmFrom, amount)");
+		help_resources.push(" - Creates a market sell order to fulfill an existing buy order");
+		help_resources.push(" - orderName: unique identifier for the order");
+		help_resources.push(" - marketOrderID: ID of the buy order you want to fulfill");
+		help_resources.push(" - rmFrom: your room that will send the resources, amount: quantity to sell");
 
 		resources.market_sell = function (orderName, marketOrderID, rmFrom, amount) {
 			_.set(Memory, ["resources", "terminal_orders", orderName], { market_id: marketOrderID, amount: amount, from: rmFrom, priority: 4 });
@@ -9193,6 +9957,10 @@ let Console = {
 		};
 
 		help_resources.push("resources.market_buy(orderName, marketOrderID, rmTo, amount)");
+		help_resources.push(" - Creates a market buy order to fulfill an existing sell order");
+		help_resources.push(" - orderName: unique identifier for the order");
+		help_resources.push(" - marketOrderID: ID of the sell order you want to fulfill");
+		help_resources.push(" - rmTo: your room that will receive the resources, amount: quantity to buy");
 
 		resources.market_buy = function (orderName, marketOrderID, rmTo, amount) {
 			_.set(Memory, ["resources", "terminal_orders", orderName], { market_id: marketOrderID, amount: amount, to: rmTo, priority: 4 });
@@ -9200,6 +9968,8 @@ let Console = {
 		};
 
 		help_resources.push("resources.clear_market_cap()");
+		help_resources.push(" - Clears all market overflow caps for all resources");
+		help_resources.push(" - Stops automatic market selling of excess resources");
 
 		resources.clear_market_cap = function () {
 			_.set(Memory, ["resources", "to_market"], new Object());
@@ -9207,10 +9977,494 @@ let Console = {
 		};
 
 		help_resources.push("resources.clear_transactions()");
+		help_resources.push(" - Clears all active terminal orders and market transactions");
+		help_resources.push(" - Cancels all pending resource transfers and market orders");
 
 		resources.clear_transactions = function () {
 			_.set(Memory, ["resources", "terminal_orders"], new Object());
 			return `<font color=\"#D3FFA3\">[Console]</font> All terminal transactions cleared.`;
+		};
+
+		help_resources.push("resources.set_energy_threshold(amount)");
+		help_resources.push(" - Sets the energy threshold for emergency market orders");
+		help_resources.push(" - When total colony energy falls below this amount, automatic buy orders are created");
+		help_resources.push(" - Default threshold is 1,000,000 energy");
+
+		resources.set_energy_threshold = function (amount) {
+			_.set(Memory, ["resources", "market_energy_threshold"], amount);
+			return `<font color=\"#D3FFA3\">[Console]</font> Market energy threshold set to ${amount}. Emergency market orders will trigger when total colony energy falls below this amount.`;
+		};
+
+		help_resources.push("resources.market_status()");
+		help_resources.push(" - Shows current market status and energy levels");
+		help_resources.push(" - Displays total colony energy, energy threshold, and available market orders");
+		help_resources.push(" - Shows top 5 cheapest energy and battery orders from the market");
+
+		resources.market_status = function () {
+			// Calculate total colony energy
+			let totalEnergy = 0;
+			let colonies = _.filter(Game.rooms, r => r.controller && r.controller.my);
+			_.each(colonies, colony => {
+				totalEnergy += colony.store("energy");
+			});
+
+			let energyThreshold = _.get(Memory, ["resources", "market_energy_threshold"], 1000000);
+			let status = totalEnergy >= energyThreshold ? "OK" : "LOW";
+			let statusColor = status === "OK" ? "#47FF3E" : "#FF6B6B";
+
+			// Energy Status Summary
+			console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>Energy Status:</b> ${totalEnergy.toLocaleString()}/${energyThreshold.toLocaleString()} - <font color=\"${statusColor}\">${status}</font>`);
+
+			// Terminal Orders Table (CSS)
+			let terminalOrders = _.get(Memory, ["resources", "terminal_orders"]);
+			if (terminalOrders && Object.keys(terminalOrders).length > 0) {
+				let tableStyle = "style=\"border-collapse: collapse; border: 1px solid #666; margin: 5px 0; width: 100%;\"";
+				let cellStyle = "style=\"border: 1px solid #666; padding: 2px 6px; text-align: left; font-size: 12px;\"";
+				let headerStyle = "style=\"border: 1px solid #666; padding: 2px 6px; text-align: left; background-color: #444; color: #D3FFA3; font-weight: bold; font-size: 13px;\"";
+				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>Terminal Orders:</b> ${Object.keys(terminalOrders).length}`);
+				let ordersTable = `<table ${tableStyle}><tr><th ${headerStyle}>Order Name</th><th ${headerStyle}>Type</th><th ${headerStyle}>Resource</th><th ${headerStyle}>Amount</th><th ${headerStyle}>Priority</th><th ${headerStyle}>Room</th></tr>`;
+				_.each(terminalOrders, (order, orderName) => {
+					let orderType = order.market_id ? "Market" : "Internal";
+					let emergency = order.emergency ? " (EMERGENCY)" : "";
+					let priority = order.priority || "";
+					let resource = order.resource || "";
+					let amount = order.amount || "";
+					let room = order.room || order.to || order.from || "";
+					ordersTable += `<tr><td ${cellStyle}>${orderName}</td><td ${cellStyle}>${orderType}${emergency}</td><td ${cellStyle}>${resource}</td><td ${cellStyle}>${amount}</td><td ${cellStyle}>${priority}</td><td ${cellStyle}>${room}</td></tr>`;
+				});
+				ordersTable += "</table>";
+				console.log(ordersTable);
+			} else {
+				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>No active terminal orders.</b>`);
+			}
+
+			// Available Market Orders Summary with Price Analysis
+			let energyOrders = Game.market.getAllOrders(
+				order => order.type == "sell" && order.resourceType == "energy"
+			);
+
+			if (energyOrders.length > 0) {
+				// Calculate price statistics
+				let prices = energyOrders.map(order => order.price).sort((a, b) => a - b);
+				let avgPrice = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+				let medianPrice = prices[Math.floor(prices.length / 2)];
+				let minPrice = prices[0];
+				let maxPrice = prices[prices.length - 1];
+				
+				// Get configurable price protection settings
+				let priceProtection = _.get(Memory, ["resources", "market_price_protection"], { avg_multiplier: 2.0, median_multiplier: 1.5 });
+				let reasonablePrice = Math.min(avgPrice * priceProtection.avg_multiplier, medianPrice * priceProtection.median_multiplier);
+				
+				// Filter reasonable orders
+				let reasonableOrders = energyOrders.filter(order => order.price <= reasonablePrice);
+				let expensiveOrders = energyOrders.filter(order => order.price > reasonablePrice);
+				
+				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>Energy Market Analysis:</b>`);
+				console.log(`  <b>Price Stats:</b> Min: ${minPrice.toFixed(2)}, Avg: ${avgPrice.toFixed(2)}, Median: ${medianPrice.toFixed(2)}, Max: ${maxPrice.toFixed(2)}`);
+				console.log(`  <b>Reasonable Price Threshold:</b> ${reasonablePrice.toFixed(2)} (${priceProtection.avg_multiplier}x avg or ${priceProtection.median_multiplier}x median, whichever is lower)`);
+				console.log(`  <b>Available Orders:</b> ${reasonableOrders.length} reasonable, ${expensiveOrders.length} too expensive`);
+				
+				if (reasonableOrders.length > 0) {
+					console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>Top Reasonable Energy Orders:</b>`);
+					_.each(_.sortBy(reasonableOrders, order => order.price).slice(0, 5), (order, i) => {
+						console.log(`  ${i+1}. ${order.amount.toLocaleString()} energy @ ${order.price} credits from ${order.roomName}`);
+					});
+				} else {
+					console.log(`<font color=\"#FF6B6B\">[Market Status]</font> <b>⚠️ No reasonable energy orders available!</b> All orders are too expensive.`);
+				}
+				
+				if (expensiveOrders.length > 0) {
+					console.log(`<font color=\"#FFA500\">[Market Status]</font> <b>Expensive Orders (skipped):</b>`);
+					_.each(_.sortBy(expensiveOrders, order => order.price).slice(0, 3), (order, i) => {
+						console.log(`  ${i+1}. ${order.amount.toLocaleString()} energy @ ${order.price} credits from ${order.roomName} (${((order.price / avgPrice) * 100).toFixed(0)}% of avg)`);
+					});
+				}
+			} else {
+				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>No energy sell orders available on market.</b>`);
+			}
+
+			// Credit Status
+			let availableCredits = Game.market.credits || 0;
+			console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>Available Credits:</b> ${availableCredits.toLocaleString()}`);
+
+			// Emergency Status with Enhanced Information
+			if (totalEnergy < energyThreshold) {
+				let nextCheckTick = Math.ceil(Game.time / 50) * 50 + 1;
+				console.log(`<font color=\"#FF6B6B\">[Market Status]</font> <b>⚠️ Emergency:</b> Energy below threshold! Next check at tick ${nextCheckTick}`);
+				
+				// Show why we might not be buying
+				if (energyOrders.length > 0) {
+					let prices = energyOrders.map(order => order.price);
+					let avgPrice = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+					let priceProtection = _.get(Memory, ["resources", "market_price_protection"], { avg_multiplier: 2.0, median_multiplier: 1.5 });
+					let creditLimit = _.get(Memory, ["resources", "market_credit_limit"], 0.8);
+					let reasonablePrice = Math.min(avgPrice * priceProtection.avg_multiplier, prices[Math.floor(prices.length / 2)] * priceProtection.median_multiplier);
+					let reasonableOrders = energyOrders.filter(order => order.price <= reasonablePrice);
+					
+					if (reasonableOrders.length == 0) {
+						console.log(`<font color=\"#FFA500\">[Market Status]</font> <b>Reason for not buying:</b> All energy orders are too expensive (above ${reasonablePrice.toFixed(2)} credits)`);
+					} else {
+						let bestOrder = _.sortBy(reasonableOrders, order => order.price)[0];
+						let totalCost = bestOrder.price * 5000; // Estimate cost for 5000 energy
+						
+						if (totalCost > availableCredits * creditLimit) {
+							console.log(`<font color=\"#FFA500\">[Market Status]</font> <b>Reason for not buying:</b> Insufficient credits. Need ~${totalCost.toLocaleString()} credits, have ${availableCredits.toLocaleString()} (limit: ${(creditLimit * 100).toFixed(0)}%)`);
+						}
+					}
+				}
+			}
+
+			// Transaction Cost Analysis
+			if (energyOrders.length > 0) {
+				let bestOrder = _.sortBy(energyOrders, order => order.price)[0];
+				console.log(`<font color=\"#D3FFA3\">[Market Status]</font> <b>Transaction Cost Analysis (Best Order: ${bestOrder.price} credits):</b>`);
+				
+				_.each(colonies, colony => {
+					if (colony.terminal && colony.terminal.my) {
+						let terminalEnergy = colony.terminal.store.energy || 0;
+						let sampleAmount = 5000; // Sample transaction size
+						let energyCost = Game.market.calcTransactionCost(sampleAmount, bestOrder.roomName, colony.name);
+						let netGain = sampleAmount - energyCost;
+						let costPerUnit = energyCost / sampleAmount;
+						let profitMargin = (netGain / sampleAmount) * 100;
+						
+						let statusColor = netGain > 0 ? "#47FF3E" : "#FF6B6B";
+						let energyStatus = terminalEnergy >= energyCost ? "✅" : "⚠️";
+						
+						console.log(`  ${colony.name}: ${energyStatus} Terminal energy: ${terminalEnergy}, Cost for ${sampleAmount} energy: ${energyCost} (${costPerUnit.toFixed(3)} per unit), Net gain: ${netGain} (<font color=\"${statusColor}\">${profitMargin.toFixed(1)}% profit</font>)`);
+						
+						if (terminalEnergy < energyCost) {
+							console.log(`    ⚠️  Terminal needs ${energyCost - terminalEnergy} more energy for transaction`);
+						}
+					}
+				});
+			}
+
+			return `<font color=\"#D3FFA3\">[Console]</font> Market status displayed.`;
+		};
+
+		help_resources.push("resources.clear_emergency_orders()");
+		help_resources.push(" - Clears all emergency market orders created by the automatic system");
+		help_resources.push(" - Only affects orders marked as 'emergency', leaves manual orders intact");
+
+		resources.clear_emergency_orders = function () {
+			let cleared = 0;
+			let orders = _.get(Memory, ["resources", "terminal_orders"]);
+			if (orders) {
+				_.each(Object.keys(orders), orderName => {
+					if (orders[orderName].emergency) {
+						delete orders[orderName];
+						cleared++;
+					}
+				});
+			}
+			return `<font color=\"#D3FFA3\">[Console]</font> Cleared ${cleared} emergency market orders.`;
+		};
+
+		help_resources.push("resources.force_emergency_orders()");
+		help_resources.push(" - Manually triggers emergency market order creation");
+		help_resources.push(" - Useful for testing when energy is below threshold");
+
+		help_resources.push("resources.set_market_config(key, value)");
+		help_resources.push(" - Sets market configuration values");
+		help_resources.push(" - Keys: market_min_energy_gain (minimum net energy gain for transactions)");
+		help_resources.push(" - Example: resources.set_market_config('market_min_energy_gain', 2000)");
+
+		resources.set_market_config = function(key, value) {
+			if (key === 'market_min_energy_gain') {
+				_.set(Memory, ["resources", key], parseInt(value));
+				return `<font color=\"#D3FFA3\">[Console]</font> Set ${key} to ${value}.`;
+			} else {
+				return `<font color=\"#FF6B6B\">[Console]</font> Unknown config key: ${key}. Available: market_min_energy_gain`;
+			}
+		};
+
+		help_resources.push("resources.fuel_terminals()");
+		help_resources.push(" - Manually creates terminal fuel orders for all rooms");
+		help_resources.push(" - Useful for testing terminal energy distribution");
+
+		resources.fuel_terminals = function() {
+			let colonies = _.filter(Game.rooms, r => r.controller && r.controller.my);
+			let fueled = 0;
+			
+			_.each(colonies, colony => {
+				if (colony.terminal && colony.terminal.my) {
+					let terminalEnergy = colony.terminal.store.energy || 0;
+					if (terminalEnergy < 5000) { // Fuel terminals to 5000 energy
+						let energyNeeded = 5000 - terminalEnergy;
+						let energyOrderName = `${colony.name}-energy_terminal_fuel`;
+						_.set(Memory, ["resources", "terminal_orders", energyOrderName], {
+							room: colony.name,
+							resource: "energy",
+							amount: energyNeeded,
+							automated: true,
+							priority: 0, // Super high priority
+							terminal_fuel: true,
+							emergency: true
+						});
+						fueled++;
+						console.log(`<font color=\"#D3FFA3\">[Console]</font> Created terminal fuel order for ${colony.name}: ${energyNeeded} energy (current: ${terminalEnergy})`);
+					}
+				}
+			});
+			
+			return `<font color=\"#D3FFA3\">[Console]</font> Created ${fueled} terminal fuel orders.`;
+		};
+
+		resources.force_emergency_orders = function () {
+			// Find a room with a terminal to trigger the emergency order creation
+			let roomWithTerminal = _.find(Game.rooms, r => r.controller && r.controller.my && r.terminal);
+			if (!roomWithTerminal) {
+				return `<font color=\"#D3FFA3\">[Console]</font> Error: No room with terminal found.`;
+			}
+
+			// Implement the emergency order creation logic directly
+			let totalEnergy = 0;
+			let colonies = _.filter(Game.rooms, r => r.controller && r.controller.my);
+			_.each(colonies, colony => {
+				totalEnergy += colony.store("energy");
+			});
+
+			let energyThreshold = _.get(Memory, ["resources", "market_energy_threshold"], 1000000);
+			if (totalEnergy < energyThreshold) {
+				let energyOrders = Game.market.getAllOrders(
+					order => order.type == "sell" && order.resourceType == "energy"
+				);
+				
+				if (energyOrders.length > 0) {
+					let prices = energyOrders.map(order => order.price).sort((a, b) => a - b);
+					let avgPrice = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+					let medianPrice = prices[Math.floor(prices.length / 2)];
+					
+					let priceProtection = _.get(Memory, ["resources", "market_price_protection"], { avg_multiplier: 2.0, median_multiplier: 1.5 });
+					let creditLimit = _.get(Memory, ["resources", "market_credit_limit"], 0.8);
+					
+					let maxPrice = Math.min(avgPrice * priceProtection.avg_multiplier, medianPrice * priceProtection.median_multiplier);
+					let reasonableOrders = energyOrders.filter(order => order.price <= maxPrice);
+					
+					if (reasonableOrders.length > 0) {
+						let bestOrder = _.sortBy(reasonableOrders, order => order.price)[0];
+						let amountToBuy = Math.min(5000, energyThreshold - totalEnergy);
+						
+						let totalCost = bestOrder.price * amountToBuy;
+						let availableCredits = Game.market.credits || 0;
+						
+						if (totalCost <= availableCredits * creditLimit) {
+							// Calculate energy cost for the transaction
+							let energyCost = Game.market.calcTransactionCost(amountToBuy, bestOrder.roomName, roomWithTerminal.name);
+							let netEnergyGained = amountToBuy - energyCost;
+							
+							// Check if this transaction is profitable
+							if (netEnergyGained <= 0) {
+								console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Transaction not profitable: buying ${amountToBuy} energy costs ${energyCost} energy (net gain: ${netEnergyGained}). Skipping.`);
+								return;
+							}
+							
+							// Check if the energy gain is significant enough
+							let minSignificantGain = _.get(Memory, ["resources", "market_min_energy_gain"], 1000);
+							if (netEnergyGained < minSignificantGain) {
+								console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Energy gain too small: ${netEnergyGained} net energy (minimum: ${minSignificantGain}). Skipping.`);
+								return;
+							}
+							
+							// Find the best room to receive the energy
+							let bestReceivingRoom = null;
+							let bestRoomEnergy = 0;
+							let bestRoomScore = -1;
+							
+							_.each(colonies, colony => {
+								if (colony.terminal && colony.terminal.my) {
+									let terminalEnergy = colony.terminal.store.energy || 0;
+									let score = terminalEnergy >= energyCost ? terminalEnergy + 10000 : terminalEnergy;
+									if (score > bestRoomScore) {
+										bestRoomScore = score;
+										bestRoomEnergy = terminalEnergy;
+										bestReceivingRoom = colony.name;
+									}
+								}
+							});
+							
+							// If no room has sufficient terminal energy, create a high-priority energy order first
+							if (bestRoomEnergy < energyCost) {
+								let energyNeeded = energyCost + 1000;
+								let energyOrderName = `${roomWithTerminal.name}-energy_emergency_terminal`;
+								_.set(Memory, ["resources", "terminal_orders", energyOrderName], {
+									room: roomWithTerminal.name,
+									resource: "energy",
+									amount: energyNeeded,
+									automated: true,
+									priority: 0, // Super high priority
+									terminal_fuel: true,
+									emergency: true
+								});
+								console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Terminal in ${roomWithTerminal.name} needs ${energyNeeded} energy for transaction. Creating high-priority energy order.`);
+								return;
+							}
+							
+							let orderName = `market_energy_emergency_${Game.time}`;
+							_.set(Memory, ["resources", "terminal_orders", orderName], {
+								market_id: bestOrder.id,
+								amount: amountToBuy,
+								to: bestReceivingRoom,
+								priority: 1,
+								automated: true,
+								emergency: true,
+								energy_cost: energyCost,
+								net_gain: netEnergyGained
+							});
+
+							console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Creating market buy order: ${amountToBuy} energy at ${bestOrder.price} credits (cost: ${energyCost} energy, net gain: ${netEnergyGained}) to ${bestReceivingRoom} (terminal energy: ${bestRoomEnergy}).`);
+						} else {
+							console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Insufficient credits. Need ${totalCost} credits, have ${availableCredits}.`);
+						}
+					} else {
+						console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: All energy orders too expensive. Average price: ${avgPrice.toFixed(2)}, max acceptable: ${maxPrice.toFixed(2)}.`);
+					}
+				} else {
+					console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: No energy sell orders available on market.`);
+				}
+			} else {
+				console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Energy above threshold (${totalEnergy}/${energyThreshold}).`);
+			}
+			
+			return `<font color=\"#D3FFA3\">[Console]</font> Emergency order creation triggered for ${roomWithTerminal.name}.`;
+		};
+
+		help_resources.push("resources.clear_and_force_emergency()");
+		help_resources.push(" - Clears all existing emergency orders and forces creation of new ones");
+		help_resources.push(" - Useful when emergency orders are stuck due to terminal energy issues");
+
+		resources.clear_and_force_emergency = function () {
+			// Clear existing emergency orders
+			let cleared = 0;
+			let orders = _.get(Memory, ["resources", "terminal_orders"]);
+			if (orders) {
+				_.each(Object.keys(orders), orderName => {
+					if (orders[orderName].emergency) {
+						delete orders[orderName];
+						cleared++;
+					}
+				});
+			}
+			
+			// Force creation of new emergency orders by implementing the logic directly
+			let totalEnergy = 0;
+			let colonies = _.filter(Game.rooms, r => r.controller && r.controller.my);
+			_.each(colonies, colony => {
+				totalEnergy += colony.store("energy");
+			});
+
+			let energyThreshold = _.get(Memory, ["resources", "market_energy_threshold"], 1000000);
+			if (totalEnergy < energyThreshold) {
+				let energyOrders = Game.market.getAllOrders(
+					order => order.type == "sell" && order.resourceType == "energy"
+				);
+				
+				if (energyOrders.length > 0) {
+					let prices = energyOrders.map(order => order.price).sort((a, b) => a - b);
+					let avgPrice = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+					let medianPrice = prices[Math.floor(prices.length / 2)];
+					
+					let priceProtection = _.get(Memory, ["resources", "market_price_protection"], { avg_multiplier: 2.0, median_multiplier: 1.5 });
+					let creditLimit = _.get(Memory, ["resources", "market_credit_limit"], 0.8);
+					
+					let maxPrice = Math.min(avgPrice * priceProtection.avg_multiplier, medianPrice * priceProtection.median_multiplier);
+					let reasonableOrders = energyOrders.filter(order => order.price <= maxPrice);
+					
+					if (reasonableOrders.length > 0) {
+						let bestOrder = _.sortBy(reasonableOrders, order => order.price)[0];
+						let amountToBuy = Math.min(5000, energyThreshold - totalEnergy);
+						
+						let totalCost = bestOrder.price * amountToBuy;
+						let availableCredits = Game.market.credits || 0;
+						
+						if (totalCost <= availableCredits * creditLimit) {
+							// Find the best room to receive the energy
+							let bestReceivingRoom = null;
+							let bestRoomEnergy = 0;
+							
+							_.each(colonies, colony => {
+								if (colony.terminal && colony.terminal.my) {
+									let terminalEnergy = colony.terminal.store.energy || 0;
+									if (terminalEnergy > bestRoomEnergy) {
+										bestRoomEnergy = terminalEnergy;
+										bestReceivingRoom = colony.name;
+									}
+								}
+							});
+							
+							if (!bestReceivingRoom) {
+								bestReceivingRoom = colonies[0].name;
+							}
+							
+							let orderName = `market_energy_emergency_${Game.time}`;
+							_.set(Memory, ["resources", "terminal_orders", orderName], {
+								market_id: bestOrder.id,
+								amount: amountToBuy,
+								to: bestReceivingRoom,
+								priority: 1,
+								automated: true,
+								emergency: true
+							});
+
+							console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Creating market buy order for ${amountToBuy} energy at ${bestOrder.price} credits to ${bestReceivingRoom} (terminal energy: ${bestRoomEnergy}).`);
+						} else {
+							console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Insufficient credits. Need ${totalCost} credits, have ${availableCredits}.`);
+						}
+					} else {
+						console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: All energy orders too expensive. Average price: ${avgPrice.toFixed(2)}, max acceptable: ${maxPrice.toFixed(2)}.`);
+					}
+				} else {
+					console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: No energy sell orders available on market.`);
+				}
+			} else {
+				console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Manual trigger: Energy above threshold (${totalEnergy}/${energyThreshold}).`);
+			}
+			
+			return `<font color=\"#D3FFA3\">[Console]</font> Cleared ${cleared} emergency orders and triggered new emergency order creation.`;
+		};
+
+		help_resources.push("resources.set_price_protection(avgMultiplier, medianMultiplier)");
+		help_resources.push(" - Sets the price protection multipliers for emergency energy purchases");
+		help_resources.push(" - avgMultiplier: maximum price as multiple of average (default: 2.0)");
+		help_resources.push(" - medianMultiplier: maximum price as multiple of median (default: 1.5)");
+		help_resources.push(" - Example: resources.set_price_protection(1.5, 1.2) for more conservative buying");
+
+		resources.set_price_protection = function (avgMultiplier, medianMultiplier) {
+			_.set(Memory, ["resources", "market_price_protection"], {
+				avg_multiplier: avgMultiplier || 2.0,
+				median_multiplier: medianMultiplier || 1.5
+			});
+			return `<font color=\"#D3FFA3\">[Console]</font> Price protection set to ${avgMultiplier || 2.0}x average and ${medianMultiplier || 1.5}x median.`;
+		};
+
+		help_resources.push("resources.set_credit_limit(percentage)");
+		help_resources.push(" - Sets the maximum percentage of available credits to spend on emergency energy");
+		help_resources.push(" - percentage: 0-100, default is 80%");
+		help_resources.push(" - Example: resources.set_credit_limit(50) to only spend 50% of available credits");
+
+		resources.set_credit_limit = function (percentage) {
+			if (percentage < 0 || percentage > 100) {
+				return `<font color=\"#FF6B6B\">[Console]</font> Error: Percentage must be between 0 and 100.`;
+			}
+			_.set(Memory, ["resources", "market_credit_limit"], percentage / 100);
+			return `<font color=\"#D3FFA3\">[Console]</font> Credit limit set to ${percentage}% of available credits.`;
+		};
+
+		help_resources.push("resources.credits()");
+		help_resources.push(" - Shows current available market credits");
+		help_resources.push(" - Displays credits and spending limits");
+
+		resources.credits = function () {
+			let availableCredits = Game.market.credits || 0;
+			let creditLimit = _.get(Memory, ["resources", "market_credit_limit"], 0.8);
+			let maxSpendable = availableCredits * creditLimit;
+			
+			console.log(`<font color=\"#D3FFA3\">[Credits]</font> <b>Available Credits:</b> ${availableCredits.toLocaleString()}`);
+			console.log(`<font color=\"#D3FFA3\">[Credits]</font> <b>Credit Limit:</b> ${(creditLimit * 100).toFixed(0)}%`);
+			console.log(`<font color=\"#D3FFA3\">[Credits]</font> <b>Max Spendable:</b> ${maxSpendable.toLocaleString()}`);
+			
+			return `<font color=\"#D3FFA3\">[Console]</font> Credit information displayed.`;
 		};
 
 
@@ -9315,6 +10569,69 @@ let Console = {
 				return `<font color=\"#D3FFA3\">[Console]</font> Default message set.`;
 			}
 		}
+
+		help_empire.push("");
+		help_empire.push("empire.upgrader_status(roomName)")
+		empire.upgrader_status = function (roomName) {
+			let room = Game.rooms[roomName];
+			if (!room || !room.controller || !room.controller.my) {
+				return `<font color=\"#D3FFA3\">[Console]</font> Error: Room ${roomName} not found or not controlled.`;
+			}
+
+			let upgraders = _.filter(Game.creeps, c => c.memory.role == "upgrader" && c.memory.room == roomName);
+			let roomLevel = room.controller.level;
+			let controllerProgress = room.controller.progress;
+			let controllerProgressTotal = room.controller.progressTotal;
+
+			// Calculate expected upgrader amount based on remote mining sources
+			let remoteMiningSources = 0;
+			let remote_mining = _.get(Memory, ["sites", "mining"]);
+			let remoteRooms = [];
+			if (remote_mining) {
+				remoteRooms = _.filter(Object.keys(remote_mining), rem => { 
+					return rem != roomName && _.get(remote_mining[rem], "colony") == roomName; 
+				});
+				_.each(remoteRooms, rem => { 
+					remoteMiningSources += _.get(Memory, ["sites", "mining", rem, "survey", "source_amount"], 0); 
+				});
+			}
+			
+			let baseUpgraders = roomLevel >= 5 ? 1 : 0;
+			let additionalUpgraders = Math.floor(remoteMiningSources / 2);
+			let totalExpectedUpgraders = baseUpgraders + additionalUpgraders;
+
+			console.log(`<font color=\"#D3FFA3\">[Console]</font> <b>Upgrader Status for ${roomName}:</b>`);
+			console.log(`Room Level: ${roomLevel}, Controller Progress: ${controllerProgress}/${controllerProgressTotal}`);
+			console.log(`Active Upgraders: ${upgraders.length}/${totalExpectedUpgraders}`);
+			console.log(`Remote Mining: ${remoteRooms.length} rooms, ${remoteMiningSources} sources`);
+			console.log(`Upgrader Calculation: Base(${baseUpgraders}) + Remote(${additionalUpgraders}) = ${totalExpectedUpgraders}`);
+			
+			if (upgraders.length > 0) {
+				console.log(`Upgrader Details:`);
+				_.each(upgraders, (creep, i) => {
+					console.log(`  ${i+1}. ${creep.name} - Energy: ${creep.carry.energy || 0}/${creep.carryCapacity}, State: ${creep.memory.state}`);
+				});
+			}
+
+			return `<font color=\"#D3FFA3\">[Console]</font> Upgrader status displayed for ${roomName}.`;
+		};
+
+		help_empire.push("empire.upgrader_force_spawn(roomName, amount)")
+		empire.upgrader_force_spawn = function (roomName, amount) {
+			let room = Game.rooms[roomName];
+			if (!room || !room.controller || !room.controller.my) {
+				return `<font color=\"#D3FFA3\">[Console]</font> Error: Room ${roomName} not found or not controlled.`;
+			}
+
+			_.set(Memory, ["rooms", roomName, "upgrader_force_spawn"], { amount: amount, timestamp: Game.time });
+			return `<font color=\"#D3FFA3\">[Console]</font> Force spawn ${amount} upgraders in ${roomName} next tick.`;
+		};
+
+		help_empire.push("empire.upgrader_clear_force_spawn(roomName)")
+		empire.upgrader_clear_force_spawn = function (roomName) {
+			delete Memory.rooms[roomName].upgrader_force_spawn;
+			return `<font color=\"#D3FFA3\">[Console]</font> Force spawn cleared for ${roomName}.`;
+		};
 
 		help_empire.push("");
 		help_empire.push("empire.clear_deprecated_memory()")
@@ -9758,6 +11075,9 @@ let Stats_Grafana = {
 			_.set(Memory, ["stats", "gcl", "progress_percent"], (Game.gcl.progress / Game.gcl.progressTotal * 100));
 
 			_.set(Memory, ["stats", "creeps", "total"], _.keys(Game.creeps).length);
+
+			// Track market credits
+			_.set(Memory, ["stats", "market", "credits"], Game.market.credits || 0);
 
 			_.each(_.get(Game, "spawns"), s => {
 				_.set(Memory, ["stats", "colonies", s.room.name, "spawns", s.name],

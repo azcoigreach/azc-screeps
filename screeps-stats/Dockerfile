@@ -4,15 +4,22 @@
 FROM python:3.11-slim as builder
 
 ARG PROMETHEUS_VERSION=2.48.0
+ARG TARGETARCH
 WORKDIR /tmp
 
 # Install dependencies for downloading and extracting
-RUN apt-get update && apt-get install -y wget tar
+RUN apt-get update && apt-get install -y wget tar ca-certificates && apt-get clean
 
-# Download Prometheus
-RUN wget https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz && \
-    tar xvfz prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz && \
-    mv prometheus-${PROMETHEUS_VERSION}.linux-amd64 /prometheus && \
+# Download Prometheus based on architecture
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+        wget https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-arm64.tar.gz && \
+        tar xvfz prometheus-${PROMETHEUS_VERSION}.linux-arm64.tar.gz && \
+        mv prometheus-${PROMETHEUS_VERSION}.linux-arm64 /prometheus; \
+    else \
+        wget https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz && \
+        tar xvfz prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz && \
+        mv prometheus-${PROMETHEUS_VERSION}.linux-amd64 /prometheus; \
+    fi && \
     rm -rf /tmp/*
 
 # Pip install Python libraries
@@ -22,6 +29,9 @@ RUN pip install --no-cache-dir prometheus_client requests
 # Stage 2: Final Image
 # ================================
 FROM python:3.11-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y supervisor ca-certificates && apt-get clean
 
 # Copy Prometheus from builder
 COPY --from=builder /prometheus /prometheus
@@ -34,11 +44,8 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY prometheus.yml /etc/prometheus/prometheus.yml
 COPY screeps_exporter.py /app/screeps_exporter.py
 
-# Install supervisor
-RUN apt-get update && apt-get install -y supervisor && apt-get clean
-
-# Create a data directory for Prometheus
-RUN mkdir -p /prometheus-data
+# Create necessary directories
+RUN mkdir -p /prometheus-data /var/log/supervisor
 
 # Expose ports:
 #  - 9090 for Prometheus UI
