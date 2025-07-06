@@ -4975,7 +4975,14 @@ let Sites = {
 					let key = `${roomName}_${logType}`;
 					let currentTick = Game.time;
 					let lastTime = this.lastLogTime[key] || 0;
-					let interval = this.logIntervals[logType] || 50;
+					
+					// Check for custom intervals from Memory first, then fall back to defaults
+					let interval = 50; // default
+					if (Memory.factories && Memory.factories.logIntervals && Memory.factories.logIntervals[logType]) {
+						interval = Memory.factories.logIntervals[logType];
+					} else {
+						interval = this.logIntervals[logType] || 50;
+					}
 					
 					if (currentTick - lastTime >= interval) {
 						this.lastLogTime[key] = currentTick;
@@ -6006,7 +6013,7 @@ let Sites = {
 					}
 				}
 			},
-
+		
 			assignFactories: function (rmColony) {
 				// This function is called per room, but we need to do global assignment
 				// Only run the global assignment once per pulse
@@ -9129,60 +9136,63 @@ let Console = {
 		help_factories.push(" - Sets factory logging intervals in ticks (default: 50, 30, 100, 200, 500)");
 
 		factories.set_log_intervals = function (needs_components = 50, created_tasks = 30, cleanup_skip = 100, stockpile_cleanup = 200, assignment_debug = 500) {
-			// This will be called from the console, so we need to access the Industry object
-			let Industry = Game.rooms[Object.keys(Game.rooms)[0]].Industry;
-			if (Industry && Industry.factoryLogThrottle) {
-				Industry.factoryLogThrottle.logIntervals = {
-					'needs_components': needs_components,
-					'created_tasks': created_tasks,
-					'cleanup_skip': cleanup_skip,
-					'stockpile_cleanup': stockpile_cleanup,
-					'assignment_debug': assignment_debug
-				};
-				console.log(`<font color=\"#FFA500\">[Factory]</font> Log intervals set: needs_components=${needs_components}, created_tasks=${created_tasks}, cleanup_skip=${cleanup_skip}, stockpile_cleanup=${stockpile_cleanup}, assignment_debug=${assignment_debug}`);
-				return `<font color=\"#FFA500\">[Factory]</font> Factory log intervals updated.`;
+			// Store log intervals in Memory for the Industry object to access
+			if (!Memory.factories) {
+				Memory.factories = {};
 			}
-			return `<font color=\"#FFA500\">[Factory]</font> Could not access factory log throttle system.`;
+			
+			Memory.factories.logIntervals = {
+				'needs_components': needs_components,
+				'created_tasks': created_tasks,
+				'cleanup_skip': cleanup_skip,
+				'stockpile_cleanup': stockpile_cleanup,
+				'assignment_debug': assignment_debug
+			};
+			
+			console.log(`<font color=\"#FFA500\">[Factory]</font> Log intervals set: needs_components=${needs_components}, created_tasks=${created_tasks}, cleanup_skip=${cleanup_skip}, stockpile_cleanup=${stockpile_cleanup}, assignment_debug=${assignment_debug}`);
+			return `<font color=\"#FFA500\">[Factory]</font> Factory log intervals updated.`;
 		};
 
 		help_factories.push("factories.disable_logs()");
 		help_factories.push(" - Disables all factory console logging");
 
 		factories.disable_logs = function () {
-			// This will be called from the console, so we need to access the Industry object
-			let Industry = Game.rooms[Object.keys(Game.rooms)[0]].Industry;
-			if (Industry && Industry.factoryLogThrottle) {
-				Industry.factoryLogThrottle.logIntervals = {
-					'needs_components': 999999,
-					'created_tasks': 999999,
-					'cleanup_skip': 999999,
-					'stockpile_cleanup': 999999,
-					'assignment_debug': 999999
-				};
-				console.log(`<font color=\"#FFA500\">[Factory]</font> Factory logging disabled. Use factories.enable_logs() to re-enable.`);
-				return `<font color=\"#FFA500\">[Factory]</font> Factory logging disabled.`;
+			// Store disabled log intervals in Memory
+			if (!Memory.factories) {
+				Memory.factories = {};
 			}
-			return `<font color=\"#FFA500\">[Factory]</font> Could not access factory log throttle system.`;
+			
+			Memory.factories.logIntervals = {
+				'needs_components': 999999,
+				'created_tasks': 999999,
+				'cleanup_skip': 999999,
+				'stockpile_cleanup': 999999,
+				'assignment_debug': 999999
+			};
+			
+			console.log(`<font color=\"#FFA500\">[Factory]</font> Factory logging disabled. Use factories.enable_logs() to re-enable.`);
+			return `<font color=\"#FFA500\">[Factory]</font> Factory logging disabled.`;
 		};
 
 		help_factories.push("factories.enable_logs()");
 		help_factories.push(" - Re-enables factory console logging with default intervals");
 
 		factories.enable_logs = function () {
-			// This will be called from the console, so we need to access the Industry object
-			let Industry = Game.rooms[Object.keys(Game.rooms)[0]].Industry;
-			if (Industry && Industry.factoryLogThrottle) {
-				Industry.factoryLogThrottle.logIntervals = {
-					'needs_components': 50,
-					'created_tasks': 30,
-					'cleanup_skip': 100,
-					'stockpile_cleanup': 200,
-					'assignment_debug': 500
-				};
-				console.log(`<font color=\"#FFA500\">[Factory]</font> Factory logging re-enabled with default intervals.`);
-				return `<font color=\"#FFA500\">[Factory]</font> Factory logging re-enabled.`;
+			// Store default log intervals in Memory
+			if (!Memory.factories) {
+				Memory.factories = {};
 			}
-			return `<font color=\"#FFA500\">[Factory]</font> Could not access factory log throttle system.`;
+			
+			Memory.factories.logIntervals = {
+				'needs_components': 50,
+				'created_tasks': 30,
+				'cleanup_skip': 100,
+				'stockpile_cleanup': 200,
+				'assignment_debug': 500
+			};
+			
+			console.log(`<font color=\"#FFA500\">[Factory]</font> Factory logging re-enabled with default intervals.`);
+			return `<font color=\"#FFA500\">[Factory]</font> Factory logging re-enabled.`;
 		};
 
 		factories.force_cleanup = function () {
