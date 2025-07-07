@@ -178,6 +178,11 @@ Creep.prototype.runTask = function runTask() {
 			this.travelTask(null);
 			return;
 
+		case "travel":
+			// Move toward the destination specified in the task
+			this.travelTask(this.memory.task["destination"]);
+			return;
+
 		case "boost": {
 			let lab = Game.getObjectById(this.memory.task["id"]);
 			if (!this.pos.inRangeTo(lab, 1)) {
@@ -1232,7 +1237,7 @@ Creep.prototype.getTask_Highway_Harvest_Commodity = function getTask_Highway_Har
 	}
 
 	let target = Game.getObjectById(targetId);
-	if (!target || target.structureType != STRUCTURE_DEPOSIT) {
+	if (!target || target.structureType != "deposit") {
 		highwayData.state = "completed";
 		console.log(`<font color=\"#FFA500\">[Highway]</font> Resource ${targetId} invalid or gone, marking operation as completed for ${highwayId}`);
 		return;
@@ -3880,13 +3885,37 @@ let Creep_Roles = {
 			}
 		}
 		
-		if (this.moveToDestination(creep))
+		// Check if we're full and need to return to colony
+		if (_.sum(creep.carry) === creep.carryCapacity) {
+			creep.memory.state = "returning";
+			creep.memory.task = creep.getTask_Highway_Carry_Resource();
+			creep.runTask(creep);
 			return;
+		}
+		
+		// If we're empty and in colony room, go back to mining
+		if (_.sum(creep.carry) === 0 && creep.room.name === creep.memory.colony) {
+			creep.memory.state = "mining";
+			delete creep.memory.task;
+		}
+		
+		// If we're returning and reached colony, deposit resources
+		if (creep.memory.state === "returning" && creep.room.name === creep.memory.colony) {
+			creep.memory.task = creep.memory.task || creep.getTask_Highway_Carry_Resource();
+			creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+			creep.runTask(creep);
+			return;
+		}
+		
+		// If we're mining, go to target resource
+		if (creep.memory.state === "mining" || !creep.memory.state) {
+			if (this.moveToDestination(creep))
+				return;
 
-		creep.memory.task = creep.memory.task || creep.getTask_Highway_Harvest_Commodity();
-		creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
-
-		creep.runTask(creep);
+			creep.memory.task = creep.memory.task || creep.getTask_Highway_Harvest_Commodity();
+			creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+			creep.runTask(creep);
+		}
 
 		let highwayData = _.get(Memory, ["sites", "highway_mining", creep.memory.highway_id]);
 		if (highwayData) {
@@ -3906,15 +3935,7 @@ let Creep_Roles = {
 		}
 	},
 
-	HighwayCarrier: function (creep) {
-		if (this.moveToDestination(creep))
-			return;
 
-		creep.memory.task = creep.memory.task || creep.getTask_Highway_Carry_Resource();
-		creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
-
-		creep.runTask(creep);
-	},
 };
 
 
@@ -7377,9 +7398,9 @@ let Sites = {
 					};
 						} else {
 			// Only one max-size extractor for commodities (level 8: 25 WORK, 8 CARRY, 17 MOVE)
+			// Single creep handles both mining and carrying
 			popTarget = {
-				"highway_burrower": { amount: 1, level: 8, body: "extractor" },
-				"highway_carrier": { amount: 1, level: 4, body: "carrier" }
+				"highway_burrower": { amount: 1, level: 8, body: "extractor" }
 			};
 		}
 				}
@@ -7412,7 +7433,7 @@ let Sites = {
 							}
 						});
 										if (role === "highway_burrower") {
-					console.log(`<font color=\"#FFA500\">[Highway]</font> Spawning largest extractor (level 8: 25 WORK, 8 CARRY, 17 MOVE) for ${highway_id}`);
+					console.log(`<font color=\"#FFA500\">[Highway]</font> Spawning single extractor (level 8: 25 WORK, 8 CARRY, 17 MOVE) for commodity mining in ${highway_id}`);
 				}
 					}
 				});
@@ -7442,9 +7463,6 @@ let Sites = {
 							break;
 						case "highway_burrower":
 							this.runHighwayBurrower(creep);
-							break;
-						case "highway_carrier":
-							this.runHighwayCarrier(creep);
 							break;
 					}
 				});
@@ -7479,7 +7497,7 @@ let Sites = {
 				}
 				
 				// For deposits, check if they're depleted
-				if (resourceType != 'power' && resource.structureType == STRUCTURE_DEPOSIT) {
+				if (resourceType != 'power' && resource.structureType == "deposit") {
 					if (resource.ticksToDeposit <= 0) {
 						highwayData.state = "completed";
 						console.log(`<font color=\"#FFA500\">[Highway]</font> Deposit ${resourceId} depleted, marking operation as completed for ${highway_id}`);
@@ -7516,24 +7534,40 @@ let Sites = {
 			},
 
 			runHighwayBurrower: function (creep) {
-				if (this.moveToDestination(creep))
+				// Check if we're full and need to return to colony
+				if (_.sum(creep.carry) === creep.carryCapacity) {
+					creep.memory.state = "returning";
+					creep.memory.task = creep.getTask_Highway_Carry_Resource();
+					creep.runTask(creep);
 					return;
+				}
+				
+				// If we're empty and in colony room, go back to mining
+				if (_.sum(creep.carry) === 0 && creep.room.name === creep.memory.colony) {
+					creep.memory.state = "mining";
+					delete creep.memory.task;
+				}
+				
+				// If we're returning and reached colony, deposit resources
+				if (creep.memory.state === "returning" && creep.room.name === creep.memory.colony) {
+					creep.memory.task = creep.memory.task || creep.getTask_Highway_Carry_Resource();
+					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+					creep.runTask(creep);
+					return;
+				}
+				
+				// If we're mining, go to target resource
+				if (creep.memory.state === "mining" || !creep.memory.state) {
+					if (this.moveToDestination(creep))
+						return;
 
-				creep.memory.task = creep.memory.task || creep.getTask_Highway_Harvest_Commodity();
-				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
-
-				creep.runTask(creep);
+					creep.memory.task = creep.memory.task || creep.getTask_Highway_Harvest_Commodity();
+					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+					creep.runTask(creep);
+				}
 			},
 
-			runHighwayCarrier: function (creep) {
-				if (this.moveToDestination(creep))
-					return;
 
-				creep.memory.task = creep.memory.task || creep.getTask_Highway_Carry_Resource();
-				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
-
-				creep.runTask(creep);
-			},
 
 			moveToDestination: function (creep) {
 				let highwayData = _.get(Memory, ["sites", "highway_mining", creep.memory.highway_id]);
@@ -7547,17 +7581,6 @@ let Sites = {
 					let resource = Game.getObjectById(highwayData.resource_id);
 					if (resource) {
 						destination = resource.pos;
-					}
-				} else if (creep.memory.role == "highway_carrier") {
-					// Carriers return to colony when they have resources
-					if (_.sum(creep.carry) > 0) {
-						destination = new RoomPosition(25, 25, highwayData.colony);
-					} else {
-						// Go to the target resource to pick up dropped resources
-						let resource = Game.getObjectById(highwayData.resource_id);
-						if (resource) {
-							destination = resource.pos;
-						}
 					}
 				}
 
@@ -11282,7 +11305,7 @@ let Console = {
 
 		help_empire.push("empire.highway_mining(rmColony, targetRoom, resourceType, [listRoute], [listSpawnAssistRooms], {customPopulation})");
 		help_empire.push(" - resourceType: 'power', 'silicon', 'metal', 'biomass', 'mist'");
-		help_empire.push(" - Deploys harvesting team to specific resource type in target room");
+		help_empire.push(" - Deploys single extractor to harvest commodity in target room (auto-returns when full)");
 		empire.highway_mining = function (rmColony, targetRoom, resourceType, listRoute, listSpawnAssistRooms, customPopulation) {
 			if (rmColony == null || targetRoom == null || resourceType == null)
 				return `<font color=\"#D3FFA3\">[Console]</font> Error, invalid entry for highway_mining(). Required: colony room, target room, resource type.`;
@@ -11308,7 +11331,7 @@ let Console = {
 				active_harvesters: []
 			});
 			
-			return `<font color=\"#D3FFA3\">[Console]</font> Highway mining operation created for ${resourceType} in ${targetRoom}. To cancel, delete the entry.`;
+			return `<font color=\"#D3FFA3\">[Console]</font> Highway commodity mining operation created for ${resourceType} in ${targetRoom}. Single extractor will auto-return when full. To cancel, delete the entry.`;
 		};
 
 		help_empire.push("empire.highway_status()");
