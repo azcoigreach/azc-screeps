@@ -7368,15 +7368,9 @@ let Sites = {
 						"highway_carrier": { amount: 2, level: 4, body: "carrier" }
 					};
 				} else {
-					// Only one max-size burrower for commodities
+					// Only one max-size burrower for commodities (level 8: 28 WORK, 2 CARRY, 20 MOVE)
 					popTarget = {
-						"highway_burrower": { amount: 1, level: 0, body: [
-							WORK,WORK,WORK,WORK,WORK,WORK,WORK,WORK,WORK,WORK,
-							WORK,WORK,WORK,WORK,WORK,WORK,WORK,WORK,WORK,WORK,
-							CARRY,CARRY,CARRY,CARRY,CARRY,CARRY,CARRY,CARRY,CARRY,CARRY,
-							MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,
-							MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE
-						]},
+						"highway_burrower": { amount: 1, level: 8, body: "burrower" },
 						"highway_carrier": { amount: 1, level: 4, body: "carrier" }
 					};
 				}
@@ -7410,7 +7404,7 @@ let Sites = {
 							}
 						});
 						if (role === "highway_burrower") {
-							console.log(`<font color=\"#FFA500\">[Highway]</font> Spawning max-size burrower for ${highway_id}`);
+							console.log(`<font color=\"#FFA500\">[Highway]</font> Spawning largest burrower (level 8: 28 WORK, 2 CARRY, 20 MOVE) for ${highway_id}`);
 						}
 					}
 				});
