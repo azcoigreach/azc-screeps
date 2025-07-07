@@ -7514,16 +7514,9 @@ let Sites = {
 				// For deposits, check if they're depleted
 				if (resourceType != 'power' && resource.structureType == "deposit") {
 					if (resource.ticksToDeposit <= 0) {
-						// Only mark as completed if at least one assigned creep has harvested
-						let creeps = _.filter(Game.creeps, c => c.memory.highway_id === highway_id);
-						if (_.some(creeps, c => c.memory.hasHarvested)) {
-							highwayData.state = "completed";
-							console.log(`<font color=\"#FFA500\">[Highway]</font> Deposit ${resourceId} depleted, marking operation as completed for ${highway_id}`);
-							return;
-						} else {
-							console.log(`<font color=\"#FFA500\">[Highway]</font> Deposit ${resourceId} depleted, but no creep has harvested yet for ${highway_id}`);
-							return;
-						}
+						// Do not mark as completed here; let a creep in the room confirm it
+						console.log(`<font color=\"#FFA500\">[Highway]</font> Deposit ${resourceId} depleted, waiting for creep confirmation in room for ${highway_id}`);
+						return;
 					}
 				}
 			},
