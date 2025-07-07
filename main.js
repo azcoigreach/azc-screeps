@@ -11195,7 +11195,7 @@ let Console = {
 				_.set(Memory, ["hive", "signs", "default"], message);
 				return `<font color=\"#D3FFA3\">[Console]</font> Default message set.`;
 			}
-		}
+		};
 
 		help_empire.push("");
 		help_empire.push("empire.upgrader_status(roomName)")
