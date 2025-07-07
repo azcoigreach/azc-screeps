@@ -7453,6 +7453,11 @@ let Sites = {
 				let targetRoom = highwayData.target_room;
 				let resourceType = highwayData.resource_type;
 				
+				// Skip check if resource_id hasn't been discovered yet
+				if (!resourceId) {
+					return;
+				}
+				
 				// Check if the target resource still exists
 				let resource = Game.getObjectById(resourceId);
 				if (!resource) {
