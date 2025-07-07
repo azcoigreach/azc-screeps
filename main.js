@@ -3872,6 +3872,14 @@ let Creep_Roles = {
 	},
 
 	HighwayBurrower: function (creep) {
+		if (creep.memory.task && creep.memory.task.destination) {
+			const dest = creep.memory.task.destination;
+			if (creep.room.name !== dest.roomName) {
+				creep.travel(new RoomPosition(dest.x, dest.y, dest.roomName));
+				return;
+			}
+		}
+		
 		if (this.moveToDestination(creep))
 			return;
 
