@@ -1238,8 +1238,14 @@ Creep.prototype.getTask_Highway_Harvest_Commodity = function getTask_Highway_Har
 
 	let target = Game.getObjectById(targetId);
 	if (!target || target.structureType != "deposit") {
-		highwayData.state = "completed";
-		console.log(`<font color=\"#FFA500\">[Highway]</font> Resource ${targetId} invalid or gone, marking operation as completed for ${highwayId}`);
+		// Only mark as completed if at least one assigned creep has harvested
+		let creeps = _.filter(Game.creeps, c => c.memory.highway_id === highwayId);
+		if (_.some(creeps, c => c.memory.hasHarvested)) {
+			highwayData.state = "completed";
+			console.log(`<font color=\"#FFA500\">[Highway]</font> Resource ${targetId} invalid or gone, marking operation as completed for ${highwayId}`);
+		} else {
+			console.log(`<font color=\"#FFA500\">[Highway]</font> Resource ${targetId} invalid or gone, but no creep has harvested yet for ${highwayId}`);
+		}
 		return;
 	}
 
@@ -1251,6 +1257,15 @@ Creep.prototype.getTask_Highway_Harvest_Commodity = function getTask_Highway_Har
 		};
 	}
 
+	// Track if this creep has ever harvested from the deposit
+	if (!this.memory.hasHarvested) this.memory.hasHarvested = false;
+	// Try to harvest
+	if (this.pos.getRangeTo(target) <= 1) {
+		let result = this.harvest(target);
+		if (result === OK) {
+			this.memory.hasHarvested = true;
+		}
+	}
 	return {
 		type: "harvest",
 		target: target.id,
@@ -7499,9 +7514,16 @@ let Sites = {
 				// For deposits, check if they're depleted
 				if (resourceType != 'power' && resource.structureType == "deposit") {
 					if (resource.ticksToDeposit <= 0) {
-						highwayData.state = "completed";
-						console.log(`<font color=\"#FFA500\">[Highway]</font> Deposit ${resourceId} depleted, marking operation as completed for ${highway_id}`);
-						return;
+						// Only mark as completed if at least one assigned creep has harvested
+						let creeps = _.filter(Game.creeps, c => c.memory.highway_id === highway_id);
+						if (_.some(creeps, c => c.memory.hasHarvested)) {
+							highwayData.state = "completed";
+							console.log(`<font color=\"#FFA500\">[Highway]</font> Deposit ${resourceId} depleted, marking operation as completed for ${highway_id}`);
+							return;
+						} else {
+							console.log(`<font color=\"#FFA500\">[Highway]</font> Deposit ${resourceId} depleted, but no creep has harvested yet for ${highway_id}`);
+							return;
+						}
 					}
 				}
 			},
