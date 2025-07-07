@@ -7367,13 +7367,13 @@ let Sites = {
 						"highway_healer": { amount: 2, level: 6, body: "healer" },
 						"highway_carrier": { amount: 2, level: 4, body: "carrier" }
 					};
-				} else {
-					// Only one max-size burrower for commodities (level 8: 28 WORK, 2 CARRY, 20 MOVE)
-					popTarget = {
-						"highway_burrower": { amount: 1, level: 8, body: "burrower" },
-						"highway_carrier": { amount: 1, level: 4, body: "carrier" }
-					};
-				}
+						} else {
+			// Only one max-size extractor for commodities (level 8: 25 WORK, 8 CARRY, 17 MOVE)
+			popTarget = {
+				"highway_burrower": { amount: 1, level: 8, body: "extractor" },
+				"highway_carrier": { amount: 1, level: 4, body: "carrier" }
+			};
+		}
 				}
 
 				// Tally population levels for level scaling and statistics
@@ -7403,9 +7403,9 @@ let Sites = {
 								resource_type: resourceType
 							}
 						});
-						if (role === "highway_burrower") {
-							console.log(`<font color=\"#FFA500\">[Highway]</font> Spawning largest burrower (level 8: 28 WORK, 2 CARRY, 20 MOVE) for ${highway_id}`);
-						}
+										if (role === "highway_burrower") {
+					console.log(`<font color=\"#FFA500\">[Highway]</font> Spawning largest extractor (level 8: 25 WORK, 8 CARRY, 17 MOVE) for ${highway_id}`);
+				}
 					}
 				});
 			},
