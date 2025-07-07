@@ -1171,127 +1171,22 @@ Creep.prototype.getTask_Withdraw_Storage_Link = function getTask_Withdraw_Storag
 };
 
 // Highway Mining Tasks
-Creep.prototype.getTask_Highway_Scout = function getTask_Highway_Scout() {
+
+
+Creep.prototype.getTask_Highway_Attack_Power = function getTask_Highway_Attack_Power() {
 	let highwayId = this.memory.highway_id;
 	if (!highwayId) return;
 
 	let highwayData = _.get(Memory, ["sites", "highway_mining", highwayId]);
 	if (!highwayData) return;
 
-	// Find power banks and commodities in the current room
-	let powerBanks = this.room.find(FIND_STRUCTURES, {
-		filter: s => s.structureType == STRUCTURE_POWER_BANK
-	});
-
-	let commodities = this.room.find(FIND_DEPOSITS);
-
-	// Check if we found the target resource
-	let targetResource = highwayData.resource_type;
-	let foundResource = null;
-
-	if (targetResource == 'power' && powerBanks.length > 0) {
-		foundResource = powerBanks[0];
-	} else if (targetResource != 'power' && commodities.length > 0) {
-		for (let deposit of commodities) {
-			if (deposit.depositType == targetResource) {
-				foundResource = deposit;
-				break;
-			}
-		}
-	}
-
-			if (foundResource) {
-			// Add to discovered resources
-			if (!highwayData.discovered_resources) {
-				highwayData.discovered_resources = [];
-			}
-			
-			let resourceInfo = {
-				id: foundResource.id,
-				pos: foundResource.pos,
-				room: this.room.name,
-				type: targetResource,
-				harvested: false
-			};
-			
-			// Check if already discovered
-			let alreadyDiscovered = _.find(highwayData.discovered_resources, r => 
-				r.id == foundResource.id && r.room == this.room.name
-			);
-			
-			if (!alreadyDiscovered) {
-				highwayData.discovered_resources.push(resourceInfo);
-				console.log(`<font color=\"#FFA500\">[Highway]</font> Scout discovered ${targetResource} in ${this.room.name}`);
-				
-				// Transition to harvesting state if we found resources
-				if (highwayData.state == "scouting") {
-					highwayData.state = "harvesting";
-					console.log(`<font color=\"#FFA500\">[Highway]</font> Transitioning to harvesting state for ${highwayId}`);
-				}
-			}
-		}
-
-	// Enhanced room progression logic to prevent bouncing
-	let currentRoom = this.room.name;
-	let startRoom = highwayData.start_room;
-	let endRoom = highwayData.end_room;
-	
-	// Initialize scout direction if not set
-	if (!this.memory.scout_direction) {
-		this.memory.scout_direction = 'forward'; // forward = start to end, backward = end to start
-	}
-	
-	// Determine next destination based on current room and direction
-	let nextRoom = null;
-	
-	if (currentRoom == startRoom) {
-		if (this.memory.scout_direction == 'forward') {
-			nextRoom = endRoom;
-		} else {
-			// We're going backward but reached start, switch to forward
-			this.memory.scout_direction = 'forward';
-			nextRoom = endRoom;
-		}
-	} else if (currentRoom == endRoom) {
-		if (this.memory.scout_direction == 'backward') {
-			nextRoom = startRoom;
-		} else {
-			// We're going forward but reached end, switch to backward
-			this.memory.scout_direction = 'backward';
-			nextRoom = startRoom;
-		}
-	} else {
-		// We're in a middle room, continue in current direction
-		if (this.memory.scout_direction == 'forward') {
-			nextRoom = endRoom;
-		} else {
-			nextRoom = startRoom;
-		}
-	}
-	
-	// Only travel if we're not already at the destination
-	if (nextRoom && currentRoom != nextRoom) {
-		return {
-			type: "travel",
-			destination: new RoomPosition(25, 25, nextRoom),
-			timer: 100
-		};
-	}
-
-	return {
-		type: "wait",
-		ticks: 10
-	};
-};
-
-Creep.prototype.getTask_Highway_Attack_Power = function getTask_Highway_Attack_Power() {
-	let targetId = this.memory.target_id;
+	let targetId = highwayData.resource_id;
 	if (!targetId) return;
 
 	let target = Game.getObjectById(targetId);
 	if (!target || target.structureType != STRUCTURE_POWER_BANK) {
-		// Target destroyed or invalid, clear memory
-		delete this.memory.target_id;
+		// Target destroyed or invalid, mark as completed
+		highwayData.state = "completed";
 		return;
 	}
 
@@ -1311,13 +1206,35 @@ Creep.prototype.getTask_Highway_Attack_Power = function getTask_Highway_Attack_P
 };
 
 Creep.prototype.getTask_Highway_Harvest_Commodity = function getTask_Highway_Harvest_Commodity() {
-	let targetId = this.memory.target_id;
-	if (!targetId) return;
+	let highwayId = this.memory.highway_id;
+	if (!highwayId) return;
+
+	let highwayData = _.get(Memory, ["sites", "highway_mining", highwayId]);
+	if (!highwayData) return;
+
+	let targetId = highwayData.resource_id;
+	if (!targetId) {
+		// Only search if in the target room
+		if (this.room.name === highwayData.target_room) {
+			let deposit = _.find(this.room.find(FIND_DEPOSITS), d => d.depositType === highwayData.resource_type && d.ticksToDecay > 0);
+			if (deposit) {
+				highwayData.resource_id = deposit.id;
+				console.log(`<font color=\"#FFA500\">[Highway]</font> Burrower ${this.name} discovered deposit ${deposit.id} (${deposit.depositType}) in ${this.room.name}`);
+				return this.getTask_Highway_Harvest_Commodity(); // Retry with new id
+			} else {
+				console.log(`<font color=\"#FFA500\">[Highway]</font> Burrower ${this.name} could not find deposit of type ${highwayData.resource_type} in ${this.room.name}, waiting.`);
+				return { type: "wait", ticks: 10 };
+			}
+		} else {
+			// Not in target room, travel there
+			return { type: "travel", destination: new RoomPosition(25, 25, highwayData.target_room), timer: 50 };
+		}
+	}
 
 	let target = Game.getObjectById(targetId);
 	if (!target || target.structureType != STRUCTURE_DEPOSIT) {
-		// Target invalid, clear memory
-		delete this.memory.target_id;
+		highwayData.state = "completed";
+		console.log(`<font color=\"#FFA500\">[Highway]</font> Resource ${targetId} invalid or gone, marking operation as completed for ${highwayId}`);
 		return;
 	}
 
@@ -1357,7 +1274,7 @@ Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_
 	if (storage) {
 		return {
 			type: "deposit",
-			resource: this.memory.resource_type || "energy",
+			resource: highwayData.resource_type,
 			id: storage.id,
 			timer: 60
 		};
@@ -1368,7 +1285,7 @@ Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_
 	if (spawns.length > 0) {
 		return {
 			type: "deposit",
-			resource: this.memory.resource_type || "energy",
+			resource: highwayData.resource_type,
 			id: spawns[0].id,
 			timer: 60
 		};
@@ -3910,16 +3827,7 @@ let Creep_Roles = {
 		}
 	},
 
-	// Highway Mining Creep Roles
-	HighwayScout: function (creep) {
-		if (this.moveToDestination(creep))
-			return;
 
-		creep.memory.task = creep.memory.task || creep.getTask_Highway_Scout();
-		creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
-
-		creep.runTask(creep);
-	},
 
 	HighwayAttacker: function (creep) {
 		if (this.moveToDestination(creep))
@@ -3971,18 +3879,20 @@ let Creep_Roles = {
 		creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 
 		creep.runTask(creep);
-		
-		// Check if target was depleted and mark as harvested
+
 		let highwayData = _.get(Memory, ["sites", "highway_mining", creep.memory.highway_id]);
-		if (highwayData && creep.memory.target_id) {
-			let target = Game.getObjectById(creep.memory.target_id);
-			if (!target || target.ticksToDeposit == 0) {
-				// Target was depleted, mark as harvested
-				let discoveredResources = highwayData.discovered_resources || [];
-				let resource = _.find(discoveredResources, r => r.id == creep.memory.target_id);
-				if (resource) {
-					resource.harvested = true;
-					delete creep.memory.target_id;
+		if (highwayData) {
+			// Log when burrower is returning home (full or resource depleted)
+			if (_.sum(creep.carry) === creep.carryCapacity && creep.memory.state !== "returning") {
+				creep.memory.state = "returning";
+				console.log(`<font color=\"#FFA500\">[Highway]</font> Burrower ${creep.name} returning home from ${creep.room.name}`);
+			}
+			// Log when resource is depleted or gone
+			if (highwayData.resource_id) {
+				let target = Game.getObjectById(highwayData.resource_id);
+				if (!target || target.ticksToDeposit === 0) {
+					highwayData.state = "completed";
+					console.log(`<font color=\"#FFA500\">[Highway]</font> Resource ${highwayData.resource_id} depleted or gone, marking operation as completed for ${creep.memory.highway_id}`);
 				}
 			}
 		}
@@ -7450,26 +7360,26 @@ let Sites = {
 				if (popSetting) {
 					popTarget = _.cloneDeep(popSetting);
 				} else {
-					// Default population based on resource type and state
-					if (state == "scouting") {
-						popTarget = {
-							"highway_scout": { amount: 1, level: 4, body: "scout" }
-						};
-					} else if (state == "harvesting") {
-						if (resourceType == "power") {
-							popTarget = {
-								"highway_attacker": { amount: 4, level: 6, body: "soldier" },
-								"highway_healer": { amount: 2, level: 6, body: "healer" },
-								"highway_carrier": { amount: 2, level: 4, body: "carrier" }
-							};
-						} else {
-							// Commodities require burrowers and carriers
-							popTarget = {
-								"highway_burrower": { amount: 2, level: 4, body: "burrower" },
-								"highway_carrier": { amount: 2, level: 4, body: "carrier" }
-							};
-						}
-					}
+									// Default population based on resource type
+				if (resourceType == "power") {
+					popTarget = {
+						"highway_attacker": { amount: 4, level: 6, body: "soldier" },
+						"highway_healer": { amount: 2, level: 6, body: "healer" },
+						"highway_carrier": { amount: 2, level: 4, body: "carrier" }
+					};
+				} else {
+					// Only one max-size burrower for commodities
+					popTarget = {
+						"highway_burrower": { amount: 1, level: 0, body: [
+							WORK,WORK,WORK,WORK,WORK,WORK,WORK,WORK,WORK,WORK,
+							WORK,WORK,WORK,WORK,WORK,WORK,WORK,WORK,WORK,WORK,
+							CARRY,CARRY,CARRY,CARRY,CARRY,CARRY,CARRY,CARRY,CARRY,CARRY,
+							MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,
+							MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE
+						]},
+						"highway_carrier": { amount: 1, level: 4, body: "carrier" }
+					};
+				}
 				}
 
 				// Tally population levels for level scaling and statistics
@@ -7499,22 +7409,18 @@ let Sites = {
 								resource_type: resourceType
 							}
 						});
+						if (role === "highway_burrower") {
+							console.log(`<font color=\"#FFA500\">[Highway]</font> Spawning max-size burrower for ${highway_id}`);
+						}
 					}
 				});
 			},
 
 			runCreeps: function (highway_id, listCreeps, listSpawnRoute) {
-				// Check state transitions
+				// Check if target resource still exists
 				let highwayData = _.get(Memory, ["sites", "highway_mining", highway_id]);
 				if (highwayData && highwayData.state == "harvesting") {
-					let discoveredResources = highwayData.discovered_resources || [];
-					let unharvestedResources = _.filter(discoveredResources, r => !r.harvested);
-					
-					// If all resources are harvested, transition back to scouting
-					if (unharvestedResources.length == 0 && discoveredResources.length > 0) {
-						highwayData.state = "scouting";
-						console.log(`<font color=\"#FFA500\">[Highway]</font> All resources harvested, transitioning back to scouting for ${highway_id}`);
-					}
+					this.checkResourceStatus(highway_id, highwayData);
 				}
 				
 				_.each(listCreeps, creep => {
@@ -7526,9 +7432,6 @@ let Sites = {
 					}
 
 					switch (creep.memory.role) {
-						case "highway_scout":
-							this.runHighwayScout(creep);
-							break;
 						case "highway_attacker":
 							this.runHighwayAttacker(creep);
 							break;
@@ -7545,20 +7448,37 @@ let Sites = {
 				});
 			},
 
-			runHighwayScout: function (creep) {
-				// Debug: Check if creep has highway_id
-				if (!creep.memory.highway_id) {
-					console.log(`<font color=\"#FF0000\">[Highway Debug]</font> Scout ${creep.name} has no highway_id!`);
+			checkResourceStatus: function (highway_id, highwayData) {
+				let resourceId = highwayData.resource_id;
+				let targetRoom = highwayData.target_room;
+				let resourceType = highwayData.resource_type;
+				
+				// Check if the target resource still exists
+				let resource = Game.getObjectById(resourceId);
+				if (!resource) {
+					// Resource no longer exists, mark as completed
+					highwayData.state = "completed";
+					console.log(`<font color=\"#FFA500\">[Highway]</font> Resource ${resourceId} no longer exists, marking operation as completed for ${highway_id}`);
 					return;
 				}
 				
-				if (this.moveToDestination(creep))
-					return;
-
-				creep.memory.task = creep.memory.task || creep.getTask_Highway_Scout();
-				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
-
-				creep.runTask(creep);
+				// For power banks, check if they're depleted
+				if (resourceType == 'power' && resource.structureType == STRUCTURE_POWER_BANK) {
+					if (resource.hits <= 0) {
+						highwayData.state = "completed";
+						console.log(`<font color=\"#FFA500\">[Highway]</font> Power bank ${resourceId} depleted, marking operation as completed for ${highway_id}`);
+						return;
+					}
+				}
+				
+				// For deposits, check if they're depleted
+				if (resourceType != 'power' && resource.structureType == STRUCTURE_DEPOSIT) {
+					if (resource.ticksToDeposit <= 0) {
+						highwayData.state = "completed";
+						console.log(`<font color=\"#FFA500\">[Highway]</font> Deposit ${resourceId} depleted, marking operation as completed for ${highway_id}`);
+						return;
+					}
+				}
 			},
 
 			runHighwayAttacker: function (creep) {
@@ -7612,33 +7532,24 @@ let Sites = {
 				let highwayData = _.get(Memory, ["sites", "highway_mining", creep.memory.highway_id]);
 				if (!highwayData) return false;
 
-				// Determine destination based on role and state
+				// Determine destination based on role
 				let destination = null;
 
-				if (creep.memory.role == "highway_scout") {
-					// Scouts use task-based movement, so don't interfere with their tasks
-					// Let the getTask_Highway_Scout function handle movement
-					return false;
-				} else if (creep.memory.role == "highway_attacker" || creep.memory.role == "highway_burrower") {
-					// Attackers and burrowers go to discovered resources
-					let discoveredResources = highwayData.discovered_resources || [];
-					let unharvestedResources = _.filter(discoveredResources, r => !r.harvested);
-					
-					if (unharvestedResources.length > 0) {
-						let targetResource = unharvestedResources[0];
-						destination = new RoomPosition(targetResource.pos.x, targetResource.pos.y, targetResource.room);
-						creep.memory.target_id = targetResource.id;
+				if (creep.memory.role == "highway_attacker" || creep.memory.role == "highway_burrower") {
+					// Attackers and burrowers go to the specific target resource
+					let resource = Game.getObjectById(highwayData.resource_id);
+					if (resource) {
+						destination = resource.pos;
 					}
 				} else if (creep.memory.role == "highway_carrier") {
 					// Carriers return to colony when they have resources
 					if (_.sum(creep.carry) > 0) {
 						destination = new RoomPosition(25, 25, highwayData.colony);
 					} else {
-						// Go to discovered resources to pick up dropped resources
-						let discoveredResources = highwayData.discovered_resources || [];
-						if (discoveredResources.length > 0) {
-							let targetResource = discoveredResources[0];
-							destination = new RoomPosition(targetResource.pos.x, targetResource.pos.y, targetResource.room);
+						// Go to the target resource to pick up dropped resources
+						let resource = Game.getObjectById(highwayData.resource_id);
+						if (resource) {
+							destination = resource.pos;
 						}
 					}
 				}
@@ -11362,11 +11273,12 @@ let Console = {
 			return `<font color=\"#D3FFA3\">[Console]</font> Deleted deprecated Memory objects.`;
 		};
 
-		help_empire.push("empire.highway_mining(rmColony, startRoom, endRoom, resourceType, [listRoute], [listSpawnAssistRooms], {customPopulation})");
+		help_empire.push("empire.highway_mining(rmColony, targetRoom, resourceType, [listRoute], [listSpawnAssistRooms], {customPopulation})");
 		help_empire.push(" - resourceType: 'power', 'silicon', 'metal', 'biomass', 'mist'");
-		empire.highway_mining = function (rmColony, startRoom, endRoom, resourceType, listRoute, listSpawnAssistRooms, customPopulation) {
-			if (rmColony == null || startRoom == null || endRoom == null || resourceType == null)
-				return `<font color=\"#D3FFA3\">[Console]</font> Error, invalid entry for highway_mining(). Required: colony room, start room, end room, resource type.`;
+		help_empire.push(" - Deploys harvesting team to specific resource type in target room");
+		empire.highway_mining = function (rmColony, targetRoom, resourceType, listRoute, listSpawnAssistRooms, customPopulation) {
+			if (rmColony == null || targetRoom == null || resourceType == null)
+				return `<font color=\"#D3FFA3\">[Console]</font> Error, invalid entry for highway_mining(). Required: colony room, target room, resource type.`;
 
 			// Validate resource type
 			let validResources = ['power', 'silicon', 'metal', 'biomass', 'mist'];
@@ -11374,23 +11286,22 @@ let Console = {
 				return `<font color=\"#D3FFA3\">[Console]</font> Error, invalid resource type. Valid types: ${validResources.join(', ')}`;
 			}
 
-			// Generate unique ID for this highway mining operation
-			let highwayId = `highway_${startRoom}_${endRoom}_${resourceType}`;
+			// Generate unique ID for this highway mining operation (no resourceId)
+			let highwayId = `highway_${targetRoom}_${resourceType}`;
 
-			_.set(Memory, ["sites", "highway_mining", highwayId], { 
-				colony: rmColony, 
-				start_room: startRoom, 
-				end_room: endRoom, 
+			_.set(Memory, ["sites", "highway_mining", highwayId], {
+				colony: rmColony,
+				target_room: targetRoom,
 				resource_type: resourceType,
-				list_route: listRoute, 
-				spawn_assist: listSpawnAssistRooms, 
+				resource_id: null, // Will be set by first burrower
+				list_route: listRoute,
+				spawn_assist: listSpawnAssistRooms,
 				population: customPopulation,
-				state: "scouting", // scouting, harvesting, completed
-				discovered_resources: [],
+				state: "harvesting", // harvesting, completed
 				active_harvesters: []
 			});
 			
-			return `<font color=\"#D3FFA3\">[Console]</font> Highway mining added to Memory.sites.highway_mining.${highwayId} ... to cancel, delete the entry.`;
+			return `<font color=\"#D3FFA3\">[Console]</font> Highway mining operation created for ${resourceType} in ${targetRoom}. To cancel, delete the entry.`;
 		};
 
 		help_empire.push("empire.highway_status()");
@@ -11405,40 +11316,19 @@ let Console = {
 				let creeps = _.filter(Game.creeps, c => c.memory.highway_id == highwayId);
 				result += `\n${highwayId}:\n`;
 				result += `  Colony: ${data.colony}\n`;
-				result += `  Route: ${data.start_room} → ${data.end_room}\n`;
-				result += `  Resource: ${data.resource_type}\n`;
+				result += `  Target: ${data.target_room} (${data.resource_type})\n`;
+				result += `  Resource ID: ${data.resource_id}\n`;
 				result += `  State: ${data.state}\n`;
 				result += `  Creeps: ${creeps.length}\n`;
 				_.each(creeps, c => {
 					result += `    - ${c.name}: ${c.memory.role} in ${c.room.name}\n`;
 				});
-				if (data.discovered_resources && data.discovered_resources.length > 0) {
-					result += `  Resources: ${data.discovered_resources.length} discovered\n`;
-				}
 			});
 			
 			return result;
 		};
 
-		help_empire.push("empire.highway_assign_scout(creepName, highwayId)");
-		empire.highway_assign_scout = function (creepName, highwayId) {
-			let creep = Game.creeps[creepName];
-			if (!creep) {
-				return `<font color=\"#D3FFA3\">[Console]</font> Error: Creep ${creepName} not found.`;
-			}
 
-			let highwayData = Memory.sites.highway_mining[highwayId];
-			if (!highwayData) {
-				return `<font color=\"#D3FFA3\">[Console]</font> Error: Highway ${highwayId} not found.`;
-			}
-
-			creep.memory.highway_id = highwayId;
-			creep.memory.role = "highway_scout";
-			creep.memory.scout_direction = 'forward'; // Reset direction
-			delete creep.memory.task; // Clear any existing tasks
-			
-			return `<font color=\"#D3FFA3\">[Console]</font> Assigned ${creepName} to highway ${highwayId}.`;
-		};
 
 		path = new Object();
 		help_path.push("path.road(rmName, startX, startY, endX, endY)");
