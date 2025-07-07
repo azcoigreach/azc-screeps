@@ -3276,7 +3276,7 @@ let Creep_Roles = {
 				return;
 			}
 		} else if (hostile != null) {
-			creep.moveFrom(creep, hostile);
+			creep.moveFrom(hostile);
 			return;
 		}
 	},
@@ -3362,7 +3362,7 @@ let Creep_Roles = {
 				return;
 			}
 		} else if (hostile != null) {
-			creep.moveFrom(creep, hostile);
+			creep.moveFrom(hostile);
 			return;
 		}
 	},
@@ -3501,7 +3501,7 @@ let Creep_Roles = {
 					return;
 			}
 		} else if (hostile != null) {
-			creep.moveFrom(creep, hostile);
+			creep.moveFrom(hostile);
 			return;
 		}
 	},
