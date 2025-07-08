@@ -7665,6 +7665,9 @@ let Sites = {
 						case "highway_burrower":
 							this.runHighwayBurrower(creep);
 							break;
+						case "highway_carrier":
+							this.runHighwayCarrier(creep);
+							break;
 					}
 				});
 			},
@@ -7845,6 +7848,76 @@ let Sites = {
 					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 					creep.runTask(creep);
 				}
+			},
+
+			runHighwayCarrier: function (creep) {
+				let highwayData = _.get(Memory, ["sites", "highway_mining", creep.memory.highway_id]);
+				if (!highwayData) return;
+
+				// For power operations, prioritize getting to target room quickly
+				if (highwayData.resource_type === "power") {
+					// If not in target room, travel there immediately
+					if (creep.room.name !== highwayData.target_room) {
+						creep.travelToRoom(highwayData.target_room, true);
+						return;
+					}
+					
+					// In target room, look for power drops
+					let powerDrops = creep.pos.findInRange(FIND_DROPPED_RESOURCES, 3, {
+						filter: r => r.resourceType === RESOURCE_POWER
+					});
+					
+					if (powerDrops.length > 0) {
+						// Pick up power drops
+						creep.pickup(powerDrops[0]);
+						return;
+					}
+					
+					// If carrying power, return to colony
+					if (creep.carry.power > 0) {
+						if (creep.room.name !== highwayData.colony) {
+							creep.travelToRoom(highwayData.colony, false);
+							return;
+						} else {
+							// In colony, deposit power
+							let storage = creep.room.storage;
+							if (storage) {
+								creep.transfer(storage, RESOURCE_POWER);
+							} else {
+								// Fallback to spawns
+								let spawns = creep.room.find(FIND_MY_SPAWNS);
+								if (spawns.length > 0) {
+									creep.transfer(spawns[0], RESOURCE_POWER);
+								}
+							}
+							return;
+						}
+					}
+					
+					// If no power drops nearby and not carrying power, move toward power bank or attackers
+					if (highwayData.resource_id) {
+						let target = Game.getObjectById(highwayData.resource_id);
+						if (target) {
+							creep.travel(target.pos);
+						}
+					} else {
+						// No power bank found, move toward attackers
+						let attackers = creep.pos.findInRange(FIND_MY_CREEPS, 10, {
+							filter: c => c.memory.role === "highway_attacker"
+						});
+						if (attackers.length > 0) {
+							creep.travel(attackers[0].pos);
+						}
+					}
+					return;
+				}
+				
+				// Fallback for other resource types (shouldn't happen with current setup)
+				if (this.moveToDestination(creep))
+					return;
+				
+				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+				creep.runTask(creep);
 			},
 
 
