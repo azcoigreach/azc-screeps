@@ -1185,16 +1185,47 @@ Creep.prototype.getTask_Highway_Attack_Power = function getTask_Highway_Attack_P
 	let highwayData = _.get(Memory, ["sites", "highway_mining", highwayId]);
 	if (!highwayData) return;
 
-	let targetId = highwayData.resource_id;
-	if (!targetId) return;
+	// If we're not in the target room, travel there immediately
+	if (this.room.name !== highwayData.target_room) {
+		return {
+			type: "travel",
+			destination: new RoomPosition(25, 25, highwayData.target_room),
+			timer: 50
+		};
+	}
 
-	let target = Game.getObjectById(targetId);
+	// In target room - look for power bank
+	let targetId = highwayData.resource_id;
+	let target = null;
+	
+	if (targetId) {
+		target = Game.getObjectById(targetId);
+	}
+	
+	// If no target or target is invalid, search for power banks
 	if (!target || target.structureType != STRUCTURE_POWER_BANK) {
-		// Target destroyed or invalid, mark as completed
+		target = this.findValidPowerBank();
+		
+		if (target) {
+			highwayData.resource_id = target.id;
+			highwayData.last_discovery = Game.time;
+			console.log(`<font color=\"#FFA500\">[Highway]</font> Attacker ${this.name} discovered power bank ${target.id} in ${this.room.name}`);
+		} else {
+			// No power banks found, mark as completed
+			highwayData.state = "completed";
+			console.log(`<font color=\"#FFA500\">[Highway]</font> No power banks found in ${this.room.name}, marking operation as completed for ${highwayId}`);
+			return;
+		}
+	}
+
+	// Check if power bank is depleted
+	if (target.hits <= 0) {
 		highwayData.state = "completed";
+		console.log(`<font color=\"#FFA500\">[Highway]</font> Power bank ${target.id} depleted, marking operation as completed for ${highwayId}`);
 		return;
 	}
 
+	// Attack the power bank
 	if (this.pos.getRangeTo(target) > 1) {
 		return {
 			type: "travel",
@@ -1350,6 +1381,23 @@ Creep.prototype.findValidDeposit = function(resourceType) {
         console.log(`[Highway Debug] No deposit of type ${resourceType} found in ${this.room.name}`);
     }
     return found;
+};
+
+// Helper function to find a valid power bank
+Creep.prototype.findValidPowerBank = function() {
+    let powerBanks = this.room.find(FIND_STRUCTURES, {
+        filter: s => s.structureType === STRUCTURE_POWER_BANK && s.hits > 0
+    });
+    
+    if (powerBanks.length === 0) {
+        console.log(`[Highway Debug] No power banks found in ${this.room.name}`);
+        return null;
+    }
+    
+    // Return the power bank with the most hits (most valuable)
+    let bestPowerBank = _.max(powerBanks, p => p.hits);
+    console.log(`[Highway Debug] Found power bank ${bestPowerBank.id} with ${bestPowerBank.hits} hits in ${this.room.name}`);
+    return bestPowerBank;
 };
 
 // Helper function to determine if operation should be marked as completed
@@ -7669,6 +7717,22 @@ let Sites = {
 			},
 
 			runHighwayAttacker: function (creep) {
+				// For power attacks, prioritize immediate travel to target room
+				let highwayData = _.get(Memory, ["sites", "highway_mining", creep.memory.highway_id]);
+				if (highwayData && highwayData.resource_type === "power") {
+					// If not in target room, travel there immediately
+					if (creep.room.name !== highwayData.target_room) {
+						creep.travelToRoom(highwayData.target_room, true);
+						return;
+					}
+					
+					// In target room, attack immediately
+					creep.memory.task = creep.getTask_Highway_Attack_Power();
+					creep.runTask(creep);
+					return;
+				}
+				
+				// Fallback to original logic for other resource types
 				if (this.moveToDestination(creep))
 					return;
 
@@ -7679,6 +7743,41 @@ let Sites = {
 			},
 
 			runHighwayHealer: function (creep) {
+				// For power operations, prioritize getting to target room quickly
+				let highwayData = _.get(Memory, ["sites", "highway_mining", creep.memory.highway_id]);
+				if (highwayData && highwayData.resource_type === "power") {
+					// If not in target room, travel there immediately
+					if (creep.room.name !== highwayData.target_room) {
+						creep.travelToRoom(highwayData.target_room, true);
+						return;
+					}
+					
+					// In target room, heal nearby damaged creeps
+					let damagedCreeps = creep.pos.findInRange(FIND_MY_CREEPS, 3, {
+						filter: c => c.hits < c.hitsMax
+					});
+
+					if (damagedCreeps.length > 0) {
+						creep.heal(damagedCreeps[0]);
+					} else {
+						// If no damaged creeps, move toward attackers or power bank
+						let attackers = creep.pos.findInRange(FIND_MY_CREEPS, 10, {
+							filter: c => c.memory.role === "highway_attacker"
+						});
+						
+						if (attackers.length > 0) {
+							creep.travel(attackers[0].pos);
+						} else if (highwayData.resource_id) {
+							let target = Game.getObjectById(highwayData.resource_id);
+							if (target) {
+								creep.travel(target.pos);
+							}
+						}
+					}
+					return;
+				}
+				
+				// Fallback to original logic for other resource types
 				if (this.moveToDestination(creep))
 					return;
 
