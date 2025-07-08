@@ -1211,6 +1211,7 @@ Creep.prototype.getTask_Highway_Attack_Power = function getTask_Highway_Attack_P
 };
 
 Creep.prototype.getTask_Highway_Harvest_Commodity = function getTask_Highway_Harvest_Commodity() {
+	console.log(`[Highway Debug] getTask_Highway_Harvest_Commodity called for ${this.name} in ${this.room.name}`);
 	let highwayId = this.memory.highway_id;
 	if (!highwayId) return;
 
@@ -1218,15 +1219,24 @@ Creep.prototype.getTask_Highway_Harvest_Commodity = function getTask_Highway_Har
 	if (!highwayData) return;
 
 	let targetId = highwayData.resource_id;
-	if (!targetId) {
+	
+	// Improved resource discovery logic
+	if (!targetId || this.shouldRediscoverResource(highwayData)) {
 		// Only search if in the target room
 		if (this.room.name === highwayData.target_room) {
-			let deposit = _.find(this.room.find(FIND_DEPOSITS), d => d.depositType === highwayData.resource_type && d.ticksToDecay > 0);
+			let deposit = this.findValidDeposit(highwayData.resource_type);
 			if (deposit) {
 				highwayData.resource_id = deposit.id;
+				highwayData.last_discovery = Game.time;
 				console.log(`<font color=\"#FFA500\">[Highway]</font> Burrower ${this.name} discovered deposit ${deposit.id} (${deposit.depositType}) in ${this.room.name}`);
-				return this.getTask_Highway_Harvest_Commodity(); // Retry with new id
+				return this.getTask_Wait(1);
 			} else {
+				// Check if we should mark as completed due to no valid deposits
+				if (this.shouldMarkCompleted(highwayData)) {
+					highwayData.state = "completed";
+					console.log(`<font color=\"#FFA500\">[Highway]</font> No valid deposits found in ${this.room.name}, marking operation as completed for ${highwayId}`);
+					return;
+				}
 				console.log(`<font color=\"#FFA500\">[Highway]</font> Burrower ${this.name} could not find deposit of type ${highwayData.resource_type} in ${this.room.name}, waiting.`);
 				return { type: "wait", ticks: 10 };
 			}
@@ -1237,16 +1247,29 @@ Creep.prototype.getTask_Highway_Harvest_Commodity = function getTask_Highway_Har
 	}
 
 	let target = Game.getObjectById(targetId);
-	if (!target || target.structureType != "deposit") {
-		// Only mark as completed if at least one assigned creep has harvested
-		let creeps = _.filter(Game.creeps, c => c.memory.highway_id === highwayId);
-		if (_.some(creeps, c => c.memory.hasHarvested)) {
+	console.log(`[Highway Debug] Target validation: targetId=${targetId}, target=${!!target}, depositType=${target ? target.depositType : 'N/A'}`);
+	if (!target || !target.depositType) {
+		// Enhanced completion logic
+		if (this.shouldMarkCompleted(highwayData)) {
 			highwayData.state = "completed";
 			console.log(`<font color=\"#FFA500\">[Highway]</font> Resource ${targetId} invalid or gone, marking operation as completed for ${highwayId}`);
 		} else {
-			console.log(`<font color=\"#FFA500\">[Highway]</font> Resource ${targetId} invalid or gone, but no creep has harvested yet for ${highwayId}`);
+			console.log(`<font color=\"#FFA500\">[Highway]</font> Resource ${targetId} invalid or gone, but operation continues for ${highwayId}`);
 		}
 		return;
+	}
+
+	// Check if deposit is depleted
+	if (target.ticksToDeposit <= 0) {
+		highwayData.state = "completed";
+		console.log(`<font color=\"#FFA500\">[Highway]</font> Deposit ${targetId} depleted, marking operation as completed for ${highwayId}`);
+		return;
+	}
+
+	// Handle deposit cooldown
+	if (target.cooldown > 0) {
+		console.log(`[Highway Debug] Deposit in cooldown (${target.cooldown} ticks), waiting`);
+		return this.getTask_Wait(target.cooldown);
 	}
 
 	if (this.pos.getRangeTo(target) > 1) {
@@ -1259,18 +1282,79 @@ Creep.prototype.getTask_Highway_Harvest_Commodity = function getTask_Highway_Har
 
 	// Track if this creep has ever harvested from the deposit
 	if (!this.memory.hasHarvested) this.memory.hasHarvested = false;
+	
 	// Try to harvest
 	if (this.pos.getRangeTo(target) <= 1) {
 		let result = this.harvest(target);
+		console.log(`[Highway Debug] Harvest attempt: result=${result}, range=${this.pos.getRangeTo(target)}`);
 		if (result === OK) {
 			this.memory.hasHarvested = true;
+			highwayData.last_harvest = Game.time;
+			console.log(`[Highway Debug] Harvest successful!`);
+		} else if (result === ERR_NOT_ENOUGH_RESOURCES) {
+			// Deposit is depleted
+			highwayData.state = "completed";
+			console.log(`<font color=\"#FFA500\">[Highway]</font> Deposit ${targetId} depleted during harvest, marking operation as completed for ${highwayId}`);
+			return;
 		}
 	}
+	
 	return {
 		type: "harvest",
 		target: target.id,
 		timer: 10
 	};
+};
+
+// Helper function to determine if we should re-discover the resource
+Creep.prototype.shouldRediscoverResource = function(highwayData) {
+	// Re-discover if:
+	// 1. No last discovery time (first time)
+	// 2. Haven't discovered in the last 100 ticks
+	// 3. Current target is invalid
+	let lastDiscovery = highwayData.last_discovery || 0;
+	let currentTarget = Game.getObjectById(highwayData.resource_id);
+	
+	let shouldRediscover = !lastDiscovery || 
+		   (Game.time - lastDiscovery) > 100 || 
+		   !currentTarget || 
+		   !currentTarget.depositType; // Deposits have depositType, not structureType
+	
+	console.log(`[Highway Debug] shouldRediscoverResource: lastDiscovery=${lastDiscovery}, timeDiff=${Game.time - lastDiscovery}, currentTarget=${!!currentTarget}, hasDepositType=${!!(currentTarget && currentTarget.depositType)}, result=${shouldRediscover}`);
+	
+	return shouldRediscover;
+};
+
+// Helper function to find a valid deposit
+Creep.prototype.findValidDeposit = function(resourceType) {
+    let deposits = this.room.find(FIND_DEPOSITS);
+    if (deposits.length === 0) {
+        console.log(`[Highway Debug] No deposits found in ${this.room.name}`);
+    } else {
+        deposits.forEach(d => {
+            console.log(`[Highway Debug] Deposit ${d.id} type: ${d.depositType}, ticksToDecay: ${d.ticksToDecay}, cooldown: ${d.cooldown}`);
+        });
+    }
+    let found = _.find(deposits, d => d.depositType === resourceType && d.ticksToDecay > 0);
+    if (!found) {
+        console.log(`[Highway Debug] No deposit of type ${resourceType} found in ${this.room.name}`);
+    }
+    return found;
+};
+
+// Helper function to determine if operation should be marked as completed
+Creep.prototype.shouldMarkCompleted = function(highwayData) {
+	// Mark as completed if:
+	// 1. At least one creep has harvested from this operation
+	// 2. We've been trying for more than 500 ticks without success
+	// 3. The resource was previously discovered but is now gone
+	
+	let creeps = _.filter(Game.creeps, c => c.memory.highway_id === highwayData.highway_id);
+	let hasHarvested = _.some(creeps, c => c.memory.hasHarvested);
+	let operationStart = highwayData.operation_start || Game.time;
+	let timeElapsed = Game.time - operationStart;
+	
+	return hasHarvested || timeElapsed > 500;
 };
 
 Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_Resource() {
@@ -3892,6 +3976,13 @@ let Creep_Roles = {
 	},
 
 	HighwayBurrower: function (creep) {
+		// Initialize operation start time if not set
+		let highwayData = _.get(Memory, ["sites", "highway_mining", creep.memory.highway_id]);
+		if (highwayData && !highwayData.operation_start) {
+			highwayData.operation_start = Game.time;
+		}
+		
+		// Handle travel to destination if needed
 		if (creep.memory.task && creep.memory.task.destination) {
 			const dest = creep.memory.task.destination;
 			if (creep.room.name !== dest.roomName) {
@@ -3900,52 +3991,62 @@ let Creep_Roles = {
 			}
 		}
 		
-		// Check if we're full and need to return to colony
-		if (_.sum(creep.carry) === creep.carryCapacity) {
-			creep.memory.state = "returning";
-			creep.memory.task = creep.getTask_Highway_Carry_Resource();
-			creep.runTask(creep);
-			return;
-		}
+		// Simplified state management
+		let currentState = creep.memory.state || "mining";
+		let carrySum = _.sum(creep.carry);
+		let isInColony = creep.room.name === creep.memory.colony;
 		
-		// If we're empty and in colony room, go back to mining
-		if (_.sum(creep.carry) === 0 && creep.room.name === creep.memory.colony) {
-			creep.memory.state = "mining";
+		// State transitions
+		if (carrySum === creep.carryCapacity && currentState !== "returning") {
+			currentState = "returning";
+			creep.memory.state = currentState;
+			console.log(`<font color=\"#FFA500\">[Highway]</font> Burrower ${creep.name} returning home from ${creep.room.name}`);
+		} else if (carrySum === 0 && isInColony && currentState !== "mining") {
+			currentState = "mining";
+			creep.memory.state = currentState;
 			delete creep.memory.task;
 		}
 		
-		// If we're returning and reached colony, deposit resources
-		if (creep.memory.state === "returning" && creep.room.name === creep.memory.colony) {
-			creep.memory.task = creep.memory.task || creep.getTask_Highway_Carry_Resource();
-			creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
-			creep.runTask(creep);
-			return;
+		// Execute based on current state
+		switch (currentState) {
+			case "returning":
+				if (isInColony) {
+					// Deposit resources
+					creep.memory.task = creep.memory.task || creep.getTask_Highway_Carry_Resource();
+					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+					creep.runTask(creep);
+				} else {
+					// Travel to colony
+					creep.memory.task = creep.getTask_Highway_Carry_Resource();
+					creep.runTask(creep);
+				}
+				break;
+				
+			case "mining":
+			default:
+				// Travel to target room if not there
+				if (creep.room.name !== highwayData.target_room) {
+					creep.memory.task = { 
+						type: "travel", 
+						destination: new RoomPosition(25, 25, highwayData.target_room), 
+						timer: 50 
+					};
+					creep.runTask(creep);
+				} else {
+					// Harvest in target room
+					creep.memory.task = creep.memory.task || creep.getTask_Highway_Harvest_Commodity();
+					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+					creep.runTask(creep);
+				}
+				break;
 		}
 		
-		// If we're mining, go to target resource
-		if (creep.memory.state === "mining" || !creep.memory.state) {
-			if (this.moveToDestination(creep))
-				return;
-
-			creep.memory.task = creep.memory.task || creep.getTask_Highway_Harvest_Commodity();
-			creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
-			creep.runTask(creep);
-		}
-
-		let highwayData = _.get(Memory, ["sites", "highway_mining", creep.memory.highway_id]);
-		if (highwayData) {
-			// Log when burrower is returning home (full or resource depleted)
-			if (_.sum(creep.carry) === creep.carryCapacity && creep.memory.state !== "returning") {
-				creep.memory.state = "returning";
-				console.log(`<font color=\"#FFA500\">[Highway]</font> Burrower ${creep.name} returning home from ${creep.room.name}`);
-			}
-			// Log when resource is depleted or gone
-			if (highwayData.resource_id) {
-				let target = Game.getObjectById(highwayData.resource_id);
-				if (!target || target.ticksToDeposit === 0) {
-					highwayData.state = "completed";
-					console.log(`<font color=\"#FFA500\">[Highway]</font> Resource ${highwayData.resource_id} depleted or gone, marking operation as completed for ${creep.memory.highway_id}`);
-				}
+		// Enhanced resource status monitoring
+		if (highwayData && highwayData.resource_id) {
+			let target = Game.getObjectById(highwayData.resource_id);
+			if (!target || (target.structureType === "deposit" && target.ticksToDeposit <= 0)) {
+				highwayData.state = "completed";
+				console.log(`<font color=\"#FFA500\">[Highway]</font> Resource ${highwayData.resource_id} depleted or gone, marking operation as completed for ${creep.memory.highway_id}`);
 			}
 		}
 	},
@@ -7514,10 +7615,19 @@ let Sites = {
 				// For deposits, check if they're depleted
 				if (resourceType != 'power' && resource.structureType == "deposit") {
 					if (resource.ticksToDeposit <= 0) {
-						// Do not mark as completed here; let a creep in the room confirm it
-						console.log(`<font color=\"#FFA500\">[Highway]</font> Deposit ${resourceId} depleted, waiting for creep confirmation in room for ${highway_id}`);
+						highwayData.state = "completed";
+						console.log(`<font color=\"#FFA500\">[Highway]</font> Deposit ${resourceId} depleted, marking operation as completed for ${highway_id}`);
 						return;
 					}
+				}
+				
+				// Check for operation timeout
+				let operationStart = highwayData.operation_start || Game.time;
+				let timeElapsed = Game.time - operationStart;
+				if (timeElapsed > 2000) { // 2000 ticks timeout
+					highwayData.state = "completed";
+					console.log(`<font color=\"#FFA500\">[Highway]</font> Operation timeout after ${timeElapsed} ticks, marking as completed for ${highway_id}`);
+					return;
 				}
 			},
 
@@ -11343,6 +11453,7 @@ let Console = {
 				spawn_assist: listSpawnAssistRooms,
 				population: customPopulation,
 				state: "harvesting", // harvesting, completed
+				operation_start: Game.time, // Track operation start time
 				active_harvesters: []
 			});
 			
@@ -11359,18 +11470,73 @@ let Console = {
 			let result = `<font color=\"#D3FFA3\">[Console]</font> Highway Mining Status:\n`;
 			_.each(highwayMining, (data, highwayId) => {
 				let creeps = _.filter(Game.creeps, c => c.memory.highway_id == highwayId);
+				let operationAge = data.operation_start ? Game.time - data.operation_start : 0;
+				let lastHarvest = data.last_harvest ? Game.time - data.last_harvest : "Never";
+				let lastDiscovery = data.last_discovery ? Game.time - data.last_discovery : "Never";
+				
 				result += `\n${highwayId}:\n`;
 				result += `  Colony: ${data.colony}\n`;
 				result += `  Target: ${data.target_room} (${data.resource_type})\n`;
-				result += `  Resource ID: ${data.resource_id}\n`;
+				result += `  Resource ID: ${data.resource_id || "Not found"}\n`;
 				result += `  State: ${data.state}\n`;
+				result += `  Operation Age: ${operationAge} ticks\n`;
+				result += `  Last Discovery: ${lastDiscovery} ticks ago\n`;
+				result += `  Last Harvest: ${lastHarvest} ticks ago\n`;
 				result += `  Creeps: ${creeps.length}\n`;
 				_.each(creeps, c => {
-					result += `    - ${c.name}: ${c.memory.role} in ${c.room.name}\n`;
+					let carryInfo = `${c.carry.energy || 0}E`;
+					for (let resource in c.carry) {
+						if (resource !== 'energy') {
+							carryInfo += `, ${c.carry[resource]}${resource}`;
+						}
+					}
+					result += `    - ${c.name}: ${c.memory.role} in ${c.room.name} (${carryInfo})\n`;
 				});
 			});
 			
 			return result;
+		};
+
+		help_empire.push("empire.highway_cleanup()");
+		empire.highway_cleanup = function () {
+			let highwayMining = Memory.sites.highway_mining;
+			if (!highwayMining) return `<font color=\"#D3FFA3\">[Console]</font> No highway mining operations found.`;
+
+			let cleaned = 0;
+			_.each(highwayMining, (data, highwayId) => {
+				if (data.state === "completed") {
+					delete highwayMining[highwayId];
+					cleaned++;
+				}
+			});
+			
+			return `<font color=\"#D3FFA3\">[Console]</font> Cleaned up ${cleaned} completed highway mining operations.`;
+		};
+
+		help_empire.push("empire.highway_reset(highwayId)");
+		empire.highway_reset = function (highwayId) {
+			let highwayMining = Memory.sites.highway_mining;
+			if (!highwayMining || !highwayMining[highwayId]) {
+				return `<font color=\"#D3FFA3\">[Console]</font> Highway operation ${highwayId} not found.`;
+			}
+
+			let data = highwayMining[highwayId];
+			// Reset operation data but keep basic info
+			data.resource_id = null;
+			data.last_discovery = null;
+			data.last_harvest = null;
+			data.operation_start = Game.time;
+			data.state = "harvesting";
+			
+			// Clear creep memory
+			let creeps = _.filter(Game.creeps, c => c.memory.highway_id == highwayId);
+			_.each(creeps, c => {
+				delete c.memory.hasHarvested;
+				delete c.memory.state;
+				delete c.memory.task;
+			});
+			
+			return `<font color=\"#D3FFA3\">[Console]</font> Reset highway operation ${highwayId}. Creeps will re-discover resources.`;
 		};
 
 
