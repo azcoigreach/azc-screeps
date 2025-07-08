@@ -173,6 +173,7 @@ Creep.prototype.runTask = function runTask() {
 		}
 	}
 
+	
 	switch (this.memory.task["type"]) {
 		case "wait":
 			this.travelTask(null);
@@ -332,6 +333,28 @@ Creep.prototype.runTask = function runTask() {
 			} else { 
 				Stats_Visual.CreepSay(this, 'build');
 				return; 
+			}
+		}
+
+		case "attack": {
+			let target = Game.getObjectById(this.memory.task["target"] || this.memory.task["id"]);
+			if (!target) {
+				console.log(`[Highway Debug] Attack target not found for ${this.name}`);
+				delete this.memory.task;
+				return;
+			}
+			let result = this.attack(target);
+			console.log(`[Highway Debug] ${this.name} attack result: ${result} on target ${target.id}`);
+			if (result === OK) {
+				// Optionally, delete the task if you want to attack only once per task
+				// delete this.memory.task;
+				return;
+			} else if (result === ERR_NOT_IN_RANGE) {
+				this.travelTask(target);
+				return;
+			} else {
+				delete this.memory.task;
+				return;
 			}
 		}
 
@@ -7592,12 +7615,25 @@ let Sites = {
 				} else {
 									// Default population based on resource type
 				if (resourceType == "power") {
-					popTarget = {
-						"highway_attacker": { amount: 4, level: 6, body: "soldier" },
-						"highway_healer": { amount: 2, level: 6, body: "healer" },
-						"highway_carrier": { amount: 2, level: 4, body: "carrier" }
-					};
-						} else {
+				popTarget = {
+					// Largest possible melee attacker (10 TOUGH, 25 ATTACK, 15 MOVE)
+					"highway_attacker": { amount: 4, level: 8, body: [].concat(
+						Array(10).fill(TOUGH),
+						Array(25).fill(ATTACK),
+						Array(15).fill(MOVE)
+					) },
+					// Largest possible healer (25 HEAL, 25 MOVE)
+					"highway_healer": { amount: 2, level: 8, body: [].concat(
+						Array(25).fill(HEAL),
+						Array(25).fill(MOVE)
+					) },
+					// Largest possible carrier (16 CARRY, 16 MOVE)
+					"highway_carrier": { amount: 2, level: 8, body: [].concat(
+						Array(16).fill(CARRY),
+						Array(16).fill(MOVE)
+					) }
+				};
+			} else {
 			// Only one max-size extractor for commodities (level 8: 25 WORK, 8 CARRY, 17 MOVE)
 			// Single creep handles both mining and carrying
 			popTarget = {
