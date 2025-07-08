@@ -1272,6 +1272,16 @@ Creep.prototype.getTask_Highway_Harvest_Commodity = function getTask_Highway_Har
 		return this.getTask_Wait(target.cooldown);
 	}
 
+		// --- Travel time tracking ---
+	if (this.pos.getRangeTo(target) <= 1 && (!highwayData.travel_time || Game.time % 100 === 0)) {
+		// Only recalculate every 100 ticks to avoid CPU spam
+		let path = this.pos.findPathTo(new RoomPosition(25, 25, highwayData.colony), { ignoreCreeps: true });
+		if (path && path.length > 0) {
+			highwayData.travel_time = path.length;
+			console.log(`[Highway Debug] Travel time from deposit to colony: ${path.length} ticks`);
+		}
+	}
+
 	if (this.pos.getRangeTo(target) > 1) {
 		return {
 			type: "travel",
@@ -7500,6 +7510,33 @@ let Sites = {
 					popActual[role] = _.get(popActual, role, 0) + 1;
 				});
 
+				let burrowers = _.filter(listCreeps, c => c.memory.role === "highway_burrower");
+				let travel_time = highwayData.travel_time || 100;
+				let buffer = 20;
+				let replacement_window = 50;
+				if (burrowers.length === 1) {
+					let burrower = burrowers[0];
+					if (burrower.ticksToLive && burrower.ticksToLive < travel_time + buffer + replacement_window) {
+						// Queue a replacement if not already queued
+						if (!highwayData.replacement_queued || Game.time - (highwayData.last_replacement || 0) > travel_time) {
+							highwayData.replacement_queued = true;
+							highwayData.last_replacement = Game.time;
+							console.log(`<font color=\"#FFA500\">[Highway]</font> Queuing replacement burrower for ${highway_id}`);
+							Memory["hive"]["spawn_requests"].push({
+								room: highwayData.colony, listRooms: listSpawnRooms,
+								priority: 15,
+								level: 8, body: "extractor",
+								args: {
+									role: "highway_burrower",
+									highway_id: highway_id,
+									colony: highwayData.colony,
+									resource_type: highwayData.resource_type
+								}
+							});
+						}
+					}
+				}
+
 				let popTarget = new Object();
 				let popSetting = highwayData.population;
 				if (popSetting) {
@@ -7659,6 +7696,25 @@ let Sites = {
 			},
 
 			runHighwayBurrower: function (creep) {
+				let highwayData = _.get(Memory, ["sites", "highway_mining", creep.memory.highway_id]);
+				let travel_time = highwayData && highwayData.travel_time ? highwayData.travel_time : 100;
+				let buffer = 20;
+				// Early return if ticksToLive is low or deposit is about to expire
+				if (creep.ticksToLive && travel_time && (creep.ticksToLive < travel_time + buffer)) {
+					creep.memory.state = "returning";
+					creep.memory.task = creep.getTask_Highway_Carry_Resource();
+					creep.runTask(creep);
+					return;
+				}
+				if (highwayData && highwayData.resource_id) {
+					let target = Game.getObjectById(highwayData.resource_id);
+					if (target && target.ticksToDeposit && travel_time && (target.ticksToDeposit < travel_time + buffer)) {
+						creep.memory.state = "returning";
+						creep.memory.task = creep.getTask_Highway_Carry_Resource();
+						creep.runTask(creep);
+						return;
+					}
+				}
 				// Check if we're full and need to return to colony
 				if (_.sum(creep.carry) === creep.carryCapacity) {
 					creep.memory.state = "returning";
@@ -11457,7 +11513,10 @@ let Console = {
 				active_harvesters: []
 			});
 			
-			return `<font color=\"#D3FFA3\">[Console]</font> Highway commodity mining operation created for ${resourceType} in ${targetRoom}. Single extractor will auto-return when full. To cancel, delete the entry.`;
+			let message = resourceType === "power" 
+				? `Highway power mining operation created for ${resourceType} in ${targetRoom}. Deploys attackers, healers, and carriers. To cancel, delete the entry.`
+				: `Highway commodity mining operation created for ${resourceType} in ${targetRoom}. Single extractor will auto-return when full. To cancel, delete the entry.`;
+			return `<font color=\"#D3FFA3\">[Console]</font> ${message}`;
 		};
 
 		help_empire.push("empire.highway_status()");
