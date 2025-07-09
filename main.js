@@ -7782,49 +7782,51 @@ let Sites = {
 			},
 
 			runHighwayHealer: function (creep) {
-				// For power operations, prioritize getting to target room quickly
 				let highwayData = _.get(Memory, ["sites", "highway_mining", creep.memory.highway_id]);
 				if (highwayData && highwayData.resource_type === "power") {
-					// If not in target room, travel there immediately
+					// Move to target room if not there
 					if (creep.room.name !== highwayData.target_room) {
 						creep.travelToRoom(highwayData.target_room, true);
 						return;
 					}
-					
-					// In target room, heal nearby damaged creeps
-					let damagedCreeps = creep.pos.findInRange(FIND_MY_CREEPS, 3, {
-						filter: c => c.hits < c.hitsMax
+			
+					// Find all damaged attackers in range 3
+					let attackers = creep.pos.findInRange(FIND_MY_CREEPS, 3, {
+						filter: c => c.memory.role === "highway_attacker" && c.hits < c.hitsMax
 					});
-
-					if (damagedCreeps.length > 0) {
-						creep.heal(damagedCreeps[0]);
-					} else {
-						// If no damaged creeps, move toward attackers or power bank
-						let attackers = creep.pos.findInRange(FIND_MY_CREEPS, 10, {
-							filter: c => c.memory.role === "highway_attacker"
-						});
-						
-						if (attackers.length > 0) {
-							creep.travel(attackers[0].pos);
-						} else if (highwayData.resource_id) {
-							let target = Game.getObjectById(highwayData.resource_id);
-							if (target) {
-								creep.travel(target.pos);
-							}
+			
+					// Prioritize the most damaged attacker
+					let target = _.min(attackers, a => a.hits);
+			
+					if (target && target.hits < target.hitsMax) {
+						if (creep.pos.isNearTo(target)) {
+							creep.heal(target);
+						} else {
+							creep.rangedHeal(target);
+							creep.travel(target.pos);
 						}
+						return;
+					}
+			
+					// If no damaged attackers, move toward the closest attacker
+					let allAttackers = creep.pos.findClosestByPath(FIND_MY_CREEPS, {
+						filter: c => c.memory.role === "highway_attacker"
+					});
+					if (allAttackers) {
+						creep.travel(allAttackers.pos);
 					}
 					return;
 				}
-				
+			
 				// Fallback to original logic for other resource types
 				if (this.moveToDestination(creep))
 					return;
-
+			
 				// Heal nearby damaged creeps
 				let damagedCreeps = creep.pos.findInRange(FIND_MY_CREEPS, 3, {
 					filter: c => c.hits < c.hitsMax
 				});
-
+			
 				if (damagedCreeps.length > 0) {
 					creep.heal(damagedCreeps[0]);
 				} else {
@@ -7889,26 +7891,58 @@ let Sites = {
 			runHighwayCarrier: function (creep) {
 				let highwayData = _.get(Memory, ["sites", "highway_mining", creep.memory.highway_id]);
 				if (!highwayData) return;
-
-				// For power operations, prioritize getting to target room quickly
+			
 				if (highwayData.resource_type === "power") {
 					// If not in target room, travel there immediately
 					if (creep.room.name !== highwayData.target_room) {
 						creep.travelToRoom(highwayData.target_room, true);
 						return;
 					}
-					
-					// In target room, look for power drops
-					let powerDrops = creep.pos.findInRange(FIND_DROPPED_RESOURCES, 3, {
-						filter: r => r.resourceType === RESOURCE_POWER
-					});
-					
-					if (powerDrops.length > 0) {
-						// Pick up power drops
-						creep.pickup(powerDrops[0]);
+			
+					// Check if power bank still exists
+					let powerBank = highwayData.resource_id ? Game.getObjectById(highwayData.resource_id) : null;
+			
+					// If power bank exists and is alive, stay 5+ tiles away
+					if (powerBank && powerBank.hits > 0) {
+						if (creep.pos.getRangeTo(powerBank) < 5) {
+							// Move away to a position 5 tiles away
+							let positions = [];
+							for (let dx = -5; dx <= 5; dx++) {
+								for (let dy = -5; dy <= 5; dy++) {
+									if (Math.abs(dx) === 5 || Math.abs(dy) === 5) {
+										let pos = new RoomPosition(powerBank.pos.x + dx, powerBank.pos.y + dy, powerBank.pos.roomName);
+										if (pos.isValid() && pos.getRangeTo(powerBank) >= 5) {
+											positions.push(pos);
+										}
+									}
+								}
+							}
+							if (positions.length > 0) {
+								// Move to the closest valid position 5+ tiles away
+								let safePos = _.min(positions, p => creep.pos.getRangeTo(p));
+								creep.travel(safePos);
+							}
+						}
 						return;
 					}
-					
+			
+					// If power bank is gone, look for power drops
+					let powerDrops = creep.pos.findInRange(FIND_DROPPED_RESOURCES, 20, {
+						filter: r => r.resourceType === RESOURCE_POWER
+					});
+			
+					if (powerDrops.length > 0) {
+						let closestDrop = creep.pos.findClosestByPath(powerDrops);
+						if (closestDrop) {
+							if (creep.pos.isNearTo(closestDrop)) {
+								creep.pickup(closestDrop);
+							} else {
+								creep.travel(closestDrop.pos);
+							}
+						}
+						return;
+					}
+			
 					// If carrying power, return to colony
 					if (creep.carry.power > 0) {
 						if (creep.room.name !== highwayData.colony) {
@@ -7929,29 +7963,26 @@ let Sites = {
 							return;
 						}
 					}
-					
-					// If no power drops nearby and not carrying power, move toward power bank or attackers
-					if (highwayData.resource_id) {
-						let target = Game.getObjectById(highwayData.resource_id);
-						if (target) {
-							creep.travel(target.pos);
+			
+					// If no power drops and not carrying power, move toward attackers (but stay 5+ tiles from bank)
+					let attackers = creep.pos.findInRange(FIND_MY_CREEPS, 10, {
+						filter: c => c.memory.role === "highway_attacker"
+					});
+					if (attackers.length > 0) {
+						let target = attackers[0];
+						if (powerBank && creep.pos.getRangeTo(powerBank) < 5) {
+							// Already handled above, but just in case
+							return;
 						}
-					} else {
-						// No power bank found, move toward attackers
-						let attackers = creep.pos.findInRange(FIND_MY_CREEPS, 10, {
-							filter: c => c.memory.role === "highway_attacker"
-						});
-						if (attackers.length > 0) {
-							creep.travel(attackers[0].pos);
-						}
+						creep.travel(target.pos);
 					}
 					return;
 				}
-				
+			
 				// Fallback for other resource types (shouldn't happen with current setup)
 				if (this.moveToDestination(creep))
 					return;
-				
+			
 				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 				creep.runTask(creep);
 			},
