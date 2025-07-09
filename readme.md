@@ -1,6 +1,10 @@
 ## screeps
 
-My code for my Screeps account- feel free to use, copy, etc. No guarantee that the code won't drive your colony into the ground though ;)
+**This is a fork of [tanjera/screeps](https://github.com/tanjera/screeps) - the original Screeps codebase by Ibi Keller.**
+
+We are maintaining this repository separately to preserve the original basecode while making our own modifications and improvements. The original repository remains the authoritative source for the base implementation.
+
+This is the azcoigreach/azc-screeps repository - feel free to use, copy, etc. No guarantee that the code won't drive your colony into the ground though ;)
 
 Note: This is not a fully automated codebase, and has no intention of being fully automated! It is just an interface for controlling your colonies, and manages much of the mundane creep tasks.
 
