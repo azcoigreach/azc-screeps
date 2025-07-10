@@ -66,6 +66,46 @@
 		case "harvest": {
 			let obj = Game.getObjectById(this.memory.task["id"]);
 
+			// Special handling for highway burrowers harvesting deposits
+			if (this.memory.role === "highway_burrower" && obj && obj.depositType) {
+				console.log(`[Highway Debug] Highway burrower attempting to harvest deposit ${obj.id} (${obj.depositType}) at range ${this.pos.getRangeTo(obj)}`);
+				let result = this.harvest(obj);
+				console.log(`[Highway Debug] Highway burrower harvest result: ${result}`);
+				if (result == OK) {
+					// Successfully harvested from deposit, track it
+					this.memory.hasHarvested = true;
+					let highwayData = _.get(Memory, ["sites", "highway_mining", this.memory.highway_id]);
+					if (highwayData) {
+						highwayData.last_harvest = Game.time;
+					}
+					console.log(`[Highway Debug] Highway burrower harvest successful!`);
+					return;
+				} else if (result == ERR_NOT_IN_RANGE) {
+					console.log(`[Highway Debug] Highway burrower not in range, traveling to deposit`);
+					this.travelTask(obj);
+					return;
+				} else if (result == ERR_BUSY) {
+					// Deposit in cooldown, wait
+					console.log(`[Highway Debug] Highway burrower deposit busy, waiting`);
+					return;
+				} else if (result == ERR_NOT_ENOUGH_RESOURCES) {
+					// Deposit is depleted
+					let highwayData = _.get(Memory, ["sites", "highway_mining", this.memory.highway_id]);
+					if (highwayData) {
+						highwayData.state = "completed";
+						console.log(`<font color=\"#FFA500\">[Highway]</font> Deposit ${obj.id} depleted during harvest, marking operation as completed for ${this.memory.highway_id}`);
+					}
+					delete this.memory.task;
+					return;
+				} else {
+					// Other error, delete task and let it be reassigned
+					console.log(`[Highway Debug] Highway burrower harvest failed with result: ${result}`);
+					delete this.memory.task;
+					return;
+				}
+			}
+
+			// Regular harvest logic for energy sources
 			let result = this.harvest(obj);
 			if (result == OK) {
 				let interval = 3;
@@ -1188,26 +1228,21 @@ Creep.prototype.getTask_Highway_Harvest_Commodity = function getTask_Highway_Har
 	// Track if this creep has ever harvested from the deposit
 	if (!this.memory.hasHarvested) this.memory.hasHarvested = false;
 	
-	// Try to harvest
+	// If we're in range, return a harvest task
 	if (this.pos.getRangeTo(target) <= 1) {
-		let result = this.harvest(target);
-		console.log(`[Highway Debug] Harvest attempt: result=${result}, range=${this.pos.getRangeTo(target)}`);
-		if (result === OK) {
-			this.memory.hasHarvested = true;
-			highwayData.last_harvest = Game.time;
-			console.log(`[Highway Debug] Harvest successful!`);
-		} else if (result === ERR_NOT_ENOUGH_RESOURCES) {
-			// Deposit is depleted
-			highwayData.state = "completed";
-			console.log(`<font color=\"#FFA500\">[Highway]</font> Deposit ${targetId} depleted during harvest, marking operation as completed for ${highwayId}`);
-			return;
-		}
+		console.log(`[Highway Debug] Returning harvest task for target ${target.id} at range ${this.pos.getRangeTo(target)}`);
+		return {
+			type: "harvest",
+			id: target.id,
+			timer: 10
+		};
 	}
 	
+	// If we're not in range, travel to the target
 	return {
-		type: "harvest",
-		target: target.id,
-		timer: 10
+		type: "travel",
+		destination: target.pos,
+		timer: 50
 	};
 };
 
@@ -1288,6 +1323,7 @@ Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_
 
 	// If we have resources, return to colony
 	if (_.sum(this.carry) > 0) {
+		console.log(`[Highway Debug] Highway burrower ${this.name} carrying ${_.sum(this.carry)} resources, traveling to colony`);
 		return {
 			type: "travel",
 			destination: new RoomPosition(25, 25, highwayData.colony),
@@ -1298,6 +1334,7 @@ Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_
 	// Find storage or spawn to deposit
 	let storage = this.room.storage;
 	if (storage) {
+		console.log(`[Highway Debug] Highway burrower ${this.name} depositing to storage`);
 		return {
 			type: "deposit",
 			resource: highwayData.resource_type,
@@ -1309,6 +1346,7 @@ Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_
 	// Fallback to spawns
 	let spawns = this.room.find(FIND_MY_SPAWNS);
 	if (spawns.length > 0) {
+		console.log(`[Highway Debug] Highway burrower ${this.name} depositing to spawn (no storage)`);
 		return {
 			type: "deposit",
 			resource: highwayData.resource_type,
@@ -1317,6 +1355,7 @@ Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_
 		};
 	}
 
+	console.log(`[Highway Debug] Highway burrower ${this.name} no storage or spawns found, waiting`);
 	return {
 		type: "wait",
 		ticks: 10

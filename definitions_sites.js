@@ -3142,14 +3142,37 @@
 				let travel_time = highwayData.travel_time || 100;
 				let buffer = 20;
 				let replacement_window = 50;
+				
+				// Enhanced replacement logic
 				if (burrowers.length === 1) {
 					let burrower = burrowers[0];
+					let shouldQueueReplacement = false;
+					let replacementReason = "";
+					
+					// Queue replacement if burrower is getting old
 					if (burrower.ticksToLive && burrower.ticksToLive < travel_time + buffer + replacement_window) {
-						// Queue a replacement if not already queued
+						shouldQueueReplacement = true;
+						replacementReason = "old age";
+					}
+					
+					// Queue replacement if burrower is returning with resources and no replacement exists
+					if (burrower.memory.state === "returning" && _.sum(burrower.carry) > 0 && !highwayData.replacement_queued) {
+						shouldQueueReplacement = true;
+						replacementReason = "returning with resources";
+					}
+					
+					// Queue replacement if we're close to death with any resources
+					if (burrower.ticksToLive && burrower.ticksToLive < travel_time && _.sum(burrower.carry) > 0 && !highwayData.replacement_queued) {
+						shouldQueueReplacement = true;
+						replacementReason = "force replacement near death";
+					}
+					
+					if (shouldQueueReplacement) {
+						// Only queue if not already queued or if enough time has passed
 						if (!highwayData.replacement_queued || Game.time - (highwayData.last_replacement || 0) > travel_time) {
 							highwayData.replacement_queued = true;
 							highwayData.last_replacement = Game.time;
-							console.log(`<font color=\"#FFA500\">[Highway]</font> Queuing replacement burrower for ${highway_id}`);
+							console.log(`<font color=\"#FFA500\">[Highway]</font> Queuing replacement burrower for ${highway_id} (${replacementReason})`);
 							Memory["hive"]["spawn_requests"].push({
 								room: highwayData.colony, listRooms: listSpawnRooms,
 								priority: 15,
@@ -3162,6 +3185,11 @@
 								}
 							});
 						}
+					}
+					
+					// Clear replacement flag when new burrower arrives
+					if (burrower.ticksToLive > 1500) { // Fresh spawn
+						highwayData.replacement_queued = false;
 					}
 				}
 
@@ -3396,24 +3424,55 @@
 				let highwayData = _.get(Memory, ["sites", "highway_mining", creep.memory.highway_id]);
 				let travel_time = highwayData && highwayData.travel_time ? highwayData.travel_time : 100;
 				let buffer = 20;
-				// Early return if ticksToLive is low or deposit is about to expire
+				let replacement_window = 50;
+				let carrySum = _.sum(creep.carry);
+				let isInColony = creep.room.name === creep.memory.colony;
+				
+				// Enhanced lifecycle management
+				let shouldReturn = false;
+				let returnReason = "";
+				
+				// Check if creep is about to die
 				if (creep.ticksToLive && travel_time && (creep.ticksToLive < travel_time + buffer)) {
-					creep.memory.state = "returning";
-					creep.memory.task = creep.getTask_Highway_Carry_Resource();
-					creep.runTask(creep);
-					return;
+					shouldReturn = true;
+					returnReason = "dying soon";
 				}
+				
+				// Check if deposit is about to expire
 				if (highwayData && highwayData.resource_id) {
 					let target = Game.getObjectById(highwayData.resource_id);
 					if (target && target.ticksToDeposit && travel_time && (target.ticksToDeposit < travel_time + buffer)) {
-						creep.memory.state = "returning";
-						creep.memory.task = creep.getTask_Highway_Carry_Resource();
-						creep.runTask(creep);
-						return;
+						shouldReturn = true;
+						returnReason = "deposit expiring";
 					}
 				}
-				// Check if we're full and need to return to colony
-				if (_.sum(creep.carry) === creep.carryCapacity) {
+				
+				// Check if we're full (traditional condition)
+				if (carrySum === creep.carryCapacity) {
+					shouldReturn = true;
+					returnReason = "full";
+				}
+				
+				// Check if we have a significant amount of resources and should return
+				// This prevents high-level creeps from never returning due to large capacity
+				let significantLoad = carrySum > 0 && carrySum >= Math.min(creep.carryCapacity * 0.1, 50); // At least 10% or 50 units
+				let timeToReturn = travel_time + buffer;
+				let hasReplacement = highwayData && highwayData.replacement_queued;
+				
+				if (significantLoad && creep.ticksToLive && (creep.ticksToLive < timeToReturn + replacement_window) && hasReplacement) {
+					shouldReturn = true;
+					returnReason = "significant load with replacement ready";
+				}
+				
+				// Force return if we have any resources and are very close to death
+				if (carrySum > 0 && creep.ticksToLive && creep.ticksToLive < travel_time) {
+					shouldReturn = true;
+					returnReason = "force return with resources";
+				}
+				
+				// Return if any condition is met
+				if (shouldReturn) {
+					console.log(`<font color=\"#FFA500\">[Highway]</font> Burrower ${creep.name} returning home (${returnReason}) from ${creep.room.name} with ${carrySum}/${creep.carryCapacity} resources`);
 					creep.memory.state = "returning";
 					creep.memory.task = creep.getTask_Highway_Carry_Resource();
 					creep.runTask(creep);
@@ -3421,13 +3480,13 @@
 				}
 				
 				// If we're empty and in colony room, go back to mining
-				if (_.sum(creep.carry) === 0 && creep.room.name === creep.memory.colony) {
+				if (carrySum === 0 && isInColony) {
 					creep.memory.state = "mining";
 					delete creep.memory.task;
 				}
 				
 				// If we're returning and reached colony, deposit resources
-				if (creep.memory.state === "returning" && creep.room.name === creep.memory.colony) {
+				if (creep.memory.state === "returning" && isInColony) {
 					creep.memory.task = creep.memory.task || creep.getTask_Highway_Carry_Resource();
 					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 					creep.runTask(creep);
