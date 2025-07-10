@@ -1331,7 +1331,7 @@ Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_
 		};
 	}
 
-	// Find storage or spawn to deposit
+	// Find storage or terminal to deposit
 	let storage = this.room.storage;
 	if (storage) {
 		console.log(`[Highway Debug] Highway burrower ${this.name} depositing to storage`);
@@ -1342,20 +1342,19 @@ Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_
 			timer: 60
 		};
 	}
-
-	// Fallback to spawns
-	let spawns = this.room.find(FIND_MY_SPAWNS);
-	if (spawns.length > 0) {
-		console.log(`[Highway Debug] Highway burrower ${this.name} depositing to spawn (no storage)`);
+	let terminal = this.room.terminal;
+	if (terminal) {
+		console.log(`[Highway Debug] Highway burrower ${this.name} depositing to terminal`);
 		return {
 			type: "deposit",
 			resource: highwayData.resource_type,
-			id: spawns[0].id,
+			id: terminal.id,
 			timer: 60
 		};
 	}
 
-	console.log(`[Highway Debug] Highway burrower ${this.name} no storage or spawns found, waiting`);
+	// No valid deposit location for commodity
+	console.log(`[Highway Debug] Highway burrower ${this.name} no storage or terminal found for commodity, waiting`);
 	return {
 		type: "wait",
 		ticks: 10
