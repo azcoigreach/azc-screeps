@@ -706,11 +706,6 @@ Creep.prototype.getTask_Deposit_Spawns = function getTask_Deposit_Spawns() {
 };
 
 Creep.prototype.getTask_Pickup = function getTask_Pickup(resource) {
-    // Only pick up energy; ignore any other resource type.
-    if (resource && resource !== "energy") {
-        return null;
-    }
-    
     // Ensure the room is safe before picking up any resource.
     if (!_.get(Memory, ["rooms", this.room.name, "defense", "is_safe"])) {
         return;
@@ -719,18 +714,50 @@ Creep.prototype.getTask_Pickup = function getTask_Pickup(resource) {
     let dropped = this.room.find(FIND_DROPPED_RESOURCES);
     let carryAmount = this.carryCapacity / 5;
     
-    // Look only for energy piles that are sizable enough.
-    let energyPile = _.head(_.sortBy(_.filter(dropped, r => 
-        r.resourceType === "energy" && r.amount > carryAmount
-    ), r => -r.amount));
-    
-    if (energyPile) {
-        return {
-            type: "pickup",
-            resource: "energy",
-            id: energyPile.id,
-            timer: 30
-        };
+    // If a specific resource type is requested, look for that
+    if (resource) {
+        let resourcePile = _.head(_.sortBy(_.filter(dropped, r => 
+            r.resourceType === resource && r.amount > carryAmount
+        ), r => -r.amount));
+        
+        if (resourcePile) {
+            return {
+                type: "pickup",
+                resource: resource,
+                id: resourcePile.id,
+                timer: 30
+            };
+        }
+    } else {
+        // Look for any dropped resources, prioritizing commodities over energy
+        let commodityPiles = _.filter(dropped, r => 
+            r.resourceType !== "energy" && r.amount > carryAmount
+        );
+        
+        if (commodityPiles.length > 0) {
+            // Prioritize commodities (silicon, metal, etc.)
+            let commodityPile = _.head(_.sortBy(commodityPiles, r => -r.amount));
+            return {
+                type: "pickup",
+                resource: commodityPile.resourceType,
+                id: commodityPile.id,
+                timer: 30
+            };
+        }
+        
+        // Fallback to energy if no commodities found
+        let energyPile = _.head(_.sortBy(_.filter(dropped, r => 
+            r.resourceType === "energy" && r.amount > carryAmount
+        ), r => -r.amount));
+        
+        if (energyPile) {
+            return {
+                type: "pickup",
+                resource: "energy",
+                id: energyPile.id,
+                timer: 30
+            };
+        }
     }
     
     // Optionally, if you want your creeps to withdraw energy from tombstones or ruins:

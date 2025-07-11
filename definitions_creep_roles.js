@@ -64,6 +64,7 @@
 					_.get(Memory, ["rooms", creep.room.name, "survey", "downgrade_critical"], false));
 				creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Container("energy",
 					_.get(Memory, ["rooms", creep.room.name, "survey", "downgrade_critical"], false));
+				creep.memory.task = creep.memory.task || creep.getTask_Pickup(); // Pick up any dropped resources (prioritizes commodities)
 				creep.memory.task = creep.memory.task || creep.getTask_Pickup("energy");
 				creep.memory.task = creep.memory.task || creep.getTask_Mine();
 				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
@@ -99,6 +100,7 @@
 				creep.memory.task = creep.memory.task || creep.getTask_Repair(true);
 				creep.memory.task = creep.memory.task || creep.getTask_Build();
 				creep.memory.task = creep.memory.task || creep.getTask_Repair(false);
+				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral"); // Deposit any commodities to storage
 				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 
 				creep.runTask(creep);
@@ -218,6 +220,7 @@
 
 			creep.memory.task = creep.memory.task || creep.getTask_Industry_Withdraw();
 			creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage_Link();
+			creep.memory.task = creep.memory.task || creep.getTask_Pickup(); // Pick up any dropped resources (prioritizes commodities)
 			creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 
 			creep.runTask(creep);
@@ -231,7 +234,7 @@
 			}
 
 			creep.memory.task = creep.memory.task || creep.getTask_Industry_Deposit();
-			creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral");
+			creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral"); // Deposit any commodities to storage
 			creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("energy");
 			creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 
