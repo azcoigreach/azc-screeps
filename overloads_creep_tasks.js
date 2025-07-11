@@ -1359,7 +1359,23 @@ Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_
 		let storage = Game.rooms[highwayData.colony] && Game.rooms[highwayData.colony].storage;
 		let terminal = Game.rooms[highwayData.colony] && Game.rooms[highwayData.colony].terminal;
 		
-		if (storage) {
+		if (storage && this.room.name === storage.pos.roomName && this.pos.isNearTo(storage)) {
+			console.log(`[Highway Debug] Highway burrower ${this.name} is adjacent to storage, depositing`);
+			return {
+				type: "deposit",
+				resource: highwayData.resource_type,
+				id: storage.id,
+				timer: 60
+			};
+		} else if (terminal && this.room.name === terminal.pos.roomName && this.pos.isNearTo(terminal)) {
+			console.log(`[Highway Debug] Highway burrower ${this.name} is adjacent to terminal, depositing`);
+			return {
+				type: "deposit",
+				resource: highwayData.resource_type,
+				id: terminal.id,
+				timer: 60
+			};
+		} else if (storage) {
 			console.log(`[Highway Debug] Highway burrower ${this.name} traveling directly to storage`);
 			return {
 				type: "travel",
