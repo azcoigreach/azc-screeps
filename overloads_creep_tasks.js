@@ -1301,17 +1301,20 @@ Creep.prototype.findValidPowerBank = function() {
 
 // Helper function to determine if operation should be marked as completed
 Creep.prototype.shouldMarkCompleted = function(highwayData) {
-	// Mark as completed if:
-	// 1. At least one creep has harvested from this operation
-	// 2. We've been trying for more than 500 ticks without success
-	// 3. The resource was previously discovered but is now gone
+	// For highway mining, only mark as completed if:
+	// 1. We've been trying for more than 1000 ticks without success (longer timeout)
+	// 2. The resource was previously discovered but is now gone
+	// 3. The deposit is truly depleted (handled elsewhere)
 	
-	let creeps = _.filter(Game.creeps, c => c.memory.highway_id === highwayData.highway_id);
-	let hasHarvested = _.some(creeps, c => c.memory.hasHarvested);
+	// Do NOT use hasHarvested as a completion condition for highway mining
+	// Highway mining should continue until the deposit is actually depleted
+	
 	let operationStart = highwayData.operation_start || Game.time;
 	let timeElapsed = Game.time - operationStart;
 	
-	return hasHarvested || timeElapsed > 500;
+	// Only mark as completed if we've been trying for a very long time without success
+	// This prevents premature completion when creeps are just returning with resources
+	return timeElapsed > 1000;
 };
 
 Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_Resource() {

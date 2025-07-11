@@ -3143,16 +3143,20 @@
 				let buffer = 20;
 				let replacement_window = 50;
 				
-				// Enhanced replacement logic
+				// Enhanced replacement logic with better overlap
 				if (burrowers.length === 1) {
 					let burrower = burrowers[0];
 					let shouldQueueReplacement = false;
 					let replacementReason = "";
 					
-					// Queue replacement if burrower is getting old
-					if (burrower.ticksToLive && burrower.ticksToLive < travel_time + buffer + replacement_window) {
+					// More aggressive replacement timing to ensure overlap
+					let earlyReplacementThreshold = travel_time + buffer + replacement_window * 2;
+					let criticalThreshold = travel_time + buffer;
+					
+					// Queue replacement much earlier to ensure overlap
+					if (burrower.ticksToLive && burrower.ticksToLive < earlyReplacementThreshold) {
 						shouldQueueReplacement = true;
-						replacementReason = "old age";
+						replacementReason = "early replacement for overlap";
 					}
 					
 					// Queue replacement if burrower is returning with resources and no replacement exists
@@ -3161,10 +3165,16 @@
 						replacementReason = "returning with resources";
 					}
 					
-					// Queue replacement if we're close to death with any resources
-					if (burrower.ticksToLive && burrower.ticksToLive < travel_time && _.sum(burrower.carry) > 0 && !highwayData.replacement_queued) {
+					// Force replacement if we're very close to death with any resources
+					if (burrower.ticksToLive && burrower.ticksToLive < criticalThreshold && _.sum(burrower.carry) > 0 && !highwayData.replacement_queued) {
 						shouldQueueReplacement = true;
-						replacementReason = "force replacement near death";
+						replacementReason = "critical replacement near death";
+					}
+					
+					// Queue replacement if we have any resources and are getting old (prevent resource loss)
+					if (burrower.ticksToLive && burrower.ticksToLive < earlyReplacementThreshold && _.sum(burrower.carry) > 0 && !highwayData.replacement_queued) {
+						shouldQueueReplacement = true;
+						replacementReason = "preventive replacement with resources";
 					}
 					
 					if (shouldQueueReplacement) {
@@ -3187,9 +3197,10 @@
 						}
 					}
 					
-					// Clear replacement flag when new burrower arrives
+					// Clear replacement flag when new burrower arrives (fresh spawn)
 					if (burrower.ticksToLive > 1500) { // Fresh spawn
 						highwayData.replacement_queued = false;
+						console.log(`<font color=\"#FFA500\">[Highway]</font> New burrower arrived, clearing replacement flag for ${highway_id}`);
 					}
 				}
 
@@ -3303,6 +3314,14 @@
 					return;
 				}
 				
+				// Check if there are still active creeps for this operation
+				let activeCreeps = _.filter(Game.creeps, c => c.memory.highway_id === highway_id && !c.spawning);
+				if (activeCreeps.length === 0) {
+					// No active creeps, but don't mark as completed yet - wait for spawn
+					console.log(`<font color=\"#FFA500\">[Highway]</font> No active creeps for ${highway_id}, waiting for spawn`);
+					return;
+				}
+				
 				// Check if the target resource still exists
 				let resource = Game.getObjectById(resourceId);
 				if (!resource) {
@@ -3330,12 +3349,12 @@
 					}
 				}
 				
-				// Check for operation timeout
+				// Check for operation timeout (only if no active creeps and resource is gone)
 				let operationStart = highwayData.operation_start || Game.time;
 				let timeElapsed = Game.time - operationStart;
-				if (timeElapsed > 2000) { // 2000 ticks timeout
+				if (timeElapsed > 5000 && activeCreeps.length === 0) { // Much longer timeout, only if no creeps
 					highwayData.state = "completed";
-					console.log(`<font color=\"#FFA500\">[Highway]</font> Operation timeout after ${timeElapsed} ticks, marking as completed for ${highway_id}`);
+					console.log(`<font color=\"#FFA500\">[Highway]</font> Operation timeout after ${timeElapsed} ticks with no active creeps, marking as completed for ${highway_id}`);
 					return;
 				}
 			},
