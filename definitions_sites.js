@@ -3500,12 +3500,50 @@
 				
 				// If we're empty and in colony room, go back to mining
 				if (carrySum === 0 && isInColony) {
+					// Check for dropped resources before going back to mining
+					let droppedResources = creep.room.find(FIND_DROPPED_RESOURCES, {
+						filter: r => r.resourceType === highwayData.resource_type
+					});
+					
+					if (droppedResources.length > 0) {
+						let closestDrop = creep.pos.findClosestByPath(droppedResources);
+						if (closestDrop) {
+							console.log(`<font color=\"#FFA500\">[Highway]</font> Empty burrower ${creep.name} picking up dropped ${highwayData.resource_type}`);
+							creep.memory.task = {
+								type: "pickup",
+								id: closestDrop.id,
+								timer: 10
+							};
+							creep.runTask(creep);
+							return;
+						}
+					}
+					
 					creep.memory.state = "mining";
 					delete creep.memory.task;
 				}
 				
 				// If we're returning and reached colony, deposit resources
 				if (creep.memory.state === "returning" && isInColony) {
+					// First check for dropped resources to pick up
+					let droppedResources = creep.room.find(FIND_DROPPED_RESOURCES, {
+						filter: r => r.resourceType === highwayData.resource_type
+					});
+					
+					if (droppedResources.length > 0 && _.sum(creep.carry) < creep.carryCapacity) {
+						let closestDrop = creep.pos.findClosestByPath(droppedResources);
+						if (closestDrop) {
+							console.log(`<font color=\"#FFA500\">[Highway]</font> Returning burrower ${creep.name} picking up dropped ${highwayData.resource_type}`);
+							creep.memory.task = {
+								type: "pickup",
+								id: closestDrop.id,
+								timer: 10
+							};
+							creep.runTask(creep);
+							return;
+						}
+					}
+					
 					creep.memory.task = creep.memory.task || creep.getTask_Highway_Carry_Resource();
 					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 					creep.runTask(creep);
@@ -3514,6 +3552,25 @@
 				
 				// If we're mining, go to target resource
 				if (creep.memory.state === "mining" || !creep.memory.state) {
+					// First check for dropped resources to pick up
+					let droppedResources = creep.room.find(FIND_DROPPED_RESOURCES, {
+						filter: r => r.resourceType === highwayData.resource_type
+					});
+					
+					if (droppedResources.length > 0 && _.sum(creep.carry) < creep.carryCapacity) {
+						let closestDrop = creep.pos.findClosestByPath(droppedResources);
+						if (closestDrop) {
+							console.log(`<font color=\"#FFA500\">[Highway]</font> Burrower ${creep.name} picking up dropped ${highwayData.resource_type}`);
+							creep.memory.task = {
+								type: "pickup",
+								id: closestDrop.id,
+								timer: 10
+							};
+							creep.runTask(creep);
+							return;
+						}
+					}
+					
 					if (this.moveToDestination(creep))
 						return;
 

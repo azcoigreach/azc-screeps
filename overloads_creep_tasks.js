@@ -1327,11 +1327,34 @@ Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_
 	// If we have resources, return to colony
 	if (_.sum(this.carry) > 0) {
 		console.log(`[Highway Debug] Highway burrower ${this.name} carrying ${_.sum(this.carry)} resources, traveling to colony`);
-		return {
-			type: "travel",
-			destination: new RoomPosition(25, 25, highwayData.colony),
-			timer: 100
-		};
+		
+		// Try to find storage first, then terminal
+		let storage = Game.rooms[highwayData.colony] && Game.rooms[highwayData.colony].storage;
+		let terminal = Game.rooms[highwayData.colony] && Game.rooms[highwayData.colony].terminal;
+		
+		if (storage) {
+			console.log(`[Highway Debug] Highway burrower ${this.name} traveling directly to storage`);
+			return {
+				type: "travel",
+				destination: storage.pos,
+				timer: 100
+			};
+		} else if (terminal) {
+			console.log(`[Highway Debug] Highway burrower ${this.name} traveling directly to terminal`);
+			return {
+				type: "travel",
+				destination: terminal.pos,
+				timer: 100
+			};
+		} else {
+			// Fallback to room center if no storage/terminal
+			console.log(`[Highway Debug] Highway burrower ${this.name} no storage/terminal found, traveling to room center`);
+			return {
+				type: "travel",
+				destination: new RoomPosition(25, 25, highwayData.colony),
+				timer: 100
+			};
+		}
 	}
 
 	// Find storage or terminal to deposit
