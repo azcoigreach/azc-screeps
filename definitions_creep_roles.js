@@ -40,6 +40,25 @@
 	},
 
 	Worker: function (creep, isSafe) {
+		// Always prioritize picking up dropped commodities if there is free carry capacity
+		if (_.sum(creep.carry) < creep.carryCapacity) {
+			let dropped = creep.room.find(FIND_DROPPED_RESOURCES, {
+				filter: r => r.resourceType !== "energy"
+			});
+			if (dropped.length > 0) {
+				let closest = creep.pos.findClosestByPath(dropped);
+				if (closest) {
+					creep.memory.task = {
+						type: "pickup",
+						resource: closest.resourceType,
+						id: closest.id,
+						timer: 30
+					};
+					creep.runTask(creep);
+					return;
+				}
+			}
+		}
 		let hostile = isSafe ? null
 			: _.head(creep.pos.findInRange(FIND_HOSTILE_CREEPS, 5, {
 				filter:
@@ -203,6 +222,25 @@
 	},
 
 	Courier: function (creep) {
+		// Always prioritize picking up dropped commodities if there is free carry capacity
+		if (_.sum(creep.carry) < creep.carryCapacity) {
+			let dropped = creep.room.find(FIND_DROPPED_RESOURCES, {
+				filter: r => r.resourceType !== "energy"
+			});
+			if (dropped.length > 0) {
+				let closest = creep.pos.findClosestByPath(dropped);
+				if (closest) {
+					creep.memory.task = {
+						type: "pickup",
+						resource: closest.resourceType,
+						id: closest.id,
+						timer: 30
+					};
+					creep.runTask(creep);
+					return;
+				}
+			}
+		}
 		if (this.moveToDestination(creep))
 			return;
 

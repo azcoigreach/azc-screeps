@@ -68,9 +68,7 @@
 
 			// Special handling for highway burrowers harvesting deposits
 			if (this.memory.role === "highway_burrower" && obj && obj.depositType) {
-				console.log(`[Highway Debug] Highway burrower attempting to harvest deposit ${obj.id} (${obj.depositType}) at range ${this.pos.getRangeTo(obj)}`);
 				let result = this.harvest(obj);
-				console.log(`[Highway Debug] Highway burrower harvest result: ${result}`);
 				if (result == OK) {
 					// Successfully harvested from deposit, track it
 					this.memory.hasHarvested = true;
@@ -78,15 +76,12 @@
 					if (highwayData) {
 						highwayData.last_harvest = Game.time;
 					}
-					console.log(`[Highway Debug] Highway burrower harvest successful!`);
 					return;
 				} else if (result == ERR_NOT_IN_RANGE) {
-					console.log(`[Highway Debug] Highway burrower not in range, traveling to deposit`);
 					this.travelTask(obj);
 					return;
 				} else if (result == ERR_BUSY) {
 					// Deposit in cooldown, wait
-					console.log(`[Highway Debug] Highway burrower deposit busy, waiting`);
 					return;
 				} else if (result == ERR_NOT_ENOUGH_RESOURCES) {
 					// Deposit is depleted
@@ -99,7 +94,6 @@
 					return;
 				} else {
 					// Other error, delete task and let it be reassigned
-					console.log(`[Highway Debug] Highway burrower harvest failed with result: ${result}`);
 					delete this.memory.task;
 					return;
 				}
@@ -220,12 +214,10 @@
 		case "attack": {
 			let target = Game.getObjectById(this.memory.task["target"] || this.memory.task["id"]);
 			if (!target) {
-				console.log(`[Highway Debug] Attack target not found for ${this.name}`);
 				delete this.memory.task;
 				return;
 			}
 			let result = this.attack(target);
-			console.log(`[Highway Debug] ${this.name} attack result: ${result} on target ${target.id}`);
 			if (result === OK) {
 				// Optionally, delete the task if you want to attack only once per task
 				// delete this.memory.task;
@@ -1173,7 +1165,6 @@ Creep.prototype.getTask_Highway_Attack_Power = function getTask_Highway_Attack_P
 };
 
 Creep.prototype.getTask_Highway_Harvest_Commodity = function getTask_Highway_Harvest_Commodity() {
-	console.log(`[Highway Debug] getTask_Highway_Harvest_Commodity called for ${this.name} in ${this.room.name}`);
 	let highwayId = this.memory.highway_id;
 	if (!highwayId) return;
 
@@ -1209,7 +1200,6 @@ Creep.prototype.getTask_Highway_Harvest_Commodity = function getTask_Highway_Har
 	}
 
 	let target = Game.getObjectById(targetId);
-	console.log(`[Highway Debug] Target validation: targetId=${targetId}, target=${!!target}, depositType=${target ? target.depositType : 'N/A'}`);
 	if (!target || !target.depositType) {
 		// Enhanced completion logic
 		if (this.shouldMarkCompleted(highwayData)) {
@@ -1230,7 +1220,7 @@ Creep.prototype.getTask_Highway_Harvest_Commodity = function getTask_Highway_Har
 
 	// Handle deposit cooldown
 	if (target.cooldown > 0) {
-		console.log(`[Highway Debug] Deposit in cooldown (${target.cooldown} ticks), waiting`);
+		console.log(`<font color=\"#FFA500\">[Highway]</font> Deposit in cooldown (${target.cooldown} ticks), waiting`);
 		return this.getTask_Wait(target.cooldown);
 	}
 
@@ -1240,7 +1230,7 @@ Creep.prototype.getTask_Highway_Harvest_Commodity = function getTask_Highway_Har
 		let path = this.pos.findPathTo(new RoomPosition(25, 25, highwayData.colony), { ignoreCreeps: true });
 		if (path && path.length > 0) {
 			highwayData.travel_time = path.length;
-			console.log(`[Highway Debug] Travel time from deposit to colony: ${path.length} ticks`);
+			console.log(`<font color=\"#FFA500\">[Highway]</font> Travel time from deposit to colony: ${path.length} ticks`);
 		}
 	}
 
@@ -1257,7 +1247,6 @@ Creep.prototype.getTask_Highway_Harvest_Commodity = function getTask_Highway_Har
 	
 	// If we're in range, return a harvest task
 	if (this.pos.getRangeTo(target) <= 1) {
-		console.log(`[Highway Debug] Returning harvest task for target ${target.id} at range ${this.pos.getRangeTo(target)}`);
 		return {
 			type: "harvest",
 			id: target.id,
@@ -1287,8 +1276,6 @@ Creep.prototype.shouldRediscoverResource = function(highwayData) {
 		   !currentTarget || 
 		   !currentTarget.depositType; // Deposits have depositType, not structureType
 	
-	console.log(`[Highway Debug] shouldRediscoverResource: lastDiscovery=${lastDiscovery}, timeDiff=${Game.time - lastDiscovery}, currentTarget=${!!currentTarget}, hasDepositType=${!!(currentTarget && currentTarget.depositType)}, result=${shouldRediscover}`);
-	
 	return shouldRediscover;
 };
 
@@ -1296,15 +1283,15 @@ Creep.prototype.shouldRediscoverResource = function(highwayData) {
 Creep.prototype.findValidDeposit = function(resourceType) {
     let deposits = this.room.find(FIND_DEPOSITS);
     if (deposits.length === 0) {
-        console.log(`[Highway Debug] No deposits found in ${this.room.name}`);
+        console.log(`<font color=\"#FFA500\">[Highway]</font> No deposits found in ${this.room.name}`);
     } else {
         deposits.forEach(d => {
-            console.log(`[Highway Debug] Deposit ${d.id} type: ${d.depositType}, ticksToDecay: ${d.ticksToDecay}, cooldown: ${d.cooldown}`);
+            console.log(`<font color=\"#FFA500\">[Highway]</font> Deposit ${d.id} type: ${d.depositType}, ticksToDecay: ${d.ticksToDecay}, cooldown: ${d.cooldown}`);
         });
     }
     let found = _.find(deposits, d => d.depositType === resourceType && d.ticksToDecay > 0);
     if (!found) {
-        console.log(`[Highway Debug] No deposit of type ${resourceType} found in ${this.room.name}`);
+        console.log(`<font color=\"#FFA500\">[Highway]</font> No deposit of type ${resourceType} found in ${this.room.name}`);
     }
     return found;
 };
@@ -1316,13 +1303,13 @@ Creep.prototype.findValidPowerBank = function() {
     });
     
     if (powerBanks.length === 0) {
-        console.log(`[Highway Debug] No power banks found in ${this.room.name}`);
+        console.log(`<font color=\"#FFA500\">[Highway]</font> No power banks found in ${this.room.name}`);
         return null;
     }
     
     // Return the power bank with the most hits (most valuable)
     let bestPowerBank = _.max(powerBanks, p => p.hits);
-    console.log(`[Highway Debug] Found power bank ${bestPowerBank.id} with ${bestPowerBank.hits} hits in ${this.room.name}`);
+    console.log(`<font color=\"#FFA500\">[Highway]</font> Found power bank ${bestPowerBank.id} with ${bestPowerBank.hits} hits in ${this.room.name}`);
     return bestPowerBank;
 };
 
@@ -1351,16 +1338,16 @@ Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_
 	let highwayData = _.get(Memory, ["sites", "highway_mining", highwayId]);
 	if (!highwayData) return;
 
-	// If we have resources, return to colony
+	// If we have resources, return to colony 
 	if (_.sum(this.carry) > 0) {
-		console.log(`[Highway Debug] Highway burrower ${this.name} carrying ${_.sum(this.carry)} resources, traveling to colony`);
+		console.log(`<font color=\"#FFA500\">[Highway]</font> Highway burrower ${this.name} carrying ${_.sum(this.carry)} resources, traveling to colony`);
 		
 		// Try to find storage first, then terminal
 		let storage = Game.rooms[highwayData.colony] && Game.rooms[highwayData.colony].storage;
 		let terminal = Game.rooms[highwayData.colony] && Game.rooms[highwayData.colony].terminal;
 		
 		if (storage && this.room.name === storage.pos.roomName && this.pos.isNearTo(storage)) {
-			console.log(`[Highway Debug] Highway burrower ${this.name} is adjacent to storage, depositing`);
+			console.log(`<font color=\"#FFA500\">[Highway]</font> Highway burrower ${this.name} is adjacent to storage, depositing`);
 			return {
 				type: "deposit",
 				resource: highwayData.resource_type,
@@ -1368,7 +1355,7 @@ Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_
 				timer: 60
 			};
 		} else if (terminal && this.room.name === terminal.pos.roomName && this.pos.isNearTo(terminal)) {
-			console.log(`[Highway Debug] Highway burrower ${this.name} is adjacent to terminal, depositing`);
+			console.log(`<font color=\"#FFA500\">[Highway]</font> Highway burrower ${this.name} is adjacent to terminal, depositing`);
 			return {
 				type: "deposit",
 				resource: highwayData.resource_type,
@@ -1376,14 +1363,14 @@ Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_
 				timer: 60
 			};
 		} else if (storage) {
-			console.log(`[Highway Debug] Highway burrower ${this.name} traveling directly to storage`);
+			console.log(`<font color=\"#FFA500\">[Highway]</font> Highway burrower ${this.name} traveling directly to storage`);
 			return {
 				type: "travel",
 				destination: storage.pos,
 				timer: 100
 			};
 		} else if (terminal) {
-			console.log(`[Highway Debug] Highway burrower ${this.name} traveling directly to terminal`);
+			console.log(`<font color=\"#FFA500\">[Highway]</font> Highway burrower ${this.name} traveling directly to terminal`);
 			return {
 				type: "travel",
 				destination: terminal.pos,
@@ -1391,7 +1378,7 @@ Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_
 			};
 		} else {
 			// Fallback to room center if no storage/terminal
-			console.log(`[Highway Debug] Highway burrower ${this.name} no storage/terminal found, traveling to room center`);
+			console.log(`<font color=\"#FFA500\">[Highway]</font> Highway burrower ${this.name} no storage/terminal found, traveling to room center`);
 			return {
 				type: "travel",
 				destination: new RoomPosition(25, 25, highwayData.colony),
@@ -1403,7 +1390,7 @@ Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_
 	// Find storage or terminal to deposit
 	let storage = this.room.storage;
 	if (storage) {
-		console.log(`[Highway Debug] Highway burrower ${this.name} depositing to storage`);
+		console.log(`<font color=\"#FFA500\">[Highway]</font> Highway burrower ${this.name} depositing to storage`);
 		return {
 			type: "deposit",
 			resource: highwayData.resource_type,
@@ -1413,7 +1400,7 @@ Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_
 	}
 	let terminal = this.room.terminal;
 	if (terminal) {
-		console.log(`[Highway Debug] Highway burrower ${this.name} depositing to terminal`);
+		console.log(`<font color=\"#FFA500\">[Highway]</font> Highway burrower ${this.name} depositing to terminal`);
 		return {
 			type: "deposit",
 			resource: highwayData.resource_type,
@@ -1423,7 +1410,7 @@ Creep.prototype.getTask_Highway_Carry_Resource = function getTask_Highway_Carry_
 	}
 
 	// No valid deposit location for commodity
-	console.log(`[Highway Debug] Highway burrower ${this.name} no storage or terminal found for commodity, waiting`);
+	console.log(`<font color=\"#FFA500\">[Highway]</font> Highway burrower ${this.name} no storage or terminal found for commodity, waiting`);
 	return {
 		type: "wait",
 		ticks: 10

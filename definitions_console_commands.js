@@ -2399,39 +2399,25 @@
 
 		help_empire.push("empire.highway_status()");
 		empire.highway_status = function () {
-			let highwayMining = Memory.sites.highway_mining;
-			if (!highwayMining || Object.keys(highwayMining).length == 0) {
-				return `<font color=\"#D3FFA3\">[Console]</font> No highway mining operations found.`;
+			let out = [];
+			let mining = _.get(Memory, ["sites", "highway_mining"], {});
+			for (let id in mining) {
+				let data = mining[id];
+				let creeps = _.filter(Game.creeps, c => c.memory.highway_id === id);
+				let resource = Game.getObjectById(data.resource_id);
+				let depositTicks = (resource && resource.ticksToDecay) ? resource.ticksToDecay : "?";
+				let dropped = 0;
+				if (data.colony && Game.rooms[data.colony]) {
+					dropped = _.sum(Game.rooms[data.colony].find(FIND_DROPPED_RESOURCES, {
+						filter: r => r.resourceType === data.resource_type
+					}), r => r.amount);
+				}
+				out.push(
+					`[${id}] State: ${data.state} | Resource: ${data.resource_type} | DepositTicks: ${depositTicks} | Creeps: ${creeps.length} | Replacement: ${data.replacement_queued ? "YES" : "no"} | Dropped: ${dropped}`
+				);
 			}
-
-			let result = `<font color=\"#D3FFA3\">[Console]</font> Highway Mining Status:\n`;
-			_.each(highwayMining, (data, highwayId) => {
-				let creeps = _.filter(Game.creeps, c => c.memory.highway_id == highwayId);
-				let operationAge = data.operation_start ? Game.time - data.operation_start : 0;
-				let lastHarvest = data.last_harvest ? Game.time - data.last_harvest : "Never";
-				let lastDiscovery = data.last_discovery ? Game.time - data.last_discovery : "Never";
-				
-				result += `\n${highwayId}:\n`;
-				result += `  Colony: ${data.colony}\n`;
-				result += `  Target: ${data.target_room} (${data.resource_type})\n`;
-				result += `  Resource ID: ${data.resource_id || "Not found"}\n`;
-				result += `  State: ${data.state}\n`;
-				result += `  Operation Age: ${operationAge} ticks\n`;
-				result += `  Last Discovery: ${lastDiscovery} ticks ago\n`;
-				result += `  Last Harvest: ${lastHarvest} ticks ago\n`;
-				result += `  Creeps: ${creeps.length}\n`;
-				_.each(creeps, c => {
-					let carryInfo = `${c.carry.energy || 0}E`;
-					for (let resource in c.carry) {
-						if (resource !== 'energy') {
-							carryInfo += `, ${c.carry[resource]}${resource}`;
-						}
-					}
-					result += `    - ${c.name}: ${c.memory.role} in ${c.room.name} (${carryInfo})\n`;
-				});
-			});
-			
-			return result;
+			if (out.length === 0) return "No highway mining operations active.";
+			return out.join("\n");
 		};
 
 		help_empire.push("empire.highway_cleanup()");
