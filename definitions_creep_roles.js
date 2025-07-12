@@ -102,7 +102,7 @@
 					return;
 
 				// Check if room has reached RCL 6+ and has upgraders
-				let roomLevel = creep.room.controller.level;
+				let roomLevel = creep.room.controller ? creep.room.controller.level : 0;
 				let hasUpgraders = _.filter(Game.creeps, c => 
 					c.memory.role == "upgrader" && c.memory.room == creep.room.name).length > 0;
 				let isCriticalDowngrade = _.get(Memory, ["rooms", creep.room.name, "survey", "downgrade_critical"], false);
