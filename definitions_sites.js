@@ -3142,14 +3142,47 @@
 				let travel_time = highwayData.travel_time || 100;
 				let buffer = 20;
 				let replacement_window = 50;
+				
+				// Enhanced replacement logic with better overlap
 				if (burrowers.length === 1) {
 					let burrower = burrowers[0];
-					if (burrower.ticksToLive && burrower.ticksToLive < travel_time + buffer + replacement_window) {
-						// Queue a replacement if not already queued
+					let shouldQueueReplacement = false;
+					let replacementReason = "";
+					
+					// More aggressive replacement timing to ensure overlap
+					let earlyReplacementThreshold = travel_time + buffer + replacement_window * 2;
+					let criticalThreshold = travel_time + buffer;
+					
+					// Queue replacement much earlier to ensure overlap
+					if (burrower.ticksToLive && burrower.ticksToLive < earlyReplacementThreshold) {
+						shouldQueueReplacement = true;
+						replacementReason = "early replacement for overlap";
+					}
+					
+					// Queue replacement if burrower is returning with resources and no replacement exists
+					if (burrower.memory.state === "returning" && _.sum(burrower.carry) > 0 && !highwayData.replacement_queued) {
+						shouldQueueReplacement = true;
+						replacementReason = "returning with resources";
+					}
+					
+					// Force replacement if we're very close to death with any resources
+					if (burrower.ticksToLive && burrower.ticksToLive < criticalThreshold && _.sum(burrower.carry) > 0 && !highwayData.replacement_queued) {
+						shouldQueueReplacement = true;
+						replacementReason = "critical replacement near death";
+					}
+					
+					// Queue replacement if we have any resources and are getting old (prevent resource loss)
+					if (burrower.ticksToLive && burrower.ticksToLive < earlyReplacementThreshold && _.sum(burrower.carry) > 0 && !highwayData.replacement_queued) {
+						shouldQueueReplacement = true;
+						replacementReason = "preventive replacement with resources";
+					}
+					
+					if (shouldQueueReplacement) {
+						// Only queue if not already queued or if enough time has passed
 						if (!highwayData.replacement_queued || Game.time - (highwayData.last_replacement || 0) > travel_time) {
 							highwayData.replacement_queued = true;
 							highwayData.last_replacement = Game.time;
-							console.log(`<font color=\"#FFA500\">[Highway]</font> Queuing replacement burrower for ${highway_id}`);
+							console.log(`<font color=\"#FFA500\">[Highway]</font> Queuing replacement burrower for ${highway_id} (${replacementReason})`);
 							Memory["hive"]["spawn_requests"].push({
 								room: highwayData.colony, listRooms: listSpawnRooms,
 								priority: 15,
@@ -3162,6 +3195,12 @@
 								}
 							});
 						}
+					}
+					
+					// Clear replacement flag when new burrower arrives (fresh spawn)
+					if (burrower.ticksToLive > 1500) { // Fresh spawn
+						highwayData.replacement_queued = false;
+						console.log(`<font color=\"#FFA500\">[Highway]</font> New burrower arrived, clearing replacement flag for ${highway_id}`);
 					}
 				}
 
@@ -3275,6 +3314,14 @@
 					return;
 				}
 				
+				// Check if there are still active creeps for this operation
+				let activeCreeps = _.filter(Game.creeps, c => c.memory.highway_id === highway_id && !c.spawning);
+				if (activeCreeps.length === 0) {
+					// No active creeps, but don't mark as completed yet - wait for spawn
+					console.log(`<font color=\"#FFA500\">[Highway]</font> No active creeps for ${highway_id}, waiting for spawn`);
+					return;
+				}
+				
 				// Check if the target resource still exists
 				let resource = Game.getObjectById(resourceId);
 				if (!resource) {
@@ -3302,12 +3349,12 @@
 					}
 				}
 				
-				// Check for operation timeout
+				// Check for operation timeout (only if no active creeps and resource is gone)
 				let operationStart = highwayData.operation_start || Game.time;
 				let timeElapsed = Game.time - operationStart;
-				if (timeElapsed > 2000) { // 2000 ticks timeout
+				if (timeElapsed > 5000 && activeCreeps.length === 0) { // Much longer timeout, only if no creeps
 					highwayData.state = "completed";
-					console.log(`<font color=\"#FFA500\">[Highway]</font> Operation timeout after ${timeElapsed} ticks, marking as completed for ${highway_id}`);
+					console.log(`<font color=\"#FFA500\">[Highway]</font> Operation timeout after ${timeElapsed} ticks with no active creeps, marking as completed for ${highway_id}`);
 					return;
 				}
 			},
@@ -3396,24 +3443,55 @@
 				let highwayData = _.get(Memory, ["sites", "highway_mining", creep.memory.highway_id]);
 				let travel_time = highwayData && highwayData.travel_time ? highwayData.travel_time : 100;
 				let buffer = 20;
-				// Early return if ticksToLive is low or deposit is about to expire
+				let replacement_window = 50;
+				let carrySum = _.sum(creep.carry);
+				let isInColony = creep.room.name === creep.memory.colony;
+				
+				// Enhanced lifecycle management
+				let shouldReturn = false;
+				let returnReason = "";
+				
+				// Check if creep is about to die
 				if (creep.ticksToLive && travel_time && (creep.ticksToLive < travel_time + buffer)) {
-					creep.memory.state = "returning";
-					creep.memory.task = creep.getTask_Highway_Carry_Resource();
-					creep.runTask(creep);
-					return;
+					shouldReturn = true;
+					returnReason = "dying soon";
 				}
+				
+				// Check if deposit is about to expire
 				if (highwayData && highwayData.resource_id) {
 					let target = Game.getObjectById(highwayData.resource_id);
 					if (target && target.ticksToDeposit && travel_time && (target.ticksToDeposit < travel_time + buffer)) {
-						creep.memory.state = "returning";
-						creep.memory.task = creep.getTask_Highway_Carry_Resource();
-						creep.runTask(creep);
-						return;
+						shouldReturn = true;
+						returnReason = "deposit expiring";
 					}
 				}
-				// Check if we're full and need to return to colony
-				if (_.sum(creep.carry) === creep.carryCapacity) {
+				
+				// Check if we're full (traditional condition)
+				if (carrySum === creep.carryCapacity) {
+					shouldReturn = true;
+					returnReason = "full";
+				}
+				
+				// Check if we have a significant amount of resources and should return
+				// This prevents high-level creeps from never returning due to large capacity
+				let significantLoad = carrySum > 0 && carrySum >= Math.min(creep.carryCapacity * 0.1, 50); // At least 10% or 50 units
+				let timeToReturn = travel_time + buffer;
+				let hasReplacement = highwayData && highwayData.replacement_queued;
+				
+				if (significantLoad && creep.ticksToLive && (creep.ticksToLive < timeToReturn + replacement_window) && hasReplacement) {
+					shouldReturn = true;
+					returnReason = "significant load with replacement ready";
+				}
+				
+				// Force return if we have any resources and are very close to death
+				if (carrySum > 0 && creep.ticksToLive && creep.ticksToLive < travel_time) {
+					shouldReturn = true;
+					returnReason = "force return with resources";
+				}
+				
+				// Return if any condition is met
+				if (shouldReturn) {
+					console.log(`<font color=\"#FFA500\">[Highway]</font> Burrower ${creep.name} returning home (${returnReason}) from ${creep.room.name} with ${carrySum}/${creep.carryCapacity} resources`);
 					creep.memory.state = "returning";
 					creep.memory.task = creep.getTask_Highway_Carry_Resource();
 					creep.runTask(creep);
@@ -3421,13 +3499,51 @@
 				}
 				
 				// If we're empty and in colony room, go back to mining
-				if (_.sum(creep.carry) === 0 && creep.room.name === creep.memory.colony) {
+				if (carrySum === 0 && isInColony) {
+					// Check for dropped resources before going back to mining
+					let droppedResources = creep.room.find(FIND_DROPPED_RESOURCES, {
+						filter: r => r.resourceType === highwayData.resource_type
+					});
+					
+					if (droppedResources.length > 0) {
+						let closestDrop = creep.pos.findClosestByPath(droppedResources);
+						if (closestDrop) {
+							console.log(`<font color=\"#FFA500\">[Highway]</font> Empty burrower ${creep.name} picking up dropped ${highwayData.resource_type}`);
+							creep.memory.task = {
+								type: "pickup",
+								id: closestDrop.id,
+								timer: 10
+							};
+							creep.runTask(creep);
+							return;
+						}
+					}
+					
 					creep.memory.state = "mining";
 					delete creep.memory.task;
 				}
 				
 				// If we're returning and reached colony, deposit resources
-				if (creep.memory.state === "returning" && creep.room.name === creep.memory.colony) {
+				if (creep.memory.state === "returning" && isInColony) {
+					// First check for dropped resources to pick up
+					let droppedResources = creep.room.find(FIND_DROPPED_RESOURCES, {
+						filter: r => r.resourceType === highwayData.resource_type
+					});
+					
+					if (droppedResources.length > 0 && _.sum(creep.carry) < creep.carryCapacity) {
+						let closestDrop = creep.pos.findClosestByPath(droppedResources);
+						if (closestDrop) {
+							console.log(`<font color=\"#FFA500\">[Highway]</font> Returning burrower ${creep.name} picking up dropped ${highwayData.resource_type}`);
+							creep.memory.task = {
+								type: "pickup",
+								id: closestDrop.id,
+								timer: 10
+							};
+							creep.runTask(creep);
+							return;
+						}
+					}
+					
 					creep.memory.task = creep.memory.task || creep.getTask_Highway_Carry_Resource();
 					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 					creep.runTask(creep);
@@ -3436,6 +3552,25 @@
 				
 				// If we're mining, go to target resource
 				if (creep.memory.state === "mining" || !creep.memory.state) {
+					// First check for dropped resources to pick up
+					let droppedResources = creep.room.find(FIND_DROPPED_RESOURCES, {
+						filter: r => r.resourceType === highwayData.resource_type
+					});
+					
+					if (droppedResources.length > 0 && _.sum(creep.carry) < creep.carryCapacity) {
+						let closestDrop = creep.pos.findClosestByPath(droppedResources);
+						if (closestDrop) {
+							console.log(`<font color=\"#FFA500\">[Highway]</font> Burrower ${creep.name} picking up dropped ${highwayData.resource_type}`);
+							creep.memory.task = {
+								type: "pickup",
+								id: closestDrop.id,
+								timer: 10
+							};
+							creep.runTask(creep);
+							return;
+						}
+					}
+					
 					if (this.moveToDestination(creep))
 						return;
 

@@ -40,6 +40,25 @@
 	},
 
 	Worker: function (creep, isSafe) {
+		// Always prioritize picking up dropped commodities if there is free carry capacity
+		if (_.sum(creep.carry) < creep.carryCapacity) {
+			let dropped = creep.room.find(FIND_DROPPED_RESOURCES, {
+				filter: r => r.resourceType !== "energy"
+			});
+			if (dropped.length > 0) {
+				let closest = creep.pos.findClosestByPath(dropped);
+				if (closest) {
+					creep.memory.task = {
+						type: "pickup",
+						resource: closest.resourceType,
+						id: closest.id,
+						timer: 30
+					};
+					creep.runTask(creep);
+					return;
+				}
+			}
+		}
 		let hostile = isSafe ? null
 			: _.head(creep.pos.findInRange(FIND_HOSTILE_CREEPS, 5, {
 				filter:
@@ -64,6 +83,7 @@
 					_.get(Memory, ["rooms", creep.room.name, "survey", "downgrade_critical"], false));
 				creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Container("energy",
 					_.get(Memory, ["rooms", creep.room.name, "survey", "downgrade_critical"], false));
+				creep.memory.task = creep.memory.task || creep.getTask_Pickup(); // Pick up any dropped resources (prioritizes commodities)
 				creep.memory.task = creep.memory.task || creep.getTask_Pickup("energy");
 				creep.memory.task = creep.memory.task || creep.getTask_Mine();
 				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
@@ -99,6 +119,7 @@
 				creep.memory.task = creep.memory.task || creep.getTask_Repair(true);
 				creep.memory.task = creep.memory.task || creep.getTask_Build();
 				creep.memory.task = creep.memory.task || creep.getTask_Repair(false);
+				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral"); // Deposit any commodities to storage
 				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 
 				creep.runTask(creep);
@@ -201,6 +222,25 @@
 	},
 
 	Courier: function (creep) {
+		// Always prioritize picking up dropped commodities if there is free carry capacity
+		if (_.sum(creep.carry) < creep.carryCapacity) {
+			let dropped = creep.room.find(FIND_DROPPED_RESOURCES, {
+				filter: r => r.resourceType !== "energy"
+			});
+			if (dropped.length > 0) {
+				let closest = creep.pos.findClosestByPath(dropped);
+				if (closest) {
+					creep.memory.task = {
+						type: "pickup",
+						resource: closest.resourceType,
+						id: closest.id,
+						timer: 30
+					};
+					creep.runTask(creep);
+					return;
+				}
+			}
+		}
 		if (this.moveToDestination(creep))
 			return;
 
@@ -218,6 +258,7 @@
 
 			creep.memory.task = creep.memory.task || creep.getTask_Industry_Withdraw();
 			creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage_Link();
+			creep.memory.task = creep.memory.task || creep.getTask_Pickup(); // Pick up any dropped resources (prioritizes commodities)
 			creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 
 			creep.runTask(creep);
@@ -231,7 +272,7 @@
 			}
 
 			creep.memory.task = creep.memory.task || creep.getTask_Industry_Deposit();
-			creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral");
+			creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral"); // Deposit any commodities to storage
 			creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("energy");
 			creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 
