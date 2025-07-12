@@ -67,6 +67,10 @@ module.exports.loop = function () {
 
 	Control.clearDeadMemory();
 	Control.initMemory();
+
+	if (hasCPU()) {
+		FlagManager.run();
+	}
 	Control.initLabs();
 	Control.initVisuals();
 

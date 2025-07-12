@@ -97,6 +97,7 @@
 		if (_.get(Memory, ["sites", "mining"]) == null) _.set(Memory, ["sites", "mining"], new Object());
 		if (_.get(Memory, ["sites", "colonization"]) == null) _.set(Memory, ["sites", "colonization"], new Object());
 		if (_.get(Memory, ["sites", "combat"]) == null) _.set(Memory, ["sites", "combat"], new Object());
+		if (_.get(Memory, ["flags"]) == null) _.set(Memory, ["flags"], new Object());
 
 		for (let r in Game["rooms"])
 			_.set(Memory, ["rooms", r, "population"], null);
