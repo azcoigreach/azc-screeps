@@ -970,10 +970,11 @@
 
 		factories.renew_assignments = function () {
 			console.log(`<font color=\"#FFA500\">[Factory]</font> Renewing factory assignments...`);
-			
+			// Ensure Memory.resources and Memory.resources.factories exist
+			if (!Memory.resources) Memory.resources = {};
+			if (!Memory.resources.factories) Memory.resources.factories = {};
 			// Clear existing assignments to force fresh assignment
 			delete Memory["resources"]["factories"]["assignments"];
-			
 			// Trigger factory pulse to reassign factories based on priority
 			// Use the first room with a controller as the processing room
 			let processingRoom = null;
@@ -984,12 +985,10 @@
 					break;
 				}
 			}
-			
 			_.set(Memory, ["hive", "pulses", "factory"], { 
 				active: true,
 				processing_room: processingRoom
 			});
-			
 			return `<font color=\"#FFA500\">[Factory]</font> Factory assignments will be renewed next tick based on current priorities.`;
 		};
 

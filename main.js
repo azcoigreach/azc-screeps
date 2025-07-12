@@ -57,9 +57,11 @@ require("definitions_grafana_statistics");
  * *********************************************************** */
 
 
-module.exports.loop = function () {
 
+module.exports.loop = function () {
 	Stats_CPU.Init();
+
+	// ...existing code...
 
 	if (Control.refillBucket()) {
 		return;

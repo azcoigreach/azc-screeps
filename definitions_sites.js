@@ -132,152 +132,88 @@
 				let energy_level = _.get(Memory, ["rooms", rmColony, "survey", "energy_level"]);
 				let downgrade_critical = _.get(Memory, ["rooms", rmColony, "survey", "downgrade_critical"]);
 
-				let popActual = new Object();
-				_.each(listCreeps, c => {
-					switch (_.get(c, ["memory", "role"])) {
-						default:
-							let role = _.get(c, ["memory", "role"]);
-							popActual[role] = _.get(popActual, role, 0) + 1;
-							break;
-						
-						case "upgrader":
-							popActual["upgrader"] = _.get(popActual, "upgrader", 0) + 1;
-							break;
-					}
-				});
+				// DYNAMIC POPULATION TARGETS: tweakable via Memory.rooms[rmColony].pop_targets
+				if (Game.cpu.bucket < 5000) return;
+				let sources = Game.rooms[rmColony].findSources();
+				let miners = _.filter(listCreeps, c => c.memory.role === "miner");
+				let carriers = _.filter(listCreeps, c => c.memory.role === "carrier");
+				let upgraders = _.filter(listCreeps, c => c.memory.role === "upgrader");
+				let builders = _.filter(listCreeps, c => c.memory.role === "builder");
+				let workers = _.filter(listCreeps, c => c.memory.role === "worker");
+				let totalCreeps = listCreeps.length;
 
-				let popTarget = new Object();
-				let popSetting = _.get(Memory, ["rooms", rmColony, "set_population"]);
-				if (popSetting)
-					popTarget = _.cloneDeep(popSetting);
-				else
-					popTarget = _.cloneDeep(Population_Colony[listSpawnRooms == null ? "Standalone" : "Assisted"][Math.max(1, room_level)]);
+				let spawns = Game.rooms[rmColony].find(FIND_MY_SPAWNS);
+				let spawnActive = spawns.filter(s => s.spawning).length;
+				let spawnIdle = spawns.length - spawnActive;
 
-				// Adjust soldier amounts & levels based on threat level
-				if (threat_level != NONE && _.get(Game, ["rooms", rmColony, "controller", "safeMode"]) == null) {
-					if (threat_level == LOW || threat_level == null) {
-						_.set(popTarget, ["ranger", "amount"], _.get(popTarget, ["ranger", "amount"], 0) + 1);
-						if (is_safe)
-							_.set(popTarget, ["ranger", "level"], Math.max(2, room_level - 1));
-					} else if (threat_level == MEDIUM) {
-						_.set(popTarget, ["soldier", "amount"], _.get(popTarget, ["soldier", "amount"], 0) + 1);
-						_.set(popTarget, ["ranger", "amount"], _.get(popTarget, ["ranger", "amount"], 0) + 1);
-						if (is_safe) {
-							_.set(popTarget, ["soldier", "level"], Math.max(2, room_level - 1));
-							_.set(popTarget, ["ranger", "level"], Math.max(2, room_level - 1));
-						}
-					} else if (threat_level == HIGH) {
-						_.set(popTarget, ["soldier", "amount"], _.get(popTarget, ["soldier", "amount"], 0) + 6);
-						_.set(popTarget, ["ranger", "amount"], _.get(popTarget, ["ranger", "amount"], 0) + 2);
-					}
-				}
-
-				// Adjust worker amounts based on is_safe, energy_level
-				if (!is_safe) {
-					_.set(popTarget, ["worker", "level"], Math.max(1, Math.round(_.get(popTarget, ["worker", "level"]) * 0.5)))
-				} else if (is_safe) {
-					if (energy_level == CRITICAL) {
-						_.set(popTarget, ["worker", "amount"], Math.max(1, Math.round(_.get(popTarget, ["worker", "amount"]) * 0.33)))
-						_.set(popTarget, ["worker", "level"], Math.max(1, Math.round(_.get(popTarget, ["worker", "level"]) * 0.33)))
-					} else if (energy_level == LOW) {
-						_.set(popTarget, ["worker", "amount"], Math.max(1, Math.round(_.get(popTarget, ["worker", "amount"]) * 0.5)))
-						_.set(popTarget, ["worker", "level"], Math.max(1, Math.round(_.get(popTarget, ["worker", "level"]) * 0.5)))
-					} else if (energy_level == EXCESS && room_level < 8) {
-						_.set(popTarget, ["worker", "amount"], Math.max(1, Math.round(_.get(popTarget, ["worker", "amount"]) * 2)))
-					}
-				}
-
-				// Tally population levels for level scaling and statistics
-				Control.populationTally(rmColony,
-					_.sum(popTarget, p => { return _.get(p, "amount", 0); }),
-					_.sum(popActual));
-
-				// Grafana population stats
-				Stats_Grafana.populationTally(rmColony, popTarget, popActual);
-
-				if (_.get(Game, ["rooms", rmColony, "controller", "safeMode"]) == null
-					&& ((_.get(popActual, "soldier", 0) < _.get(popTarget, ["soldier", "amount"], 0))
-						|| (_.get(popActual, "soldier", 0) < hostiles.length))) {
-					Memory["hive"]["spawn_requests"].push({
-						room: rmColony, listRooms: listSpawnRooms,
-						priority: (!is_safe ? 1 : 21),
-						level: _.get(popTarget, ["soldier", "level"], room_level),
-						scale: _.get(popTarget, ["soldier", "scale"], true),
-						body: "soldier", name: null, args: { role: "soldier", room: rmColony }
-					});
-				}
-
-				if (_.get(Game, ["rooms", rmColony, "controller", "safeMode"]) == null
-					&& _.get(popActual, "healer", 0) < _.get(popTarget, ["healer", "amount"], 0)) {
-					Memory["hive"]["spawn_requests"].push({
-						room: rmColony, listRooms: listSpawnRooms,
-						priority: (!is_safe ? 2 : 22),
-						level: _.get(popTarget, ["healer", "level"], 1),
-						scale: _.get(popTarget, ["healer", "scale"], true),
-						body: "healer", name: null, args: { role: "healer", room: rmColony }
-					});
-				}
-
-				if (_.get(popActual, "worker", 0) < _.get(popTarget, ["worker", "amount"], 0)) {
-					Memory["hive"]["spawn_requests"].push({
-						room: rmColony, listRooms: listSpawnRooms,
-						priority: Math.lerpSpawnPriority(23, 25, _.get(popActual, "worker", 0), _.get(popTarget, ["worker", "amount"], 0)),
-						level: _.get(popTarget, ["worker", "level"], 1),
-						scale: _.get(popTarget, ["worker", "scale"], true),
-						body: _.get(popTarget, ["worker", "body"], "worker"),
-						name: null, args: { role: "worker", room: rmColony }
-					});
-				}
-
-				// Check for force spawn request
-				let forceSpawn = _.get(Memory, ["rooms", rmColony, "upgrader_force_spawn"]);
-				if (forceSpawn && forceSpawn.timestamp == Game.time) {
-					for (let i = 0; i < forceSpawn.amount; i++) {
+				// If colony is just starting, spawn only workers (multi-role)
+				if (totalCreeps < 3) {
+					let needed = 3 - workers.length;
+					for (let i = 0; i < needed; i++) {
 						Memory["hive"]["spawn_requests"].push({
 							room: rmColony, listRooms: listSpawnRooms,
-							priority: 1, // High priority for force spawn
-							level: room_level,
-							scale: true,
-							body: "upgrader",
-							name: null, args: { role: "upgrader", room: rmColony }
+							priority: 5, level: 1, scale: false,
+							body: "worker", name: null, args: { role: "worker", room: rmColony }
 						});
 					}
-					delete Memory.rooms[rmColony].upgrader_force_spawn;
+					if (Game.time % 10 === 0) {
+						console.log(`[STATS] ${rmColony} | Spawns: ${spawns.length} (Active: ${spawnActive}, Idle: ${spawnIdle}) | Creeps: ${totalCreeps} | Workers: ${workers.length}`);
+					}
+					return;
 				}
 
-				// Check if room has reached RCL 5+ and should spawn upgraders
-				let roomLevel = Game.rooms[rmColony].controller.level;
-				if (roomLevel >= 5) {
-					// Calculate upgrader amount based on remote mining sources
-					let remoteMiningSources = 0;
-					let remote_mining = _.get(Memory, ["sites", "mining"]);
-					if (remote_mining) {
-						let remote_list = _.filter(Object.keys(remote_mining), rem => { 
-							return rem != rmColony && _.get(remote_mining[rem], "colony") == rmColony; 
-						});
-						_.each(remote_list, rem => { 
-							remoteMiningSources += _.get(Memory, ["sites", "mining", rem, "survey", "source_amount"], 0); 
-						});
-					}
-					
-					// Base upgrader amount: 1 for every room level 5+
-					// Additional upgrader for every 2 remote mining sources
-					let baseUpgraders = 1;
-					let additionalUpgraders = Math.floor(remoteMiningSources / 2);
-					let totalUpgraders = baseUpgraders + additionalUpgraders;
-					
-					// Check if we need upgraders
-					if (_.get(popActual, "upgrader", 0) < totalUpgraders) {
-						Memory["hive"]["spawn_requests"].push({
-							room: rmColony, listRooms: listSpawnRooms,
-							priority: Math.lerpSpawnPriority(20, 22, _.get(popActual, "upgrader", 0), totalUpgraders),
-							level: _.get(popTarget, ["upgrader", "level"], room_level),
-							scale: _.get(popTarget, ["upgrader", "scale"], true),
-							body: _.get(popTarget, ["upgrader", "body"], "upgrader"),
-							name: null, args: { role: "upgrader", room: rmColony }
-						});
-					}
+				// --- Dynamic targets ---
+				let pop_targets = _.get(Memory, ["rooms", rmColony, "pop_targets"], {});
+			   let minersTarget = (pop_targets.miners !== undefined && pop_targets.miners !== null) ? pop_targets.miners : sources.length * 2;
+			   let carriersTarget = (pop_targets.carriers !== undefined && pop_targets.carriers !== null) ? pop_targets.carriers : sources.length * 2;
+			   let upgradersTarget = (pop_targets.upgraders !== undefined && pop_targets.upgraders !== null) ? pop_targets.upgraders : (room_level >= 5 ? 6 : (room_level >= 4 ? 3 : 0));
+			   let buildersTarget = (pop_targets.builders !== undefined && pop_targets.builders !== null) ? pop_targets.builders : Math.min(3, Game.rooms[rmColony].find(FIND_MY_CONSTRUCTION_SITES).length);
+
+				// Miners
+				for (let i = miners.length; i < minersTarget; i++) {
+					let source = sources[i % sources.length];
+					Memory["hive"]["spawn_requests"].push({
+						room: rmColony, listRooms: listSpawnRooms,
+						priority: 10, level: Math.min(room_level, 5), scale: false,
+						body: "miner", name: null, args: { role: "miner", room: rmColony, source: source.id }
+					});
 				}
+				// Carriers
+				for (let i = carriers.length; i < carriersTarget; i++) {
+					let source = sources[i % sources.length];
+					Memory["hive"]["spawn_requests"].push({
+						room: rmColony, listRooms: listSpawnRooms,
+						priority: 15, level: Math.min(room_level, 5), scale: false,
+						body: "carrier", name: null, args: { role: "carrier", room: rmColony, source: source.id }
+					});
+				}
+				// Upgraders
+				for (let i = upgraders.length; i < upgradersTarget; i++) {
+					Memory["hive"]["spawn_requests"].push({
+						room: rmColony, listRooms: listSpawnRooms,
+						priority: 20, level: Math.min(room_level, 8), scale: false,
+						body: "upgrader", name: null, args: { role: "upgrader", room: rmColony }
+					});
+				}
+				// Builders
+				for (let i = builders.length; i < buildersTarget; i++) {
+					Memory["hive"]["spawn_requests"].push({
+						room: rmColony, listRooms: listSpawnRooms,
+						priority: 30, level: Math.min(room_level, 5), scale: false,
+						body: "builder", name: null, args: { role: "builder", room: rmColony }
+					});
+				}
+
+				// --- Console stats ---
+				let energyHarvested = _.sum(miners, m => m.carry ? m.carry.energy : (m.store ? m.store.energy : 0));
+				let energyCarried = _.sum(carriers, c => c.carry ? c.carry.energy : (c.store ? c.store.energy : 0));
+				let energyUpgrading = _.sum(upgraders, u => u.carry ? u.carry.energy : (u.store ? u.store.energy : 0));
+				let energyBuilding = _.sum(builders, b => b.carry ? b.carry.energy : (b.store ? b.store.energy : 0));
+				if (Game.time % 10 === 0) {
+					console.log(`[STATS] ${rmColony} | Spawns: ${spawns.length} (Active: ${spawnActive}, Idle: ${spawnIdle}) | Creeps: ${totalCreeps} | MinerE: ${energyHarvested} | CarrierE: ${energyCarried} | UpgraderE: ${energyUpgrading} | BuilderE: ${energyBuilding}`);
+				}
+				return;
+				// ...existing code...
 			},
 
 
@@ -694,6 +630,10 @@
 				let is_visible = _.get(Memory, ["sites", "mining", rmHarvest, "survey", "visible"], true);
 				let can_mine = _.get(Memory, ["sites", "mining", rmHarvest, "can_mine"]);
 
+				// Disable remote mining until RCL5
+				if (rmColony != rmHarvest && Game.rooms[rmColony] && Game.rooms[rmColony].controller.level < 5) {
+					return;
+				}
 				// If the colony is not safe (under siege?) pause spawning remote mining; frees colony spawns to make soldiers
 				if (rmColony != rmHarvest && !is_safe_colony)
 					return;

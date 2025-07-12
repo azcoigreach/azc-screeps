@@ -40,6 +40,24 @@
 	},
 
 	Worker: function (creep, isSafe) {
+		// --- Always prioritize filling spawn/extensions if not full ---
+		if (creep.carry[RESOURCE_ENERGY] > 0) {
+			let spawn_ext = _.head(_.sortBy(_.filter(creep.room.find(FIND_MY_STRUCTURES), s => {
+				return (s.structureType == "spawn" && s.energy < s.energyCapacity)
+					|| (s.structureType == "extension" && s.energy < s.energyCapacity);
+			}), s => creep.pos.getRangeTo(s.pos)));
+			if (spawn_ext) {
+				creep.memory.task = {
+					type: "deposit",
+					resource: "energy",
+					id: spawn_ext.id,
+					timer: 60
+				};
+				creep.runTask(creep);
+				return;
+			}
+		}
+
 		// Always prioritize picking up dropped commodities if there is free carry capacity
 		if (_.sum(creep.carry) < creep.carryCapacity) {
 			let dropped = creep.room.find(FIND_DROPPED_RESOURCES, {
