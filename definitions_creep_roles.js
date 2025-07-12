@@ -101,25 +101,25 @@
 				if (this.goToRoom(creep, creep.memory.room, false))
 					return;
 
-				// Check if room has reached RCL 6+ and has upgraders
-				let roomLevel = creep.room.controller ? creep.room.controller.level : 0;
-				let hasUpgraders = _.filter(Game.creeps, c => 
-					c.memory.role == "upgrader" && c.memory.room == creep.room.name).length > 0;
-				let isCriticalDowngrade = _.get(Memory, ["rooms", creep.room.name, "survey", "downgrade_critical"], false);
-
-				// Only upgrade if room is below RCL 6, or if critical downgrade and no upgraders available
-				let shouldUpgrade = roomLevel < 6 || (isCriticalDowngrade && !hasUpgraders);
-
-				if (shouldUpgrade) {
-					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(true);
-					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
+				// If there are construction sites, build first
+				if (creep.room.find(FIND_CONSTRUCTION_SITES, { filter: s => s.my }).length > 0) {
+					creep.memory.task = creep.memory.task || creep.getTask_Build();
+				} else {
+					// Otherwise, upgrade
+					let roomLevel = creep.room.controller ? creep.room.controller.level : 0;
+					let hasUpgraders = _.filter(Game.creeps, c => 
+						c.memory.role == "upgrader" && c.memory.room == creep.room.name).length > 0;
+					let isCriticalDowngrade = _.get(Memory, ["rooms", creep.room.name, "survey", "downgrade_critical"], false);
+					let shouldUpgrade = roomLevel < 6 || (isCriticalDowngrade && !hasUpgraders);
+					if (shouldUpgrade) {
+						creep.memory.task = creep.memory.task || creep.getTask_Upgrade(true);
+					}
 				}
 
 				creep.memory.task = creep.memory.task || creep.getTask_Sign();
 				creep.memory.task = creep.memory.task || creep.getTask_Repair(true);
-				creep.memory.task = creep.memory.task || creep.getTask_Build();
 				creep.memory.task = creep.memory.task || creep.getTask_Repair(false);
-				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral"); // Deposit any commodities to storage
+				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral");
 				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 
 				creep.runTask(creep);

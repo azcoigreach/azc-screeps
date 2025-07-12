@@ -145,7 +145,7 @@
 		};
 
 
-		factories = new Object();
+		global.factories = new Object();
 		help_factories.push("factories.set_production(commodity, amount, priority)");
 		help_factories.push(" - Sets production target for a commodity (e.g., 'wire', 'switch', 'transistor', 'microchip', 'circuit', 'device')");
 		help_factories.push(" - amount: target amount to produce");
@@ -970,6 +970,10 @@
 
 		factories.renew_assignments = function () {
 			console.log(`<font color=\"#FFA500\">[Factory]</font> Renewing factory assignments...`);
+			
+			// Initialize memory structure if it doesn't exist
+			if (!Memory.resources) Memory.resources = {};
+			if (!Memory.resources.factories) Memory.resources.factories = {};
 			
 			// Clear existing assignments to force fresh assignment
 			delete Memory["resources"]["factories"]["assignments"];

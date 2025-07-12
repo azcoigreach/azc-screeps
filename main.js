@@ -51,6 +51,7 @@ require("definitions_console_commands");
 require("definitions_visual_elements");
 require("definitions_cpu_profiling");
 require("definitions_grafana_statistics");
+require("definitions_flag_manager");
 
 /* ***********************************************************
  *	MAIN LOOP
@@ -68,7 +69,7 @@ module.exports.loop = function () {
 	Control.clearDeadMemory();
 	Control.initMemory();
 
-	if (hasCPU()) {
+	if (hasCPU() && typeof FlagManager !== 'undefined') {
 		FlagManager.run();
 	}
 	Control.initLabs();
