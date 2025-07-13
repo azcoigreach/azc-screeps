@@ -456,8 +456,46 @@
 		const visual = new RoomVisual(room.name);
 		const sources = room.find(FIND_SOURCES);
 		_.each(sources, source => {
-			const miners = _.filter(Game.creeps, c => c.memory.role === 'miner' && c.memory.source === source.id).length;
-			const haulers = _.filter(Game.creeps, c => c.memory.role === 'hauler' && c.memory.source === source.id).length;
+			// Robust miner count: miner, burrower, worker (if mining), assigned via memory.source, memory.target, or room memory
+			const miners = _.filter(Game.creeps, c => (
+				(
+					(c.memory.role === 'miner' || c.memory.role === 'burrower' || c.memory.role === 'worker') &&
+					(
+						c.memory.source === source.id ||
+						c.memory.target === source.id ||
+						// For burrowers, check room memory assignment
+						(c.memory.role === 'burrower' && _.get(Memory, ["rooms", room.name, "sources", source.id, "burrower"]) === c.id)
+					)
+				)
+			)).length;
+
+			// Comprehensive hauler count: include all creeps that could service this source
+			// This includes explicit assignments, room-based assignments, and creeps currently working near the source
+			const haulers = _.filter(Game.creeps, c => {
+				// Check if creep has explicit assignment to this source
+				if (c.memory.source === source.id || c.memory.target === source.id) {
+					return true;
+				}
+				
+				// Check if creep is assigned to work in this room and could service this source
+				if (c.memory.room === room.name || c.memory.colony === room.name) {
+					// Include hauling roles that work in this room
+					if (['hauler', 'carrier', 'courier', 'worker'].includes(c.memory.role)) {
+						return true;
+					}
+				}
+				
+				// Check if creep is currently near this source (within 3 tiles)
+				if (c.room.name === room.name && c.pos.getRangeTo(source.pos) <= 3) {
+					// Include any creep that could haul (has carry capacity and is near source)
+					if (c.carryCapacity > 0 && ['hauler', 'carrier', 'courier', 'worker', 'miner'].includes(c.memory.role)) {
+						return true;
+					}
+				}
+				
+				return false;
+			}).length;
+
 			const regen = source.ticksToRegeneration;
 			const energy = source.energy;
 			// Determine alignment and position
