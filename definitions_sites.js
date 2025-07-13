@@ -2047,14 +2047,14 @@
 				}
 				let allFactories = Memory._cachedAllFactories;
 				
-				// DEBUG: Log factories found
-				console.log('[FACTORY DEBUG] Factories found:', allFactories.map(f => f.id));
+				// Removed: DEBUG: Log factories found
+				// console.log('[FACTORY DEBUG] Factories found:', allFactories.map(f => f.id));
 
 				if (allFactories.length == 0) return;
 
 				let targets = _.get(Memory, ["resources", "factories", "targets"]);
-				// DEBUG: Log targets
-				console.log('[FACTORY DEBUG] Targets:', targets);
+				// Removed: DEBUG: Log targets
+				// console.log('[FACTORY DEBUG] Targets:', targets);
 				if (targets == null || Object.keys(targets).length == 0) {
 					// Clear assignments if no targets
 					delete Memory["resources"]["factories"]["assignments"];
@@ -2098,8 +2098,8 @@
 					let commodity = target.commodity;
 					let current = commodityCounts[commodity] || 0;
 
-					// DEBUG: Log each target considered
-					console.log('[FACTORY DEBUG] Considering target:', commodity, 'Current:', current, 'Needed:', target.amount);
+					// Removed: DEBUG: Log each target considered
+					// console.log('[FACTORY DEBUG] Considering target:', commodity, 'Current:', current, 'Needed:', target.amount);
 
 					// If we've reached the target, skip this commodity
 					if (current >= target.amount) continue;
@@ -2120,7 +2120,8 @@
 					}
 
 					if (!hasComponents) {
-						console.log('[FACTORY DEBUG] Skipping', commodity, 'not enough components');
+						// Removed: DEBUG: Skipping not enough components
+						// console.log('[FACTORY DEBUG] Skipping', commodity, 'not enough components');
 						continue;
 					}
 
@@ -2172,8 +2173,8 @@
 						newAssignments[factory.id] = newAssignment;
 						assignedFactories.add(factory.id); // Mark this factory as assigned
 
-						// DEBUG: Log assignment
-						console.log('[FACTORY DEBUG] Assigned factory', factory.id, 'to', commodity);
+						// Removed: DEBUG: Log assignment
+						// console.log('[FACTORY DEBUG] Assigned factory', factory.id, 'to', commodity);
 
 						assignmentsChanged = true;
 						
@@ -2198,6 +2199,10 @@
 				// Clear factory pulse if assignments actually changed
 				if (assignmentsChanged) {
 					_.set(Memory, ["hive", "pulses", "factory", "active"], false);
+					// Show status table after assignments are renewed
+					if (typeof factories !== 'undefined' && factories.status) {
+						factories.status();
+					}
 				}
 			},
 
