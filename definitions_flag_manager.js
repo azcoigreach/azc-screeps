@@ -113,8 +113,6 @@ global.FlagManager = {
             if (Memory.rooms[flag.pos.roomName].blueprint) {
                 delete Memory.rooms[flag.pos.roomName].blueprint;
             }
-            console.log(`[FlagManager] Set layout in room memory: ${flag.pos.roomName} -> { origin: (${flag.pos.x},${flag.pos.y}), name: ${layoutName} }`);
-            console.log(`[FlagManager] Colonize flag processed: ${flag.name} at ${flag.pos.roomName} (${flag.pos.x},${flag.pos.y}) with layout '${layoutName}'`);
         }
     },
 

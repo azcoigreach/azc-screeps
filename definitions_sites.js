@@ -71,12 +71,26 @@
 
 				let storage = _.get(Game, ["rooms", rmColony, "storage"]);
 
-				if (visible && storage != null && storage.store["energy"] < Game["rooms"][rmColony].getCriticalEnergy()) {
-					_.set(Memory, ["rooms", rmColony, "survey", "energy_level"], CRITICAL);
-				} else if (visible && storage != null && storage.store["energy"] < Game["rooms"][rmColony].getLowEnergy()) {
-					_.set(Memory, ["rooms", rmColony, "survey", "energy_level"], LOW);
-				} else if (visible && storage != null && storage.store["energy"] > Game["rooms"][rmColony].getExcessEnergy()) {
-					_.set(Memory, ["rooms", rmColony, "survey", "energy_level"], EXCESS);
+				// NEW: Implement 15% storage rule for energy management
+				if (visible && storage != null) {
+					let currentEnergy = storage.store["energy"] || 0;
+					let roomLevel = Game["rooms"][rmColony].getLevel();
+					let targetEnergy = roomLevel * 50000; // Target storage amount
+					let storageTarget = Math.floor(targetEnergy * 0.15); // 15% for storage
+					let criticalEnergy = Game["rooms"][rmColony].getCriticalEnergy();
+					let lowEnergy = Game["rooms"][rmColony].getLowEnergy();
+					let excessEnergy = Game["rooms"][rmColony].getExcessEnergy();
+					
+					// Use the 15% rule for energy level determination
+					if (currentEnergy < criticalEnergy) {
+						_.set(Memory, ["rooms", rmColony, "survey", "energy_level"], CRITICAL);
+					} else if (currentEnergy < storageTarget * 0.8) {
+						_.set(Memory, ["rooms", rmColony, "survey", "energy_level"], LOW);
+					} else if (currentEnergy > storageTarget * 1.2) {
+						_.set(Memory, ["rooms", rmColony, "survey", "energy_level"], EXCESS);
+					} else {
+						_.set(Memory, ["rooms", rmColony, "survey", "energy_level"], NORMAL);
+					}
 				} else {
 					_.set(Memory, ["rooms", rmColony, "survey", "energy_level"], NORMAL);
 				}
@@ -733,14 +747,8 @@
 				if (popSetting)
 					popTarget = _.cloneDeep(popSetting);
 				else {
-					if (rmColony == rmHarvest)
-						popTarget = _.cloneDeep(Population_Mining[`S${Game.rooms[rmHarvest].findSources().length}`][Math.max(1, room_level)]);
-					else if (hasKeepers != true) {
-						popTarget = (is_visible && _.get(Game, ["rooms", rmHarvest]) != null)
-							? _.cloneDeep(Population_Mining[`R${Game.rooms[rmHarvest].findSources().length}`][Math.max(1, room_level)])
-							: _.cloneDeep(Population_Mining["R1"][Math.max(1, room_level)]);
-					} else if (hasKeepers == true)
-						popTarget = _.cloneDeep(Population_Mining["SK"]);
+					// NEW: Dynamic population calculation based on source energy optimization
+					popTarget = this.calculateDynamicMiningPopulation(rmColony, rmHarvest, room_level, hasKeepers);
 				}
 
 				// Remote mining: adjust soldier levels based on threat level
@@ -765,12 +773,8 @@
 					}
 				}
 
-				// Adjust carrier population amounts based on amount of energy sitting in storage
-				if (_.get(Memory, ["sites", "mining", rmHarvest, "store_percent"], 0) > 0.75) {
-					_.set(popTarget, ["carrier", "amount"], _.get(popTarget, ["carrier", "amount"], 0) + 2);
-				} else if (_.get(Memory, ["sites", "mining", rmHarvest, "store_percent"], 0) > 0.5) {
-					_.set(popTarget, ["carrier", "amount"], _.get(popTarget, ["carrier", "amount"], 0) + 1);
-				}
+				// NEW: Dynamic carrier adjustment based on energy management rules
+				this.adjustCarriersForEnergyManagement(rmColony, rmHarvest, popTarget);
 
 				// Tally population levels for level scaling
 				Control.populationTally(rmColony,
@@ -917,6 +921,175 @@
 								name: null, args: { role: "extractor", room: rmHarvest, colony: rmColony }
 							});
 						}
+					}
+				}
+			},
+
+			// NEW: Calculate dynamic mining population based on source energy optimization
+			calculateDynamicMiningPopulation: function(rmColony, rmHarvest, room_level, hasKeepers) {
+				let popTarget = {};
+				
+				if (rmColony == rmHarvest) {
+					// Local mining - use dynamic calculation
+					popTarget = this.calculateLocalMiningPopulation(rmHarvest, room_level);
+				} else if (hasKeepers == true) {
+					// Source keeper rooms - use existing SK population
+					popTarget = _.cloneDeep(Population_Mining["SK"]);
+				} else {
+					// Remote mining - use dynamic calculation
+					popTarget = this.calculateRemoteMiningPopulation(rmHarvest, room_level);
+				}
+				
+				return popTarget;
+			},
+
+			// NEW: Calculate optimal local mining population
+			calculateLocalMiningPopulation: function(rmHarvest, room_level) {
+				let sources = Game.rooms[rmHarvest].findSources();
+				let sourceCount = sources.length;
+				
+				// Calculate total energy available from sources
+				let totalSourceEnergy = 0;
+				_.each(sources, source => {
+					totalSourceEnergy += source.energy;
+				});
+				
+				// Calculate mining rate needed to clear all energy before regeneration (300 ticks)
+				let targetMiningRate = totalSourceEnergy / 300; // energy per tick needed
+				
+				// Calculate work parts needed (each work part mines 1 energy per tick)
+				let workPartsNeeded = Math.ceil(targetMiningRate);
+				
+				// Calculate burrowers needed (each burrower has 1 work part at level 1, more at higher levels)
+				let burrowerLevel = Math.max(1, room_level);
+				let workPartsPerBurrower = burrowerLevel; // Simplified - each level adds 1 work part
+				let burrowersNeeded = Math.ceil(workPartsNeeded / workPartsPerBurrower);
+				
+				// Calculate carriers needed based on energy flow
+				let energyPerTick = workPartsNeeded;
+				let carrierCapacity = 50 * room_level; // Simplified carrier capacity
+				let tripsPerCarrier = carrierCapacity / energyPerTick;
+				let carriersNeeded = Math.ceil(energyPerTick / tripsPerCarrier);
+				
+				// Ensure minimum population
+				burrowersNeeded = Math.max(1, burrowersNeeded);
+				carriersNeeded = Math.max(2, carriersNeeded);
+				
+				return {
+					burrower: { 
+						level: burrowerLevel, 
+						amount: burrowersNeeded, 
+						body: "burrower_at",
+						scale: true 
+					},
+					carrier: { 
+						level: room_level, 
+						amount: carriersNeeded, 
+						body: "carrier_at",
+						scale: true 
+					}
+				};
+			},
+
+			// NEW: Calculate optimal remote mining population
+			calculateRemoteMiningPopulation: function(rmHarvest, room_level) {
+				let sources = Game.rooms[rmHarvest].findSources();
+				let sourceCount = sources.length;
+				
+				// Similar calculation but adjusted for remote mining
+				let totalSourceEnergy = 0;
+				_.each(sources, source => {
+					totalSourceEnergy += source.energy;
+				});
+				
+				let targetMiningRate = totalSourceEnergy / 300;
+				let workPartsNeeded = Math.ceil(targetMiningRate);
+				
+				let burrowerLevel = Math.max(1, room_level);
+				let workPartsPerBurrower = burrowerLevel;
+				let burrowersNeeded = Math.ceil(workPartsNeeded / workPartsPerBurrower);
+				
+				// Remote mining needs more carriers due to travel time
+				let energyPerTick = workPartsNeeded;
+				let carrierCapacity = 50 * room_level;
+				let travelTime = 50; // Estimated travel time
+				let tripsPerCarrier = carrierCapacity / (energyPerTick * travelTime);
+				let carriersNeeded = Math.ceil(energyPerTick / tripsPerCarrier);
+				
+				// Ensure minimum population
+				burrowersNeeded = Math.max(1, burrowersNeeded);
+				carriersNeeded = Math.max(2, carriersNeeded);
+				
+				return {
+					burrower: { 
+						level: burrowerLevel, 
+						amount: burrowersNeeded, 
+						body: "burrower_at",
+						scale: true 
+					},
+					carrier: { 
+						level: room_level, 
+						amount: carriersNeeded, 
+						body: "carrier_at",
+						scale: true 
+					},
+					multirole: { 
+						level: room_level, 
+						amount: 1, 
+						body: "worker_at",
+						scale: true 
+					},
+					reserver: { 
+						level: room_level, 
+						amount: 2, 
+						body: "reserver_at",
+						scale: true 
+					}
+				};
+			},
+
+			// NEW: Adjust carriers based on energy management rules
+			adjustCarriersForEnergyManagement: function(rmColony, rmHarvest, popTarget) {
+				let storage = Game.rooms[rmColony].storage;
+				let hasStorage = storage != null;
+				
+				if (hasStorage) {
+					// With storage: store 15% of energy, use 85% for building/upgrading
+					let currentEnergy = storage.store["energy"] || 0;
+					let roomLevel = Game.rooms[rmColony].getLevel();
+					let targetEnergy = roomLevel * 50000; // Target storage amount
+					let storageTarget = Math.floor(targetEnergy * 0.15); // 15% for storage
+					
+					// If we have too much energy in storage, reduce carriers
+					if (currentEnergy > storageTarget * 1.2) {
+						let currentCarriers = _.get(popTarget, ["carrier", "amount"], 0);
+						_.set(popTarget, ["carrier", "amount"], Math.max(1, currentCarriers - 1));
+					}
+					// If we have too little energy in storage, increase carriers
+					else if (currentEnergy < storageTarget * 0.8) {
+						let currentCarriers = _.get(popTarget, ["carrier", "amount"], 0);
+						_.set(popTarget, ["carrier", "amount"], currentCarriers + 1);
+					}
+				} else {
+					// Without storage: use 100% for building/upgrading
+					// Ensure we have enough carriers to keep spawns and extensions full
+					let spawns = Game.rooms[rmColony].find(FIND_MY_SPAWNS);
+					let extensions = Game.rooms[rmColony].find(FIND_MY_STRUCTURES, {
+						filter: s => s.structureType == STRUCTURE_EXTENSION
+					});
+					
+					let totalEnergyCapacity = 0;
+					_.each(spawns, spawn => {
+						totalEnergyCapacity += spawn.energyCapacity - spawn.energy;
+					});
+					_.each(extensions, ext => {
+						totalEnergyCapacity += ext.energyCapacity - ext.energy;
+					});
+					
+					// Adjust carriers based on energy needs
+					if (totalEnergyCapacity > 1000) {
+						let currentCarriers = _.get(popTarget, ["carrier", "amount"], 0);
+						_.set(popTarget, ["carrier", "amount"], currentCarriers + 1);
 					}
 				}
 			},

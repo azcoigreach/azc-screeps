@@ -2402,6 +2402,7 @@
 		};
 
 		help_empire.push("empire.highway_status()");
+		help_empire.push("empire.mining_optimization()");
 		empire.highway_status = function () {
 			let out = [];
 			let mining = _.get(Memory, ["sites", "highway_mining"], {});
@@ -2421,6 +2422,64 @@
 				);
 			}
 			if (out.length === 0) return "No highway mining operations active.";
+			return out.join("\n");
+		};
+
+		empire.mining_optimization = function () {
+			let out = [];
+			out.push("=== DYNAMIC MINING OPTIMIZATION STATUS ===");
+			
+			// Check all mining sites
+			let miningSites = _.get(Memory, ["sites", "mining"], {});
+			for (let roomName in miningSites) {
+				let site = miningSites[roomName];
+				let room = Game.rooms[roomName];
+				if (!room) continue;
+				
+				let sources = room.findSources();
+				let totalEnergy = 0;
+				_.each(sources, source => {
+					totalEnergy += source.energy;
+				});
+				
+				let targetMiningRate = totalEnergy / 300; // energy per tick needed
+				let workPartsNeeded = Math.ceil(targetMiningRate);
+				
+				let creeps = _.filter(Game.creeps, c => c.memory.room === roomName);
+				let burrowers = _.filter(creeps, c => c.memory.role === "burrower");
+				let carriers = _.filter(creeps, c => c.memory.role === "carrier");
+				
+				let totalWorkParts = 0;
+				_.each(burrowers, burrower => {
+					totalWorkParts += burrower.getActiveBodyparts(WORK);
+				});
+				
+				let efficiency = totalWorkParts > 0 ? (workPartsNeeded / totalWorkParts * 100).toFixed(1) : "0";
+				let status = totalWorkParts >= workPartsNeeded ? "OPTIMAL" : "UNDERMINED";
+				
+				out.push(`[${roomName}] Sources: ${sources.length} | Energy: ${totalEnergy} | Target Rate: ${targetMiningRate.toFixed(1)}/tick`);
+				out.push(`  Work Parts: ${totalWorkParts}/${workPartsNeeded} (${efficiency}%) | Status: ${status}`);
+				out.push(`  Burrowers: ${burrowers.length} | Carriers: ${carriers.length}`);
+			}
+			
+			// Check energy management
+			let colonies = _.filter(Game.rooms, r => r.controller && r.controller.my);
+			out.push("\n=== ENERGY MANAGEMENT STATUS ===");
+			_.each(colonies, colony => {
+				let storage = colony.storage;
+				if (storage) {
+					let currentEnergy = storage.store["energy"] || 0;
+					let roomLevel = colony.getLevel();
+					let targetEnergy = roomLevel * 50000;
+					let storageTarget = Math.floor(targetEnergy * 0.15);
+					let percentage = (currentEnergy / storageTarget * 100).toFixed(1);
+					
+					out.push(`[${colony.name}] Storage: ${currentEnergy}/${storageTarget} (${percentage}%) | Level: ${roomLevel}`);
+				} else {
+					out.push(`[${colony.name}] No storage - using 100% energy for building/upgrading`);
+				}
+			});
+			
 			return out.join("\n");
 		};
 

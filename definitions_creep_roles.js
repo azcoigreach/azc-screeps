@@ -105,22 +105,42 @@
 				if (creep.room.find(FIND_CONSTRUCTION_SITES, { filter: s => s.my }).length > 0) {
 					creep.memory.task = creep.memory.task || creep.getTask_Build();
 				} else {
-					// Otherwise, upgrade
-					let roomLevel = creep.room.controller ? creep.room.controller.level : 0;
-					let hasUpgraders = _.filter(Game.creeps, c => 
-						c.memory.role == "upgrader" && c.memory.room == creep.room.name).length > 0;
-					let isCriticalDowngrade = _.get(Memory, ["rooms", creep.room.name, "survey", "downgrade_critical"], false);
-					let shouldUpgrade = roomLevel < 6 || (isCriticalDowngrade && !hasUpgraders);
-					if (shouldUpgrade) {
-						creep.memory.task = creep.memory.task || creep.getTask_Upgrade(true);
-					}
+					// Otherwise, always upgrade the controller
+					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
 				}
 
+				// NEW: Ensure no idle creeps - always have productive tasks
 				creep.memory.task = creep.memory.task || creep.getTask_Sign();
 				creep.memory.task = creep.memory.task || creep.getTask_Repair(true);
 				creep.memory.task = creep.memory.task || creep.getTask_Repair(false);
 				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral");
-				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+				
+				// If no other tasks available, help with energy management
+				if (!creep.memory.task) {
+					let storage = creep.room.storage;
+					if (storage && storage.store["energy"] > 0) {
+						// Help move energy from storage to spawns/extensions if needed
+						let spawns = creep.room.find(FIND_MY_SPAWNS);
+						let extensions = creep.room.find(FIND_MY_STRUCTURES, {
+							filter: s => s.structureType == STRUCTURE_EXTENSION
+						});
+						
+						let needsEnergy = false;
+						_.each(spawns, spawn => {
+							if (spawn.energy < spawn.energyCapacity) needsEnergy = true;
+						});
+						_.each(extensions, ext => {
+							if (ext.energy < ext.energyCapacity) needsEnergy = true;
+						});
+						
+						if (needsEnergy) {
+							creep.memory.task = creep.getTask_Withdraw_Storage("energy", false);
+						}
+					}
+				}
+				
+				// Final fallback - wait but be ready to work
+				creep.memory.task = creep.memory.task || creep.getTask_Wait(5);
 
 				creep.runTask(creep);
 				return;
@@ -179,7 +199,21 @@
 					if (creep.hasPart("work") > 0)
 						creep.memory.task = creep.memory.task || creep.getTask_Mine();
 					creep.memory.task = creep.memory.task || creep.getTask_Pickup("mineral");
-					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+					
+					// NEW: Ensure mining creeps are always productive
+					if (!creep.memory.task) {
+						// If no mining tasks available, help with energy management
+						let storage = creep.room.storage;
+						if (storage && storage.store["energy"] > 0) {
+							creep.memory.task = creep.getTask_Withdraw_Storage("energy", false);
+						} else {
+							// Help pick up any dropped energy
+							creep.memory.task = creep.getTask_Pickup("energy");
+						}
+					}
+					
+					// Final fallback - wait but be ready to work
+					creep.memory.task = creep.memory.task || creep.getTask_Wait(5);
 				}
 
 				creep.runTask(creep);
