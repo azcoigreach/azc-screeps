@@ -16,6 +16,13 @@
 	setPulse: function (key, minTicks, maxTicks) {
 		let range = maxTicks - minTicks;
 		let lastTick = _.get(Memory, ["hive", "pulses", key, "last_tick"]);
+		let manuallyActive = _.get(Memory, ["hive", "pulses", key, "active"], false);
+
+		if (manuallyActive) {
+			// If manually set to active, leave it active for this tick, then clear it
+			_.set(Memory, ["hive", "pulses", key, "active"], false);
+			return;
+		}
 
 		if (lastTick == null
 			|| Game.time == lastTick
@@ -89,6 +96,7 @@
 		this.setPulse("long", 99, 400);
 		this.setPulse("spawn", 29, 60);
 		this.setPulse("lab", 1999, 2000);
+		this.setPulse("factory", 199, 400); // Factory assignments every 199-400 ticks
 		this.setPulse("blueprint", 199, 1000);
 
 		if (_.get(Memory, ["rooms"]) == null) _.set(Memory, ["rooms"], new Object());

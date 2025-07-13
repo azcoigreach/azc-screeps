@@ -50,7 +50,7 @@
     };
     
     isPulse_Factory = function () {
-        return _.get(Memory, ["hive", "pulses", "factory", "active"], false);
+        return _.get(Memory, ["hive", "pulses", "factory", "active"], true);
     };
     
     isPulse_Blueprint = function () {
