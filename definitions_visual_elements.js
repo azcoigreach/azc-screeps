@@ -27,22 +27,15 @@
 			this.Show_Source_Overlays(room);
 		});
 
-		// New room visualization features
-		if (_.get(Memory, ["hive", "visuals", "show_room_status"], false) == true) {
-			this.Show_Room_Status();
-		}
-
-		if (_.get(Memory, ["hive", "visuals", "show_room_energy"], false) == true) {
-			this.Show_Room_Energy();
-		}
-
+		// Draw population and defense info (defense is now only in the pop panel)
 		if (_.get(Memory, ["hive", "visuals", "show_room_population"], false) == true) {
 			this.Show_Room_Population();
 		}
 
-		if (_.get(Memory, ["hive", "visuals", "show_room_defense"], false) == true) {
-			this.Show_Room_Defense();
-		}
+		// Removed call to Show_Room_Defense to prevent duplicate defense text
+		// if (_.get(Memory, ["hive", "visuals", "show_room_defense"], false) == true) {
+		// 	this.Show_Room_Defense();
+		// }
 
 		if (_.get(Memory, ["hive", "visuals", "show_room_construction"], false) == true) {
 			this.Show_Room_Construction();
@@ -149,30 +142,42 @@
 	},
 
 	Show_Room_Population: function () {
-		// Display current vs target population counts
+		// Display defense state above population, then pop count, then list of creeps by role, all on the left side under the tick
 		_.each(_.filter(Game.rooms, r => r.controller && r.controller.my), room => {
 			const visual = new RoomVisual(room.name);
 			const population = this.Get_Room_Population(room);
-			
-			// Display population info at top of room
-			visual.text(`Pop: ${population.current}/${population.target}`, 25, 4, {
+			const defense = this.Get_Room_Defense(room);
+			let y = 2.0; // Start just below the tick
+			const x = 1.0; // Left side
+			// Defense state
+			visual.text(`Defense: ${defense.status}`, x, y, {
+				font: 0.6,
+				color: defense.status === 'Safe' ? '#00ff00' : defense.status === 'Warning' ? '#ffff00' : '#ff0000',
+				align: 'left',
+				stroke: '#000',
+				strokeWidth: 0.10
+			});
+			y += 0.8;
+			// Population count
+			visual.text(`Pop: ${population.current}/${population.target}`, x, y, {
 				font: 0.6,
 				color: population.current >= population.target ? '#00ff00' : '#ffff00',
-				stroke: '#000000',
-				strokeWidth: 0.1
+				align: 'left',
+				stroke: '#000',
+				strokeWidth: 0.10
 			});
-			
-			// Show population by role
-			let yOffset = 6;
+			y += 0.7;
+			// List creeps by role
 			_.each(population.roles, (count, role) => {
 				if (count > 0) {
-					visual.text(`${role}: ${count}`, 25, yOffset, {
-						font: 0.4,
+					visual.text(`${role}: ${count}`, x, y, {
+						font: 0.5,
 						color: '#ffffff',
-						stroke: '#000000',
-						strokeWidth: 0.05
+						align: 'left',
+						stroke: '#000',
+						strokeWidth: 0.08
 					});
-					yOffset += 0.6;
+					y += 0.55;
 				}
 			});
 		});
@@ -317,30 +322,30 @@
 
 	Show_Status_Bar: function(room) {
 		const visual = new RoomVisual(room.name);
-		const barY = 0.3; // Move bar closer to top
-		const cellW = 3.2; // Make cells narrower
-		const cellH = 0.9; // Make cells shorter
+		const barY = 0.3;
+		// Define custom cell widths for each stat to reclaim space and add space between labs and factory
+		const cellWidths = [3.2, 3.2, 3.2, 4.2, 3.2, 2.2, 2.2, 2.2, 3.2, 3.2, 2.2, 2.2, 5.5, 4.2];
+		const cellH = 0.9;
 		let x = 0.5;
-		const font = 0.55; // Smaller font
+		const font = 0.55;
 		const stats = this.Get_Status_Bar_Stats(room);
-		// Draw a semi-transparent background just behind the bar
-		visual.rect(0.3, barY - 0.2, cellW * stats.length + 0.4, cellH + 0.4, {fill: '#222', opacity: 0.45, stroke: undefined});
-		_.each(stats, stat => {
-			// Remove per-cell backgrounds for a cleaner look
-			visual.text(stat.icon + ' ' + stat.value, x + cellW/2, barY + 0.65, {
+		visual.rect(0.3, barY - 0.2, cellWidths.reduce((a, b) => a + b, 0) + 0.4, cellH + 0.4, {fill: '#222', opacity: 0.45, stroke: undefined});
+		for (let i = 0; i < stats.length; i++) {
+			const stat = stats[i];
+			visual.text(stat.icon + ' ' + stat.value, x + cellWidths[i]/2, barY + 0.65, {
 				font: font,
 				color: stat.color,
 				align: 'center',
 				stroke: '#000',
 				strokeWidth: 0.10
 			});
-			x += cellW;
-		});
+			x += cellWidths[i];
+		}
 	},
 
 	Get_Status_Bar_Stats: function(room) {
 		// Gather stats for the status bar, using icons and color coding
-		const cpu = Game.cpu.getUsed().toFixed(1);
+		const cpu = _.get(Memory, ['stats', 'cpu', 'used'], Game.cpu.getUsed()).toFixed(1);
 		const bucket = Game.cpu.bucket;
 		const avg = (Game.cpu.getUsed() / Game.cpu.limit * 100).toFixed(1);
 		const tick = Game.time;
@@ -353,7 +358,31 @@
 		const sources = room.find(FIND_SOURCES).length;
 		const labs = room.find(FIND_MY_STRUCTURES, {filter: s => s.structureType === STRUCTURE_LAB}).length;
 		const factory = room.find(FIND_MY_STRUCTURES, {filter: s => s.structureType === STRUCTURE_FACTORY}).length;
-		const ramparts = room.find(FIND_MY_STRUCTURES, {filter: s => s.structureType === STRUCTURE_RAMPART}).length;
+		// Calculate rampart/wall avg and setpoint
+		const wallsAndRamparts = room.find(FIND_STRUCTURES, {filter: s => s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL});
+		let avgHits = 0, setpoint = 0;
+		if (wallsAndRamparts.length > 0) {
+			avgHits = Math.round(_.sum(wallsAndRamparts, s => s.hits) / wallsAndRamparts.length);
+			setpoint = Math.round(_.sum(wallsAndRamparts, s => {
+				return _.get(Memory, ['rooms', room.name, 'structures', `${s.structureType}-${s.id}`, 'targetHits'], 0);
+			}) / wallsAndRamparts.length);
+			// If setpoint is 0, use avgHits or a default (e.g., 1_000_000)
+			if (setpoint === 0) setpoint = avgHits > 0 ? avgHits : 1000000;
+		}
+		const hitsFormat = v => v >= 1000000 ? (v/1000000).toFixed(1) + 'M' : v >= 1000 ? (v/1000).toFixed(0) + 'k' : v;
+		const rampartStat = wallsAndRamparts.length > 0 ? `${hitsFormat(avgHits)}/${hitsFormat(setpoint)}` : '0/0';
+		// Factory assignment name or --- (use Memory.resources.factories.assignments)
+		let factoryAssignment = '---';
+		const factories = room.find(FIND_MY_STRUCTURES, {filter: s => s.structureType === STRUCTURE_FACTORY});
+		if (factories.length > 0) {
+			const assignments = _.get(Memory, ['resources', 'factories', 'assignments'], {});
+			const assignment = assignments[factories[0].id];
+			if (assignment && assignment.commodity) {
+				factoryAssignment = assignment.commodity;
+			}
+		}
+		// Remove truncation for factory assignment name
+		const factoryAssignmentDisplay = factoryAssignment;
 		return [
 			{icon: '⏱️', value: tick, color: '#fff', bg: '#222'},
 			{icon: '🧠', value: cpu, color: '#fff', bg: '#444'},
@@ -361,14 +390,14 @@
 			{icon: '🏠', value: room.name, color: '#fff', bg: '#222'},
 			{icon: '🏅', value: `RCL${rcl}`, color: '#fff', bg: '#222'},
 			{icon: '⚡', value: `${rclProg}%`, color: '#0ff', bg: '#111'},
-			{icon: '🛠️', value: spawns, color: '#fff', bg: '#333'},
-			{icon: '👥', value: creeps, color: '#fff', bg: '#333'},
+			{icon: '🥚', value: spawns, color: '#fff', bg: '#333'}, // egg for spawns
+			{icon: '🤖', value: creeps, color: '#fff', bg: '#333'},
 			{icon: '🔋', value: storage, color: '#ff0', bg: '#222'},
 			{icon: '📦', value: terminal, color: '#0ff', bg: '#222'},
-			{icon: '🌾', value: sources, color: '#0f0', bg: '#222'},
+			{icon: '💡', value: sources, color: '#0f0', bg: '#222'}, // light bulb for sources
 			{icon: '🧪', value: labs, color: '#fff', bg: '#222'},
-			{icon: '🏭', value: factory, color: '#fff', bg: '#222'},
-			{icon: '🛡️', value: ramparts, color: '#fff', bg: '#222'},
+			{icon: '🏭', value: factoryAssignmentDisplay, color: '#fff', bg: '#222'},
+			{icon: '🛡️', value: rampartStat, color: '#fff', bg: '#222'},
 		];
 	},
 
@@ -378,12 +407,48 @@
 		const ctrl = room.controller;
 		const upgraders = _.filter(Game.creeps, c => c.memory.role === 'upgrader' && c.memory.room === room.name).length;
 		const prog = ((ctrl.progress / ctrl.progressTotal) * 100).toFixed(0);
-		visual.text(`⚡${upgraders} ${prog}%`, ctrl.pos.x + 2, ctrl.pos.y, {
-			font: 0.6,
-			color: '#fff',
-			align: 'left',
+		const ticks = ctrl.ticksToDowngrade;
+		// Determine alignment and position
+		let x, align;
+		if (ctrl.pos.x > 45) {
+			x = ctrl.pos.x - 1.2;
+			align = 'right';
+		} else {
+			x = ctrl.pos.x + 1.2;
+			align = 'left';
+		}
+		let y = ctrl.pos.y - 0.7;
+		const lineH = 0.55;
+		// Draw background rectangle BEFORE any text
+		const gutterY = 0.18;
+		const bgW = 3.2 * 0.90; // Tighter width for 3 lines
+		const bgH = lineH * 3 + gutterY * 2;
+		const bgX = align === 'left' ? x - 0.1 : x - bgW + 0.1;
+		const bgY = ctrl.pos.y - 1.1 - gutterY;
+		visual.rect(bgX, bgY, bgW, bgH, {fill: '#222', opacity: 0.45, stroke: undefined});
+		// Now draw the text
+		visual.text(`🤖 ${upgraders}`, x, y, {
+			font: 0.5,
+			color: '#bfff00',
+			align: align,
 			stroke: '#000',
-			strokeWidth: 0.12
+			strokeWidth: 0.08
+		});
+		y += lineH;
+		visual.text(`⚡ ${prog}%`, x, y, {
+			font: 0.5,
+			color: '#00bfff',
+			align: align,
+			stroke: '#000',
+			strokeWidth: 0.08
+		});
+		y += lineH;
+		visual.text(`⏳ ${ticks}`, x, y, {
+			font: 0.5,
+			color: '#ffb300',
+			align: align,
+			stroke: '#000',
+			strokeWidth: 0.08
 		});
 	},
 
@@ -395,12 +460,57 @@
 			const haulers = _.filter(Game.creeps, c => c.memory.role === 'hauler' && c.memory.source === source.id).length;
 			const regen = source.ticksToRegeneration;
 			const energy = source.energy;
-			visual.text(`🔋${energy} ⛏️${miners} 🚚${haulers} ♻️${regen}`, source.pos.x + 2, source.pos.y, {
+			// Determine alignment and position
+			let x, align;
+			if (source.pos.x > 45) {
+				x = source.pos.x - 1.2;
+				align = 'right';
+			} else {
+				x = source.pos.x + 1.2;
+				align = 'left';
+			}
+			let y = source.pos.y - 0.7;
+			const lineH = 0.55;
+			// Draw background rectangle BEFORE any text
+			const gutterY = 0.18;
+			const bgW = 3.2 * 0.75; // 70% of 3.2
+			const bgH = lineH * 4 + gutterY * 2;
+			const bgX = align === 'left' ? x - 0.2 : x - bgW + 0.2;
+			const bgY = source.pos.y - 1.2 - gutterY;
+			visual.rect(bgX, bgY, bgW, bgH, {fill: '#222', opacity: 0.45, stroke: undefined});
+			// Now draw the text
+			let displayRegen = (typeof regen === 'number' && regen !== undefined) ? regen : '---';
+			let yText = source.pos.y - 0.7;
+			visual.text(`🔋 ${energy}`, x, yText, {
 				font: 0.5,
-				color: '#fff',
-				align: 'left',
+				color: '#bfff00',
+				align: align,
 				stroke: '#000',
-				strokeWidth: 0.10
+				strokeWidth: 0.08
+			});
+			yText += lineH;
+			visual.text(`⛏️ ${miners}`, x, yText, {
+				font: 0.5,
+				color: '#ffbfbf',
+				align: align,
+				stroke: '#000',
+				strokeWidth: 0.08
+			});
+			yText += lineH;
+			visual.text(`🚚 ${haulers}`, x, yText, {
+				font: 0.5,
+				color: '#ffb300',
+				align: align,
+				stroke: '#000',
+				strokeWidth: 0.08
+			});
+			yText += lineH;
+			visual.text(`♻️ ${displayRegen}`, x, yText, {
+				font: 0.5,
+				color: '#00ff99',
+				align: align,
+				stroke: '#000',
+				strokeWidth: 0.08
 			});
 		});
 	},
