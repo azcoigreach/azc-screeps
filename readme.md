@@ -336,3 +336,107 @@ Current optimization focuses on:
 - **Market operations** (frequent execution)
 - **Defense systems** (critical but expensive)
 - **Resource management** (continuous operation)
+
+# AZC Screeps Bot
+
+A comprehensive Screeps bot with advanced features including remote mining, factory management, market integration, and more.
+
+## Features
+
+- **Remote Mining**: Automated mining operations in remote rooms
+- **Factory Management**: Commodity production with priority-based assignments
+- **Market Integration**: Automatic resource trading and emergency energy buying
+- **Defense Systems**: Automated tower defense and wall management
+- **Visualization**: Real-time room status displays and overlays
+- **CPU Profiling**: Built-in performance monitoring
+- **Statistics**: Grafana integration for detailed metrics
+
+## Visualization Performance
+
+The bot includes comprehensive room visualizations that can be CPU-intensive. To manage performance, the following optimizations have been implemented:
+
+### Performance Controls
+
+Use these console commands to control visualization performance:
+
+- `visuals.set_performance(ticks)` - Set update interval (default: 5 ticks)
+- `visuals.get_performance()` - Show current performance settings
+- `visuals.clear_cache()` - Clear visual caches
+
+### Optimization Features
+
+1. **Caching System**: Expensive calculations are cached for multiple ticks
+2. **Configurable Update Intervals**: Visuals update every N ticks instead of every tick
+3. **Optimized Creep Counting**: Creep counts are calculated once per tick and cached
+4. **Reduced Memory Lookups**: Deep memory access is minimized
+
+### Performance Recommendations
+
+- **High CPU Usage (>80%)**: Set interval to 10-15 ticks
+- **Medium CPU Usage (60-80%)**: Set interval to 5-10 ticks  
+- **Low CPU Usage (<60%)**: Default 5 ticks is fine
+
+### Example Usage
+
+```javascript
+// Reduce CPU usage by updating visuals every 10 ticks
+visuals.set_performance(10)
+
+// Check current performance
+visuals.get_performance()
+
+// Clear cache if visuals seem stale
+visuals.clear_cache()
+```
+
+## Installation
+
+1. Copy all files to your Screeps scripts directory
+2. The bot will automatically initialize on the next tick
+3. Use `help()` in the console to see available commands
+
+## Console Commands
+
+### Main Commands
+- `help()` - Show all available commands
+- `help(visuals)` - Show visualization commands
+- `help(factories)` - Show factory management commands
+- `help(resources)` - Show resource management commands
+
+### Performance Monitoring
+- `profiler.run(cycles)` - Start CPU profiling
+- `profiler.analyze()` - Analyze CPU usage
+- `visuals.get_performance()` - Check visual performance
+
+### Factory Management
+- `factories.set_production(commodity, amount, priority)` - Set production target
+- `factories.status()` - Show factory status
+- `factories.clear_all()` - Clear all production targets
+
+### Resource Management
+- `resources.market_status()` - Show market and energy status
+- `resources.set_energy_threshold(amount)` - Set emergency energy threshold
+- `resources.credits()` - Show market credits
+
+## Configuration
+
+The bot uses Memory-based configuration. Key settings:
+
+- `Memory.hive.visuals.update_interval` - Visual update frequency
+- `Memory.resources.factories.targets` - Factory production targets
+- `Memory.resources.market_energy_threshold` - Emergency energy threshold
+
+## Performance Tips
+
+1. **Monitor CPU Usage**: Use `profiler.analyze()` regularly
+2. **Adjust Visual Frequency**: Increase update intervals if CPU is high
+3. **Limit Remote Operations**: Reduce remote mining if performance suffers
+4. **Clear Caches**: Use `visuals.clear_cache()` if visuals become stale
+
+## Support
+
+For issues and feature requests, please use the GitHub repository issues page.
+
+## License
+
+This project is licensed under the MIT License - see the license.md file for details.
