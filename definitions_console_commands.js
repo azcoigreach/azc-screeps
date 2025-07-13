@@ -838,6 +838,36 @@
 		help_factories.push("factories.enable_logs()");
 		help_factories.push(" - Re-enables factory console logging with default intervals");
 
+		help_factories.push("factories.pulse_status()");
+		help_factories.push(" - Shows current factory pulse status and timing");
+
+		factories.pulse_status = function () {
+			let factoryPulse = _.get(Memory, ["hive", "pulses", "factory"]);
+			if (!factoryPulse) {
+				return `<font color=\"#FFA500\">[Factory]</font> Factory pulse not initialized.`;
+			}
+			
+			let currentTick = Game.time;
+			let lastTick = factoryPulse.last_tick || 0;
+			let active = factoryPulse.active || false;
+			let ticksSinceLast = currentTick - lastTick;
+			
+			let status = active ? "Active" : "Inactive";
+			let statusColor = active ? "green" : "orange";
+			
+			return `<font color=\"#FFA500\">[Factory]</font> Factory pulse status: <font color=\"${statusColor}\">${status}</font><br>` +
+				   `Last tick: ${lastTick} (${ticksSinceLast} ticks ago)<br>` +
+				   `Current tick: ${currentTick}`;
+		};
+
+		help_factories.push("factories.force_pulse()");
+		help_factories.push(" - Manually triggers factory pulse for immediate assignment renewal");
+
+		factories.force_pulse = function () {
+			delete Memory["hive"]["pulses"]["factory"];
+			return `<font color=\"#FFA500\">[Factory]</font> Factory pulse manually triggered. Assignments will be renewed next tick.`;
+		};
+
 		factories.enable_logs = function () {
 			// Store default log intervals in Memory
 			if (!Memory.factories) {
@@ -970,26 +1000,10 @@
 
 		factories.renew_assignments = function () {
 			console.log(`<font color=\"#FFA500\">[Factory]</font> Renewing factory assignments...`);
-			
 			// Clear existing assignments to force fresh assignment
 			delete Memory["resources"]["factories"]["assignments"];
-			
-			// Trigger factory pulse to reassign factories based on priority
-			// Use the first room with a controller as the processing room
-			let processingRoom = null;
-			for (let roomName in Game.rooms) {
-				let room = Game.rooms[roomName];
-				if (room.controller && room.controller.my) {
-					processingRoom = roomName;
-					break;
-				}
-			}
-			
-			_.set(Memory, ["hive", "pulses", "factory"], { 
-				active: true,
-				processing_room: processingRoom
-			});
-			
+			// Trigger factory pulse to reassign factories based on priority (lab style)
+			delete Memory["hive"]["pulses"]["factory"];
 			return `<font color=\"#FFA500\">[Factory]</font> Factory assignments will be renewed next tick based on current priorities.`;
 		};
 

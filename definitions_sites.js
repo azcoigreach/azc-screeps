@@ -2014,8 +2014,24 @@
 		
 			assignFactories: function (rmColony) {
 				// This function is called per room, but we need to do global assignment
-				// Only run the global assignment once per pulse
-				if (rmColony !== _.get(Memory, ["hive", "pulses", "factory", "processing_room"])) {
+				// Only run the global assignment once per pulse using the first room
+				let factoryPulse = _.get(Memory, ["hive", "pulses", "factory"]);
+				if (!factoryPulse || !factoryPulse.active) {
+					return;
+				}
+				
+				// Use the first controlled room as the processing room for this pulse
+				let processingRoom = null;
+				for (let roomName in Game.rooms) {
+					let room = Game.rooms[roomName];
+					if (room.controller && room.controller.my) {
+						processingRoom = roomName;
+						break;
+					}
+				}
+				
+				// Only run assignment in the processing room
+				if (rmColony !== processingRoom) {
 					return;
 				}
 
@@ -2031,9 +2047,14 @@
 				}
 				let allFactories = Memory._cachedAllFactories;
 				
+				// DEBUG: Log factories found
+				console.log('[FACTORY DEBUG] Factories found:', allFactories.map(f => f.id));
+
 				if (allFactories.length == 0) return;
 
 				let targets = _.get(Memory, ["resources", "factories", "targets"]);
+				// DEBUG: Log targets
+				console.log('[FACTORY DEBUG] Targets:', targets);
 				if (targets == null || Object.keys(targets).length == 0) {
 					// Clear assignments if no targets
 					delete Memory["resources"]["factories"]["assignments"];
@@ -2077,6 +2098,9 @@
 					let commodity = target.commodity;
 					let current = commodityCounts[commodity] || 0;
 
+					// DEBUG: Log each target considered
+					console.log('[FACTORY DEBUG] Considering target:', commodity, 'Current:', current, 'Needed:', target.amount);
+
 					// If we've reached the target, skip this commodity
 					if (current >= target.amount) continue;
 
@@ -2095,7 +2119,10 @@
 						}
 					}
 
-					if (!hasComponents) continue;
+					if (!hasComponents) {
+						console.log('[FACTORY DEBUG] Skipping', commodity, 'not enough components');
+						continue;
+					}
 
 					// Add this commodity to our production list
 					commoditiesToProduce.push({
@@ -2111,8 +2138,6 @@
 				let totalFactories = allFactories.length;
 				let consecutiveFailures = 0; // Track consecutive failures to prevent infinite loops
 
-				// Debug logging removed for CPU optimization
-
 				while (factoriesAssigned < totalFactories && commoditiesToProduce.length > 0 && consecutiveFailures < commoditiesToProduce.length) {
 					let commodityData = commoditiesToProduce[commodityIndex % commoditiesToProduce.length];
 					let commodity = commodityData.commodity;
@@ -2126,7 +2151,6 @@
 					
 					for (let factory of allFactories) {
 						if (factory.cooldown > 0) {
-							// Debug logging removed for CPU optimization
 							continue;
 						}
 
@@ -2148,7 +2172,9 @@
 						newAssignments[factory.id] = newAssignment;
 						assignedFactories.add(factory.id); // Mark this factory as assigned
 
-						// Assignment logged for CPU optimization
+						// DEBUG: Log assignment
+						console.log('[FACTORY DEBUG] Assigned factory', factory.id, 'to', commodity);
+
 						assignmentsChanged = true;
 						
 						factoriesAssigned++;
@@ -2159,23 +2185,19 @@
 
 					// If no factory was assigned for this commodity, move to next commodity
 					if (!factoryAssigned) {
-						// Debug logging removed for CPU optimization
 						consecutiveFailures++;
 						commodityIndex++;
 					} else {
-						// Move to next commodity for next factory
 						commodityIndex++;
 					}
 				}
 
-				// Debug logging removed for CPU optimization
-
 				// Update assignments
 				_.set(Memory, ["resources", "factories", "assignments"], newAssignments);
 
-				// Only clear factory pulse if assignments actually changed
+				// Clear factory pulse if assignments actually changed
 				if (assignmentsChanged) {
-					delete Memory["hive"]["pulses"]["factory"];
+					_.set(Memory, ["hive", "pulses", "factory", "active"], false);
 				}
 			},
 
