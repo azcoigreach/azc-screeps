@@ -4,7 +4,19 @@
 
  global.Stats_Visual = {
 
+	// Cache for expensive calculations
+	_cache: {
+		statusBarStats: {},
+		sourceOverlays: {},
+		creepCounts: {},
+		lastUpdate: 0,
+		cacheDuration: 5 // Cache for 5 ticks
+	},
+
 	Init: function () {
+		// Only run expensive visualizations on specific ticks to reduce CPU usage
+		const shouldUpdate = this._shouldUpdateVisuals();
+		
 		if (_.get(Memory, ["hive", "visuals", "show_path"], false) == true)
 			this.Show_Path();
 
@@ -16,15 +28,23 @@
 			_.set(Memory, ["hive", "visuals", "repair_levels"], null);
 		}
 
-		// Draw status bar for every owned room
-		_.each(_.filter(Game.rooms, r => r.controller && r.controller.my), room => {
-			this.Show_Status_Bar(room);
-			this.Show_Controller_Overlay(room);
-		});
+		// Draw status bar for every owned room (cached)
+		if (shouldUpdate) {
+			_.each(_.filter(Game.rooms, r => r.controller && r.controller.my), room => {
+				this.Show_Status_Bar(room);
+				this.Show_Controller_Overlay(room);
+			});
+		} else {
+			// Use cached data for status bars
+			_.each(_.filter(Game.rooms, r => r.controller && r.controller.my), room => {
+				this.Show_Status_Bar_Cached(room);
+				this.Show_Controller_Overlay_Cached(room);
+			});
+		}
 
-		// Draw source overlays for all visible rooms (owned and remote)
+		// Draw source overlays for all visible rooms (optimized)
 		_.each(Game.rooms, room => {
-			this.Show_Source_Overlays(room);
+			this.Show_Source_Overlays_Optimized(room);
 		});
 
 		// Draw population and defense info (defense is now only in the pop panel)
@@ -40,6 +60,65 @@
 		if (_.get(Memory, ["hive", "visuals", "show_room_construction"], false) == true) {
 			this.Show_Room_Construction();
 		}
+
+		// Update cache timestamp
+		this._cache.lastUpdate = Game.time;
+	},
+
+	_shouldUpdateVisuals: function() {
+		// Update visuals based on configurable interval to reduce CPU usage
+		const interval = _.get(Memory, ["hive", "visuals", "update_interval"], 5);
+		return Game.time % interval === 0;
+	},
+
+	_getCachedCreepCounts: function() {
+		if (this._cache.creepCounts.tick === Game.time) {
+			return this._cache.creepCounts.data;
+		}
+
+		// Calculate creep counts once per tick
+		const counts = {};
+		_.each(Game.creeps, creep => {
+			const room = creep.memory.room;
+			const role = creep.memory.role;
+			const source = creep.memory.source;
+			const target = creep.memory.target;
+			
+			if (!counts[room]) {
+				counts[room] = { roles: {}, sources: {} };
+			}
+			
+			// Count by role
+			counts[room].roles[role] = (counts[room].roles[role] || 0) + 1;
+			
+			// Count by source assignment
+			if (source) {
+				if (!counts[room].sources[source]) {
+					counts[room].sources[source] = { miners: 0, haulers: 0 };
+				}
+				if (['miner', 'burrower', 'worker'].includes(role)) {
+					counts[room].sources[source].miners++;
+				}
+				if (['hauler', 'carrier', 'courier', 'worker'].includes(role)) {
+					counts[room].sources[source].haulers++;
+				}
+			}
+			
+			if (target) {
+				if (!counts[room].sources[target]) {
+					counts[room].sources[target] = { miners: 0, haulers: 0 };
+				}
+				if (['miner', 'burrower', 'worker'].includes(role)) {
+					counts[room].sources[target].miners++;
+				}
+				if (['hauler', 'carrier', 'courier', 'worker'].includes(role)) {
+					counts[room].sources[target].haulers++;
+				}
+			}
+		});
+
+		this._cache.creepCounts = { tick: Game.time, data: counts };
+		return counts;
 	},
 
 	Show_Path: function () {
@@ -343,66 +422,89 @@
 		}
 	},
 
-	Get_Status_Bar_Stats: function(room) {
-		// Gather stats for the status bar, using icons and color coding
-		const cpu = _.get(Memory, ['stats', 'cpu', 'used'], Game.cpu.getUsed()).toFixed(1);
-		const bucket = Game.cpu.bucket;
-		const avg = (Game.cpu.getUsed() / Game.cpu.limit * 100).toFixed(1);
-		const tick = Game.time;
-		const rcl = room.controller.level;
-		const rclProg = ((room.controller.progress / room.controller.progressTotal) * 100).toFixed(0);
-		const spawns = room.find(FIND_MY_SPAWNS).length;
-		const creeps = _.filter(Game.creeps, c => c.memory.room === room.name).length;
-		const storage = room.storage ? room.storage.store[RESOURCE_ENERGY] : 0;
-		const terminal = room.terminal ? room.terminal.store[RESOURCE_ENERGY] : 0;
-		const sources = room.find(FIND_SOURCES).length;
-		const labs = room.find(FIND_MY_STRUCTURES, {filter: s => s.structureType === STRUCTURE_LAB}).length;
-		const factory = room.find(FIND_MY_STRUCTURES, {filter: s => s.structureType === STRUCTURE_FACTORY}).length;
-		// Calculate rampart/wall avg and setpoint
-		const wallsAndRamparts = room.find(FIND_STRUCTURES, {filter: s => s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL});
-		let avgHits = 0, setpoint = 0;
-		if (wallsAndRamparts.length > 0) {
-			avgHits = Math.round(_.sum(wallsAndRamparts, s => s.hits) / wallsAndRamparts.length);
-			setpoint = Math.round(_.sum(wallsAndRamparts, s => {
-				return _.get(Memory, ['rooms', room.name, 'structures', `${s.structureType}-${s.id}`, 'targetHits'], 0);
-			}) / wallsAndRamparts.length);
-			// If setpoint is 0, use avgHits or a default (e.g., 1_000_000)
-			if (setpoint === 0) setpoint = avgHits > 0 ? avgHits : 1000000;
+	Show_Status_Bar_Cached: function(room) {
+		// Use cached stats if available
+		const cacheKey = `${room.name}_${Math.floor(Game.time / 5)}`;
+		let stats = this._cache.statusBarStats[cacheKey];
+		
+		if (!stats) {
+			stats = this.Get_Status_Bar_Stats(room);
+			this._cache.statusBarStats[cacheKey] = stats;
 		}
-		const hitsFormat = v => v >= 1000000 ? (v/1000000).toFixed(1) + 'M' : v >= 1000 ? (v/1000).toFixed(0) + 'k' : v;
-		const rampartStat = wallsAndRamparts.length > 0 ? `${hitsFormat(avgHits)}/${hitsFormat(setpoint)}` : '0/0';
-		// Factory assignment name or --- (use Memory.resources.factories.assignments)
-		let factoryAssignment = '---';
-		const factories = room.find(FIND_MY_STRUCTURES, {filter: s => s.structureType === STRUCTURE_FACTORY});
-		if (factories.length > 0) {
-			const assignments = _.get(Memory, ['resources', 'factories', 'assignments'], {});
-			const assignment = assignments[factories[0].id];
-			if (assignment && assignment.commodity) {
-				factoryAssignment = assignment.commodity;
-			}
+		
+		const visual = new RoomVisual(room.name);
+		const barY = 0.3;
+		// Define custom cell widths for each stat to reclaim space and add space between labs and factory
+		const cellWidths = [3.2, 3.2, 3.2, 4.2, 3.2, 2.2, 2.2, 2.2, 3.2, 3.2, 2.2, 2.2, 5.5, 4.2];
+		const cellH = 0.9;
+		let x = 0.5;
+		const font = 0.55;
+		visual.rect(0.3, barY - 0.2, cellWidths.reduce((a, b) => a + b, 0) + 0.4, cellH + 0.4, {fill: '#222', opacity: 0.45, stroke: undefined});
+		for (let i = 0; i < stats.length; i++) {
+			const stat = stats[i];
+			visual.text(stat.icon + ' ' + stat.value, x + cellWidths[i]/2, barY + 0.65, {
+				font: font,
+				color: stat.color,
+				align: 'center',
+				stroke: '#000',
+				strokeWidth: 0.10
+			});
+			x += cellWidths[i];
 		}
-		// Remove truncation for factory assignment name
-		const factoryAssignmentDisplay = factoryAssignment;
-		return [
-			{icon: '⏱️', value: tick, color: '#fff', bg: '#222'},
-			{icon: '🧠', value: cpu, color: '#fff', bg: '#444'},
-			{icon: '🪣', value: bucket, color: bucket > 5000 ? '#0f0' : '#ff0', bg: '#333'},
-			{icon: '🏠', value: room.name, color: '#fff', bg: '#222'},
-			{icon: '🏅', value: `RCL${rcl}`, color: '#fff', bg: '#222'},
-			{icon: '⚡', value: `${rclProg}%`, color: '#0ff', bg: '#111'},
-			{icon: '🥚', value: spawns, color: '#fff', bg: '#333'}, // egg for spawns
-			{icon: '🤖', value: creeps, color: '#fff', bg: '#333'},
-			{icon: '🔋', value: storage, color: '#ff0', bg: '#222'},
-			{icon: '📦', value: terminal, color: '#0ff', bg: '#222'},
-			{icon: '💡', value: sources, color: '#0f0', bg: '#222'}, // light bulb for sources
-			{icon: '🧪', value: labs, color: '#fff', bg: '#222'},
-			{icon: '🏭', value: factoryAssignmentDisplay, color: '#fff', bg: '#222'},
-			{icon: '🛡️', value: rampartStat, color: '#fff', bg: '#222'},
-		];
 	},
 
 	Show_Controller_Overlay: function(room) {
 		if (!room.controller) return;
+		const visual = new RoomVisual(room.name);
+		const ctrl = room.controller;
+		const upgraders = _.filter(Game.creeps, c => c.memory.role === 'upgrader' && c.memory.room === room.name).length;
+		const prog = ((ctrl.progress / ctrl.progressTotal) * 100).toFixed(0);
+		const ticks = ctrl.ticksToDowngrade;
+		// Determine alignment and position
+		let x, align;
+		if (ctrl.pos.x > 45) {
+			x = ctrl.pos.x - 1.2;
+			align = 'right';
+		} else {
+			x = ctrl.pos.x + 1.2;
+			align = 'left';
+		}
+		let y = ctrl.pos.y - 0.7;
+		const lineH = 0.55;
+		// Draw background rectangle BEFORE any text
+		const gutterY = 0.18;
+		const bgW = 3.2 * 0.90; // Tighter width for 3 lines
+		const bgH = lineH * 3 + gutterY * 2;
+		const bgX = align === 'left' ? x - 0.1 : x - bgW + 0.1;
+		const bgY = ctrl.pos.y - 1.1 - gutterY;
+		visual.rect(bgX, bgY, bgW, bgH, {fill: '#222', opacity: 0.45, stroke: undefined});
+		// Now draw the text
+		visual.text(`🤖 ${upgraders}`, x, y, {
+			font: 0.5,
+			color: '#bfff00',
+			align: align,
+			stroke: '#000',
+			strokeWidth: 0.08
+		});
+		y += lineH;
+		visual.text(`⚡ ${prog}%`, x, y, {
+			font: 0.5,
+			color: '#00bfff',
+			align: align,
+			stroke: '#000',
+			strokeWidth: 0.08
+		});
+		y += lineH;
+		visual.text(`⏳ ${ticks}`, x, y, {
+			font: 0.5,
+			color: '#ffb300',
+			align: align,
+			stroke: '#000',
+			strokeWidth: 0.08
+		});
+	},
+
+	Show_Controller_Overlay_Cached: function(room) {
 		const visual = new RoomVisual(room.name);
 		const ctrl = room.controller;
 		const upgraders = _.filter(Game.creeps, c => c.memory.role === 'upgrader' && c.memory.room === room.name).length;
@@ -551,5 +653,130 @@
 				strokeWidth: 0.08
 			});
 		});
+	},
+
+	Show_Source_Overlays_Optimized: function(room) {
+		const visual = new RoomVisual(room.name);
+		const sources = room.find(FIND_SOURCES);
+		_.each(sources, source => {
+			const cachedCreepCounts = this._getCachedCreepCounts();
+			const roomCounts = cachedCreepCounts[room.name];
+			const sourceCounts = roomCounts && roomCounts.sources ? roomCounts.sources[source.id] : null;
+			const miners = sourceCounts ? sourceCounts.miners : 0;
+			const haulers = sourceCounts ? sourceCounts.haulers : 0;
+
+			const regen = source.ticksToRegeneration;
+			const energy = source.energy;
+			// Determine alignment and position
+			let x, align;
+			if (source.pos.x > 45) {
+				x = source.pos.x - 1.2;
+				align = 'right';
+			} else {
+				x = source.pos.x + 1.2;
+				align = 'left';
+			}
+			let y = source.pos.y - 0.7;
+			const lineH = 0.55;
+			// Draw background rectangle BEFORE any text
+			const gutterY = 0.18;
+			const bgW = 3.2 * 0.75; // 70% of 3.2
+			const bgH = lineH * 4 + gutterY * 2;
+			const bgX = align === 'left' ? x - 0.2 : x - bgW + 0.2;
+			const bgY = source.pos.y - 1.2 - gutterY;
+			visual.rect(bgX, bgY, bgW, bgH, {fill: '#222', opacity: 0.45, stroke: undefined});
+			// Now draw the text
+			let displayRegen = (typeof regen === 'number' && regen !== undefined) ? regen : '---';
+			let yText = source.pos.y - 0.7;
+			visual.text(`🔋 ${energy}`, x, yText, {
+				font: 0.5,
+				color: '#bfff00',
+				align: align,
+				stroke: '#000',
+				strokeWidth: 0.08
+			});
+			yText += lineH;
+			visual.text(`⛏️ ${miners}`, x, yText, {
+				font: 0.5,
+				color: '#ffbfbf',
+				align: align,
+				stroke: '#000',
+				strokeWidth: 0.08
+			});
+			yText += lineH;
+			visual.text(`🚚 ${haulers}`, x, yText, {
+				font: 0.5,
+				color: '#ffb300',
+				align: align,
+				stroke: '#000',
+				strokeWidth: 0.08
+			});
+			yText += lineH;
+			visual.text(`♻️ ${displayRegen}`, x, yText, {
+				font: 0.5,
+				color: '#00ff99',
+				align: align,
+				stroke: '#000',
+				strokeWidth: 0.08
+			});
+		});
+	},
+
+	Get_Status_Bar_Stats: function(room) {
+		// Gather stats for the status bar, using icons and color coding
+		const cpu = _.get(Memory, ['stats', 'cpu', 'used'], Game.cpu.getUsed()).toFixed(1);
+		const bucket = Game.cpu.bucket;
+		const avg = (Game.cpu.getUsed() / Game.cpu.limit * 100).toFixed(1);
+		const tick = Game.time;
+		const rcl = room.controller.level;
+		const rclProg = ((room.controller.progress / room.controller.progressTotal) * 100).toFixed(0);
+		const spawns = room.find(FIND_MY_SPAWNS).length;
+		const creeps = _.filter(Game.creeps, c => c.memory.room === room.name).length;
+		const storage = room.storage ? room.storage.store[RESOURCE_ENERGY] : 0;
+		const terminal = room.terminal ? room.terminal.store[RESOURCE_ENERGY] : 0;
+		const sources = room.find(FIND_SOURCES).length;
+		const labs = room.find(FIND_MY_STRUCTURES, {filter: s => s.structureType === STRUCTURE_LAB}).length;
+		const factory = room.find(FIND_MY_STRUCTURES, {filter: s => s.structureType === STRUCTURE_FACTORY}).length;
+		// Calculate rampart/wall avg and setpoint
+		const wallsAndRamparts = room.find(FIND_STRUCTURES, {filter: s => s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL});
+		let avgHits = 0, setpoint = 0;
+		if (wallsAndRamparts.length > 0) {
+			avgHits = Math.round(_.sum(wallsAndRamparts, s => s.hits) / wallsAndRamparts.length);
+			setpoint = Math.round(_.sum(wallsAndRamparts, s => {
+				return _.get(Memory, ['rooms', room.name, 'structures', `${s.structureType}-${s.id}`, 'targetHits'], 0);
+			}) / wallsAndRamparts.length);
+			// If setpoint is 0, use avgHits or a default (e.g., 1_000_000)
+			if (setpoint === 0) setpoint = avgHits > 0 ? avgHits : 1000000;
+		}
+		const hitsFormat = v => v >= 1000000 ? (v/1000000).toFixed(1) + 'M' : v >= 1000 ? (v/1000).toFixed(0) + 'k' : v;
+		const rampartStat = wallsAndRamparts.length > 0 ? `${hitsFormat(avgHits)}/${hitsFormat(setpoint)}` : '0/0';
+		// Factory assignment name or --- (use Memory.resources.factories.assignments)
+		let factoryAssignment = '---';
+		const factories = room.find(FIND_MY_STRUCTURES, {filter: s => s.structureType === STRUCTURE_FACTORY});
+		if (factories.length > 0) {
+			const assignments = _.get(Memory, ['resources', 'factories', 'assignments'], {});
+			const assignment = assignments[factories[0].id];
+			if (assignment && assignment.commodity) {
+				factoryAssignment = assignment.commodity;
+			}
+		}
+		// Remove truncation for factory assignment name
+		const factoryAssignmentDisplay = factoryAssignment;
+		return [
+			{icon: '⏱️', value: tick, color: '#fff', bg: '#222'},
+			{icon: '🧠', value: cpu, color: '#fff', bg: '#444'},
+			{icon: '🪣', value: bucket, color: bucket > 5000 ? '#0f0' : '#ff0', bg: '#333'},
+			{icon: '🏠', value: room.name, color: '#fff', bg: '#222'},
+			{icon: '🏅', value: `RCL${rcl}`, color: '#fff', bg: '#222'},
+			{icon: '⚡', value: `${rclProg}%`, color: '#0ff', bg: '#111'},
+			{icon: '🥚', value: spawns, color: '#fff', bg: '#333'}, // egg for spawns
+			{icon: '🤖', value: creeps, color: '#fff', bg: '#333'},
+			{icon: '🔋', value: storage, color: '#ff0', bg: '#222'},
+			{icon: '📦', value: terminal, color: '#0ff', bg: '#222'},
+			{icon: '💡', value: sources, color: '#0f0', bg: '#222'}, // light bulb for sources
+			{icon: '🧪', value: labs, color: '#fff', bg: '#222'},
+			{icon: '🏭', value: factoryAssignmentDisplay, color: '#fff', bg: '#222'},
+			{icon: '🛡️', value: rampartStat, color: '#fff', bg: '#222'},
+		];
 	},
 };

@@ -1921,6 +1921,51 @@
 
 			return `<font color=\"#D3FFA3\">[Console]</font> Visuals for speech toggled to be shown: ${_.get(Memory, ["hive", "visuals", "show_speech"], false)}`;
 		};
+
+		help_visuals.push("visuals.set_performance(ticks)");
+		help_visuals.push(" - Sets the update interval for expensive visualizations");
+		help_visuals.push(" - ticks: how often to update visuals (default 5, higher = less CPU)");
+		help_visuals.push(" - Example: visuals.set_performance(10) for updates every 10 ticks");
+
+		visuals.set_performance = function (ticks) {
+			if (ticks < 1) ticks = 1;
+			if (ticks > 50) ticks = 50;
+			_.set(Memory, ["hive", "visuals", "update_interval"], ticks);
+			return `<font color=\"#D3FFA3\">[Console]</font> Visual performance set to update every ${ticks} ticks.`;
+		};
+
+		help_visuals.push("visuals.get_performance()");
+		help_visuals.push(" - Shows current visual performance settings");
+
+		visuals.get_performance = function () {
+			const interval = _.get(Memory, ["hive", "visuals", "update_interval"], 5);
+			const cpuUsed = Game.cpu.getUsed();
+			const cpuLimit = Game.cpu.limit;
+			const cpuPercent = (cpuUsed / cpuLimit * 100).toFixed(1);
+			
+			console.log(`<font color=\"#D3FFA3\">[Visuals]</font> <b>Performance Settings:</b>`);
+			console.log(`  Update Interval: ${interval} ticks`);
+			console.log(`  Current CPU: ${cpuUsed.toFixed(2)}/${cpuLimit} (${cpuPercent}%)`);
+			console.log(`  Status: ${cpuPercent > 80 ? "⚠️ High" : cpuPercent > 60 ? "⚡ Medium" : "✅ Good"}`);
+			
+			return `<font color=\"#D3FFA3\">[Console]</font> Visual performance status displayed.`;
+		};
+
+		help_visuals.push("visuals.clear_cache()");
+		help_visuals.push(" - Clears all visual caches to force fresh calculations");
+
+		visuals.clear_cache = function () {
+			if (Stats_Visual._cache) {
+				Stats_Visual._cache = {
+					statusBarStats: {},
+					sourceOverlays: {},
+					creepCounts: {},
+					lastUpdate: 0,
+					cacheDuration: 5
+				};
+			}
+			return `<font color=\"#D3FFA3\">[Console]</font> Visual cache cleared.`;
+		};
 		pause = new Object();
 
 		help_pause.push("pause.mineral_extraction()")
