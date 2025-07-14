@@ -317,16 +317,24 @@
 
 		factories.renew_assignments = function () {
 			console.log(`<font color=\"#FFA500\">[Factory]</font> Renewing factory assignments...`);
-			// Clear existing assignments to force fresh assignment
-			delete Memory["resources"]["factories"]["assignments"];
+			// Safely clear existing assignments to force fresh assignment
+			if (Memory["resources"] && Memory["resources"]["factories"]) {
+				delete Memory["resources"]["factories"]["assignments"];
+			}
 			// Trigger factory pulse to reassign factories based on priority (lab style)
-			delete Memory["hive"]["pulses"]["factory"];
+			if (Memory["hive"] && Memory["hive"]["pulses"]) {
+				delete Memory["hive"]["pulses"]["factory"];
+			}
 			return `<font color=\"#FFA500\">[Factory]</font> Factory assignments will be renewed next tick based on current priorities.`;
 		};
 
 		factories.clear_assignments = function () {
-			delete Memory["resources"]["factories"]["assignments"];
-			return `<font color=\"#FFA500\">[Factory]</font> Factory assignments cleared.`;
+			if (Memory["resources"] && Memory["resources"]["factories"]) {
+				delete Memory["resources"]["factories"]["assignments"];
+				return `<font color=\"#FFA500\">[Factory]</font> Factory assignments cleared.`;
+			} else {
+				return `<font color=\"#FFA500\">[Factory]</font> No factory assignments to clear.`;
+			}
 		};
 
 		// Internal maintenance function (not exposed in help)
