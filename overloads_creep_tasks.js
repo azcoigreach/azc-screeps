@@ -102,6 +102,12 @@
 			// Regular harvest logic for energy sources
 			let result = this.harvest(obj);
 			if (result == OK) {
+				// Track energy collection for efficiency monitoring
+				if (obj.structureType !== "deposit" && obj.energy !== undefined) {
+					let harvestAmount = Math.min(this.getActiveBodyparts(WORK) * 2, obj.energy);
+					MiningEfficiency.trackEnergyCollection(this.memory.colony || this.room.name, this.name, harvestAmount);
+				}
+				
 				let interval = 3;
 				if (Game.time % interval == 0) {
 					// Burrower fill adjacent link if possible; also fill adjacent container
@@ -245,6 +251,15 @@
 						this.travelTask(target);
 						return;
 					} else {
+						// Track energy delivery for efficiency monitoring
+						if (this.carry["energy"] > 0 && target) {
+							let deliveryAmount = Math.min(this.carry["energy"], 
+								(target.energyCapacity || target.storeCapacity) - (target.energy || target.store.energy || 0));
+							if (deliveryAmount > 0) {
+								let targetType = target.structureType;
+								MiningEfficiency.trackEnergyDelivery(this.memory.colony || this.room.name, this.name, deliveryAmount, targetType);
+							}
+						}
 						delete this.memory.task;
 						return;
 					}
@@ -653,6 +668,31 @@ Creep.prototype.getTask_Deposit_Container = function getTask_Deposit_Container(r
 			type: "deposit",
 			resource: resource,
 			id: cont.id,
+			timer: 60,
+		};
+	}
+};
+
+Creep.prototype.getTask_Deposit_Controller_Container = function getTask_Deposit_Controller_Container() {
+	if (!this.room.controller || !this.room.controller.my)
+		return;
+	
+	// Find container closest to controller
+	let containers = this.room.find(FIND_STRUCTURES, {
+		filter: s => s.structureType == "container" && _.sum(s.store) < s.storeCapacity
+	});
+	
+	if (containers.length == 0)
+		return;
+	
+	let controllerContainer = _.head(_.sortBy(containers, 
+		s => s.pos.getRangeTo(this.room.controller.pos)));
+	
+	if (controllerContainer && this.carry["energy"] > 0) {
+		return {
+			type: "deposit",
+			resource: "energy",
+			id: controllerContainer.id,
 			timer: 60,
 		};
 	}

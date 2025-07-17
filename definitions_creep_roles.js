@@ -195,17 +195,40 @@
 				if (this.goToRoom(creep, creep.memory.colony, false))
 					return;
 
-				if (creep.room.energyAvailable < creep.room.energyCapacityAvailable * 0.75) {
-					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Spawns();
+				// Optimized energy delivery priority system
+				let room = creep.room;
+				let roomLevel = room.controller ? room.controller.level : 0;
+				let hasStorage = room.storage && room.storage.my;
+				
+				// Priority 1: Always refill spawns first (critical for operation)
+				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Spawns();
+				
+				// Priority 2: Refill towers if they're low
+				if (room.energyAvailable >= room.energyCapacityAvailable * 0.8) {
 					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Towers();
-				} else {
-					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Towers();
-					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Spawns();
 				}
-				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Link();
-				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral");
-				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("energy");
-				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Container("energy");
+				
+				// Priority 3: Handle excess energy based on room level and infrastructure
+				if (hasStorage) {
+					// Higher level rooms: use storage as primary buffer
+					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Link();
+					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral");
+					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("energy");
+				} else {
+					// Lower level rooms without storage: feed into building and upgrading
+					if (roomLevel < 4) {
+						// Feed energy into construction and upgrading
+						creep.memory.task = creep.memory.task || creep.getTask_Deposit_Controller_Container();
+						creep.memory.task = creep.memory.task || creep.getTask_Deposit_Container("energy");
+					} else {
+						// Mid-level rooms: use links and containers
+						creep.memory.task = creep.memory.task || creep.getTask_Deposit_Link();
+						creep.memory.task = creep.memory.task || creep.getTask_Deposit_Container("energy");
+					}
+				}
+				
+				// Fallback: towers if still not handled
+				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Towers();
 				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 
 				creep.runTask(creep);

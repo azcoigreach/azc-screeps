@@ -11,6 +11,7 @@
 		let help_factories = new Array();
 		let help_labs = new Array();
 		let help_log = new Array();
+		let help_mining = new Array();
 		let help_path = new Array();
 		let help_pause = new Array();
 		let help_profiler = new Array();
@@ -27,6 +28,7 @@
 		help_main.push(`- "factories" \t Management of factory commodity production`);
 		help_main.push(`- "labs" \t Management of lab functions/reactions`);
 		help_main.push(`- "log" \t Logs for statistical output`);
+		help_main.push(`- "mining" \t Mining efficiency monitoring and optimization`);
 		help_main.push(`- "path" \t Utilities for enhancing creep pathfinding abilities`);
 		help_main.push(`- "pause" \t Utilities for pausing specific creep or colony functions`);
 		help_main.push(`- "profiler" \t Built-in CPU profiler`);
@@ -1988,6 +1990,116 @@
 			return `<font color=\"#D3FFA3\">[Console]</font> Pausing main.js to refill bucket.`;
 		};
 
+		// Mining efficiency console commands
+		help_mining.push("mining.efficiency(roomName) - Get mining efficiency summary for a room");
+		help_mining.push("mining.current_rate(roomName) - Get current energy collection rate");
+		help_mining.push("mining.reset(roomName) - Reset mining efficiency tracking for a room");
+		help_mining.push("mining.status() - Show mining efficiency status for all rooms");
+		help_mining.push("mining.optimize(roomName) - Suggest population optimizations for better efficiency");
+
+		mining = new Object();
+		
+		mining.efficiency = function (roomName) {
+			if (!roomName) {
+				return `<font color=\"#FFA500\">[Mining]</font> Usage: mining.efficiency(roomName)`;
+			}
+			
+			let summary = MiningEfficiency.getPerformanceSummary(roomName);
+			let output = [`<font color=\"#87CEEB\">[Mining Efficiency: ${roomName}]</font>`];
+			
+			output.push(`Total Energy Collected: ${summary.total_collected.toLocaleString()}`);
+			output.push(`Total Energy Delivered: ${summary.total_delivered.toLocaleString()}`);
+			output.push(`Average Efficiency: ${(summary.average_efficiency * 100).toFixed(1)}%`);
+			output.push(`Target: 3000 energy per 300 ticks (10 energy/tick)`);
+			output.push(``);
+			
+			output.push(`Recent Performance (last 5 windows):`);
+			summary.recent_windows.forEach(window => {
+				output.push(`  Window ${window.window}: ${window.delivered}/3000 energy (${(window.efficiency * 100).toFixed(1)}%)`);
+			});
+			
+			return output.join('<br>');
+		};
+		
+		mining.current_rate = function (roomName) {
+			if (!roomName) {
+				return `<font color=\"#FFA500\">[Mining]</font> Usage: mining.current_rate(roomName)`;
+			}
+			
+			let metrics = MiningEfficiency.calculateEfficiency(roomName);
+			return `<font color=\"#87CEEB\">[Mining Rate: ${roomName}]</font><br>` +
+				   `Current Rate: ${metrics.current_rate.toFixed(2)} energy/tick<br>` +
+				   `Target Rate: ${metrics.target_rate} energy/tick<br>` +
+				   `Efficiency: ${(metrics.efficiency_ratio * 100).toFixed(1)}%`;
+		};
+		
+		mining.reset = function (roomName) {
+			if (!roomName) {
+				return `<font color=\"#FFA500\">[Mining]</font> Usage: mining.reset(roomName)`;
+			}
+			
+			MiningEfficiency.resetRoom(roomName);
+			return `<font color=\"#87CEEB\">[Mining]</font> Efficiency tracking reset for ${roomName}`;
+		};
+		
+		mining.status = function () {
+			let output = [`<font color=\"#87CEEB\">[Mining Status Overview]</font>`];
+			
+			if (!Memory.mining_efficiency) {
+				return `<font color=\"#FFA500\">[Mining]</font> No mining efficiency data available yet.`;
+			}
+			
+			Object.keys(Memory.mining_efficiency).forEach(roomName => {
+				let metrics = MiningEfficiency.calculateEfficiency(roomName);
+				output.push(`${roomName}: ${metrics.current_rate.toFixed(1)} energy/tick (${(metrics.efficiency_ratio * 100).toFixed(1)}%)`);
+			});
+			
+			return output.join('<br>');
+		};
+		
+		mining.optimize = function (roomName) {
+			if (!roomName) {
+				return `<font color=\"#FFA500\">[Mining]</font> Usage: mining.optimize(roomName)`;
+			}
+			
+			let room = Game.rooms[roomName];
+			if (!room || !room.controller || !room.controller.my) {
+				return `<font color=\"#FFA500\">[Mining]</font> ${roomName} is not a valid owned room.`;
+			}
+			
+			let output = [`<font color=\"#87CEEB\">[Mining Optimization: ${roomName}]</font>`];
+			let metrics = MiningEfficiency.calculateEfficiency(roomName);
+			let roomLevel = room.getLevel();
+			let sources = room.findSources().length;
+			
+			output.push(`Room Level: ${roomLevel}, Sources: ${sources}`);
+			output.push(`Current Rate: ${metrics.current_rate.toFixed(2)} energy/tick`);
+			output.push(`Target Rate: ${metrics.target_rate} energy/tick`);
+			output.push(``);
+			
+			if (metrics.efficiency_ratio < 0.8) {
+				output.push(`<font color=\"#FF6B6B\">Efficiency below 80%!</font>`);
+				output.push(`Recommendations:`);
+				
+				if (roomLevel >= 4) {
+					output.push(`- Consider adding more carriers to transport energy faster`);
+					output.push(`- Ensure containers are built near sources`);
+					output.push(`- Check if burrowers are properly assigned to sources`);
+				} else {
+					output.push(`- Use more workers/miners for early room levels`);
+					output.push(`- Focus on building essential infrastructure first`);
+				}
+				
+				if (sources > 1) {
+					output.push(`- Multi-source rooms need balanced mining populations`);
+				}
+			} else {
+				output.push(`<font color=\"#90EE90\">Efficiency looks good!</font>`);
+			}
+			
+			return output.join('<br>');
+		};
+
 
 
 		help = function (submenu) {
@@ -2002,6 +2114,7 @@
 					case "factories": menu = help_factories; break;
 					case "labs": menu = help_labs; break;
 					case "log": menu = help_log; break;
+					case "mining": menu = help_mining; break;
 					case "path": menu = help_path; break;
 					case "pause": menu = help_pause; break;
 					case "profiler": menu = help_profiler; break;

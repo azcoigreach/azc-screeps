@@ -51,6 +51,7 @@ require("definitions_console_commands");
 require("definitions_visual_elements");
 require("definitions_cpu_profiling");
 require("definitions_grafana_statistics");
+require("mining_efficiency");
 
 /* ***********************************************************
  *	MAIN LOOP
@@ -74,6 +75,13 @@ module.exports.loop = function () {
 	Control.runColonizations();
 	Control.runCombat();
 	Control.runHighwayMining();
+
+	// Initialize mining efficiency tracking for all owned rooms
+	if (Game.time % 10 == 0) {
+		_.each(_.filter(Game.rooms, r => r.controller && r.controller.my), room => {
+			MiningEfficiency.initRoom(room.name);
+		});
+	}
 
 	Control.processSpawnRequests();
 	Control.processSpawnRenewing();
