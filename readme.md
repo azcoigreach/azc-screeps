@@ -20,6 +20,76 @@ Rooms that you own a controller in are automatically run with a preset populatio
 #### In-Colony Mining (Local Mining)
 Just like colonies are automatically run and populated with a preset population, so is local mining. Miners will spawn and mine based on room level (RCL)... low level colonies utilize miners (all-in-one mining creeps) and mid-level and high-level rooms utilize burrowers and carriers (seperate creeps for mining the source then carrying the energy to storage).
 
+#### Upgraders
+Upgraders are specialized creeps that focus exclusively on upgrading your room controller, which is essential for advancing your Room Control Level (RCL) and unlocking new structures and capabilities.
+
+##### How Upgraders Work
+Upgraders operate in a simple two-state cycle:
+- **Refueling State**: The upgrader collects energy from various sources in priority order
+- **Upgrading State**: The upgrader moves to the room controller and uses all its energy to upgrade it
+
+##### Spawning Logic
+Upgraders are automatically spawned in rooms that have reached RCL 5 or higher. The number of upgraders spawned is calculated based on:
+
+**Base Upgraders**: 1 upgrader for every room at RCL 5+
+**Additional Upgraders**: 1 additional upgrader for every 2 remote mining sources
+
+For example:
+- RCL 5 room with 4 remote mining sources = 1 base + 2 additional = 3 upgraders
+- RCL 6 room with 6 remote mining sources = 1 base + 3 additional = 4 upgraders
+
+##### Energy Sources Priority
+When refueling, upgraders use the following priority order:
+1. **Boost tasks** (if available)
+2. **Controller links** (energy directly linked to controller)
+3. **Controller containers** (containers built near controller)
+4. **Storage** (main room storage)
+5. **Dropped energy** (energy dropped on the ground)
+
+##### Body Composition
+Upgrader bodies scale with room level:
+- **RCL 1-5**: Minimal body (1 MOVE) - upgraders don't spawn at these levels
+- **RCL 6**: 4 WORK, 1 CARRY, 2 MOVE (650 energy cost)
+- **RCL 7**: 6 WORK, 2 CARRY, 4 MOVE (1050 energy cost)
+- **RCL 8**: 8 WORK, 2 CARRY, 6 MOVE (1450 energy cost)
+
+##### Console Commands
+You can monitor and control upgraders using these console commands:
+
+**Check Upgrader Status**:
+```
+empire.upgrader_status("W1N1")
+```
+This shows:
+- Current upgrader count vs expected count
+- Room level and controller progress
+- Remote mining source count
+- Individual upgrader details
+
+**Force Spawn Upgraders**:
+```
+empire.upgrader_force_spawn("W1N1", 2)
+```
+Forces the spawn of 2 upgraders in the specified room on the next tick.
+
+**Clear Force Spawn**:
+```
+empire.upgrader_clear_force_spawn("W1N1")
+```
+Cancels any pending force spawn requests for the room.
+
+##### Integration with Links
+Upgraders work seamlessly with the link system. Links are automatically built near the room controller and will transfer energy from sources or storage directly to the controller area, making energy readily available for upgraders to collect.
+
+##### Behavior During Threats
+When hostile creeps are detected within 5 tiles, upgraders will move away from the threat and wait until the area is safe before resuming their work.
+
+##### Performance Considerations
+- Upgraders are spawned with medium priority (20-22) in the spawn queue
+- They use optimized pathfinding to minimize CPU usage
+- Energy collection is prioritized to minimize travel time
+- Upgraders automatically scale their body size based on room energy capacity
+
 ### What You Need To Do
 
 #### Construction Sites: Set Origin Coordinates (esp. For Colony #1)
