@@ -11,9 +11,9 @@ Population_Colonization =
 
 Population_Colony = {
  Standalone: {
-     1: { worker: { level: 1, amount: 5, body: "worker_at" } },
-     2: { worker: { level: 2, amount: 5, body: "worker_at" } },
-     3: { worker: { level: 3, amount: 6, body: "worker_at" } },
+     1: { worker: { level: 1, amount: 6, body: "worker_at" } }, // Increased from 5 to 6 for better efficiency
+     2: { worker: { level: 2, amount: 6, body: "worker_at" } }, // Increased from 5 to 6 for better efficiency
+     3: { worker: { level: 3, amount: 7, body: "worker_at" } }, // Increased from 6 to 7 for better efficiency
      4: { worker: { level: 4, amount: 6, body: "worker_at" } },
      5: { worker: { level: 4, amount: 6, body: "worker_at" }, upgrader: { level: 5, amount: 1, body: "upgrader" } },
      6: { worker: { level: 4, amount: 4 }, upgrader: { level: 6, amount: 1, body: "upgrader" } },
@@ -22,8 +22,8 @@ Population_Colony = {
  },
 
  Assisted: {
-     1: { worker: { level: 3, amount: 4, body: "worker_at" } },
-     2: { worker: { level: 3, amount: 4, body: "worker_at" } },
+     1: { worker: { level: 3, amount: 5, body: "worker_at" } }, // Increased from 4 to 5 for better efficiency
+     2: { worker: { level: 3, amount: 5, body: "worker_at" } }, // Increased from 4 to 5 for better efficiency
      3: { worker: { level: 4, amount: 6, body: "worker_at" } },
      4: { worker: { level: 5, amount: 6, body: "worker_at" } },
      5: { worker: { level: 6, amount: 6, body: "worker_at" }, upgrader: { level: 5, amount: 1, body: "upgrader" } },
@@ -36,28 +36,28 @@ Population_Colony = {
 
 Population_Mining = {
  S1: {
-     1: { miner: { level: 1, amount: 2, body: "worker_at" } },
+     1: { miner: { level: 1, amount: 3, body: "worker_at" } }, // Increased from 2 to 3 for better efficiency
      2: {
          miner: { level: 2, amount: 2, body: "worker_at" },
          burrower: { level: 2, amount: 1, body: "burrower_at" },
-         carrier: { level: 2, amount: 2, body: "carrier_at"}
+         carrier: { level: 2, amount: 3, body: "carrier_at"} // Increased from 2 to 3 for better efficiency
      },
      3: {
-         miner: { level: 2, amount: 2, body: "worker_at" },
+         miner: { level: 2, amount: 1, body: "worker_at" }, // Reduced from 2 to 1 to make room for more burrowers/carriers
          burrower: { level: 2, amount: 1, body: "burrower_at" },
-         carrier: { level: 2, amount: 2, body: "carrier_at" }
+         carrier: { level: 2, amount: 3, body: "carrier_at" } // Increased from 2 to 3 for better efficiency
      },
      4: {
          burrower: { level: 3, amount: 1, body: "burrower_at" },
-         carrier: { level: 3, amount: 2, body: "carrier_at" }
+         carrier: { level: 3, amount: 3, body: "carrier_at" } // Increased from 2 to 3 for better efficiency
      },
      5: {
          burrower: { level: 4, amount: 1, body: "burrower_at" },
-         carrier: { level: 4, amount: 2, body: "carrier_at" }
+         carrier: { level: 4, amount: 3, body: "carrier_at" } // Increased from 2 to 3 for better efficiency
      },
      6: {
          burrower: { level: 4, amount: 1 },
-         carrier: { level: 4, amount: 2 },
+         carrier: { level: 4, amount: 3 }, // Increased from 2 to 3 for better efficiency
          extractor: { level: 4, amount: 2 }
      },
      7: {

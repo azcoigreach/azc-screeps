@@ -106,18 +106,33 @@
 				let hasUpgraders = _.filter(Game.creeps, c => 
 					c.memory.role == "upgrader" && c.memory.room == creep.room.name).length > 0;
 				let isCriticalDowngrade = _.get(Memory, ["rooms", creep.room.name, "survey", "downgrade_critical"], false);
+				let hasStorage = creep.room.storage && creep.room.storage.my;
 
-				// Only upgrade if room is below RCL 6, or if critical downgrade and no upgraders available
-				let shouldUpgrade = roomLevel < 6 || (isCriticalDowngrade && !hasUpgraders);
-
-				if (shouldUpgrade) {
+				// For rooms without storage, prioritize upgrading and building to improve infrastructure
+				if (!hasStorage && roomLevel < 4) {
+					// Lower RCL rooms without storage: focus on upgrading and building
+					creep.memory.task = creep.memory.task || creep.getTask_Build();
 					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(true);
 					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
+				} else if (!hasStorage && roomLevel >= 4) {
+					// Mid-level rooms without storage: balanced approach
+					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(true);
+					creep.memory.task = creep.memory.task || creep.getTask_Build();
+					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
+				} else {
+					// Rooms with storage: only upgrade if room is below RCL 6, or if critical downgrade and no upgraders available
+					let shouldUpgrade = roomLevel < 6 || (isCriticalDowngrade && !hasUpgraders);
+					if (shouldUpgrade) {
+						creep.memory.task = creep.memory.task || creep.getTask_Upgrade(true);
+						creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
+					}
 				}
 
 				creep.memory.task = creep.memory.task || creep.getTask_Sign();
 				creep.memory.task = creep.memory.task || creep.getTask_Repair(true);
-				creep.memory.task = creep.memory.task || creep.getTask_Build();
+				if (!creep.memory.task) {
+					creep.memory.task = creep.getTask_Build();
+				}
 				creep.memory.task = creep.memory.task || creep.getTask_Repair(false);
 				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral"); // Deposit any commodities to storage
 				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);

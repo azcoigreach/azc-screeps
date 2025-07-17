@@ -89,6 +89,12 @@
 				rmName => {
 					_.set(Memory, ["stats", "mining", rmName, "store_percent"],
 						_.get(Memory, ["sites", "mining", rmName, "store_percent"], 0));
+					
+					// Add mining efficiency statistics
+					let efficiency = MiningEfficiency.calculateEfficiency(rmName);
+					_.set(Memory, ["stats", "mining", rmName, "efficiency_ratio"], efficiency.efficiency_ratio);
+					_.set(Memory, ["stats", "mining", rmName, "current_rate"], efficiency.current_rate);
+					_.set(Memory, ["stats", "mining", rmName, "target_rate"], efficiency.target_rate);
 			});
 		}
 	},

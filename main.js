@@ -82,6 +82,16 @@ module.exports.loop = function () {
 			MiningEfficiency.initRoom(room.name);
 		});
 	}
+	
+	// Log mining efficiency performance every 50 ticks (for monitoring)
+	if (Game.time % 50 == 0) {
+		_.each(_.filter(Game.rooms, r => r.controller && r.controller.my), room => {
+			let metrics = MiningEfficiency.calculateEfficiency(room.name);
+			if (metrics.efficiency_ratio < 0.7) {
+				console.log(`<font color=\"#FF6B6B\">[Mining Alert]</font> ${room.name} efficiency low: ${(metrics.efficiency_ratio * 100).toFixed(1)}% (${metrics.current_rate.toFixed(1)}/10 energy/tick)`);
+			}
+		});
+	}
 
 	Control.processSpawnRequests();
 	Control.processSpawnRenewing();
