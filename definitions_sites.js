@@ -765,10 +765,24 @@
 					}
 				}
 
-				// Adjust carrier population amounts based on amount of energy sitting in storage
-				if (_.get(Memory, ["sites", "mining", rmHarvest, "store_percent"], 0) > 0.75) {
+				// Enhanced carrier population adjustment based on energy flow efficiency
+				let store_percent = _.get(Memory, ["sites", "mining", rmHarvest, "store_percent"], 0);
+				let energy_level = _.get(Memory, ["rooms", rmColony, "survey", "energy_level"]);
+				
+				// Dynamic carrier scaling based on container fill and energy demand
+				if (store_percent > 0.8) {
+					// High container fill - emergency carriers needed
+					_.set(popTarget, ["carrier", "amount"], _.get(popTarget, ["carrier", "amount"], 0) + 3);
+				} else if (store_percent > 0.6) {
+					// Moderate container fill - add carriers
 					_.set(popTarget, ["carrier", "amount"], _.get(popTarget, ["carrier", "amount"], 0) + 2);
-				} else if (_.get(Memory, ["sites", "mining", rmHarvest, "store_percent"], 0) > 0.5) {
+				} else if (store_percent > 0.4) {
+					// Some backlog - add one carrier
+					_.set(popTarget, ["carrier", "amount"], _.get(popTarget, ["carrier", "amount"], 0) + 1);
+				}
+				
+				// Additional carriers for energy-critical situations
+				if (energy_level == CRITICAL || energy_level == LOW) {
 					_.set(popTarget, ["carrier", "amount"], _.get(popTarget, ["carrier", "amount"], 0) + 1);
 				}
 

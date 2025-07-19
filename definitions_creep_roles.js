@@ -157,10 +157,32 @@
 					return;
 
 				if (creep.memory.role == "burrower") {
-					creep.memory.task = creep.memory.task || creep.getTask_Mine();
+					// Enhanced burrower logic to minimize idle time and optimize energy flow
+					let carryCapacity = creep.carryCapacity;
+					let currentCarry = _.sum(creep.carry);
+					let sources = creep.room.find(FIND_SOURCES);
+					let nearbySource = creep.pos.findClosestByPath(sources);
+					
+					// Check if source has enough energy to make mining worthwhile
+					let shouldMine = false;
+					if (nearbySource && carryCapacity > 0) {
+						let remainingCapacity = carryCapacity - currentCarry;
+						let miningRate = creep.getActiveBodyparts(WORK) * HARVEST_POWER;
+						let ticksToFill = Math.ceil(remainingCapacity / miningRate);
+						
+						// Only mine if source is an energy source and has enough energy for efficient harvesting
+						if (nearbySource.energy !== undefined && (nearbySource.energy >= remainingCapacity || ticksToFill <= 5)) {
+							shouldMine = true;
+						}
+					}
+					
+					// Improved task priority for efficiency
+					if (shouldMine && currentCarry < carryCapacity * CARRY_CAPACITY_THRESHOLD) {
+						creep.memory.task = creep.memory.task || creep.getTask_Mine();
+					}
 					creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Source_Container();
 					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Source_Link();
-					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+					creep.memory.task = creep.memory.task || creep.getTask_Wait(5); // Shorter wait for faster response
 
 				} else if (creep.memory.role == "miner" || creep.memory.role == "carrier") {
 					creep.memory.task = creep.memory.task || creep.getTask_Pickup("energy");

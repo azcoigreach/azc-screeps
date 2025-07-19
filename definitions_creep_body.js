@@ -538,37 +538,30 @@
 					CARRY,
 					MOVE, MOVE, MOVE];
 			case 4:
-				return [ // 1100 energy, 8x WORK, 1x CARRY, 5x MOVE
-					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
-					CARRY,
+				return [ // 900 energy, 5x WORK, 3x CARRY, 5x MOVE - optimized for source regeneration
+					WORK, WORK, WORK, WORK, WORK,
+					CARRY, CARRY, CARRY,
 					MOVE, MOVE, MOVE, MOVE, MOVE];
 			case 5:
-				return [ // 1550 energy, 12x WORK, 1x CARRY, 7x MOVE
-					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
-					WORK, WORK,
-					CARRY,
-					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
+				return [ // 1250 energy, 5x WORK, 5x CARRY, 6x MOVE - balanced for efficiency
+					WORK, WORK, WORK, WORK, WORK,
+					CARRY, CARRY, CARRY, CARRY, CARRY,
+					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
 			case 6:
-				return [ // 1850 energy, 14x WORK, 1x CARRY, 8x MOVE
-					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
-					WORK, WORK, WORK, WORK,
-					CARRY,
-					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
+				return [ // 1550 energy, 5x WORK, 7x CARRY, 7x MOVE - higher carry for better flow
+					WORK, WORK, WORK, WORK, WORK,
+					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
 			case 7:
-				return [ // 2700 energy, 20x WORK, 2x CARRY, 12x MOVE
-					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
-					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
-					CARRY, CARRY,
-					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
-					MOVE, MOVE];
+				return [ // 1850 energy, 5x WORK, 9x CARRY, 8x MOVE - optimized for source timing
+					WORK, WORK, WORK, WORK, WORK,
+					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
 			case 8:
-				return [ // 3900 energy, 28x WORK, 2x CARRY, 20x MOVE
-					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
-					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
-					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
-					CARRY, CARRY,
-					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
-					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
+				return [ // 2150 energy, 5x WORK, 11x CARRY, 9x MOVE - maximum efficiency
+					WORK, WORK, WORK, WORK, WORK,
+					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
 		}
 	},
 
@@ -585,37 +578,30 @@
 					WORK, WORK, WORK, WORK,
 					MOVE, MOVE, MOVE, MOVE];
 			case 4:
-				return [ // 1150 energy, 7x WORK, 1x CARRY, 8x MOVE
-					WORK, WORK, WORK, WORK, WORK, WORK, WORK,
-					CARRY,
-					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
+				return [ // 950 energy, 5x WORK, 2x CARRY, 7x MOVE - optimized for mobility
+					WORK, WORK, WORK, WORK, WORK,
+					CARRY, CARRY,
+					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
 			case 5:
-				return [ // 1600 energy, 10x WORK, 1x CARRY, 11x MOVE
-					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
-					CARRY,
-					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
-					MOVE];
+				return [ // 1350 energy, 5x WORK, 4x CARRY, 9x MOVE - balanced for efficiency
+					WORK, WORK, WORK, WORK, WORK,
+					CARRY, CARRY, CARRY, CARRY,
+					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
 			case 6:
-				return [ // 2050 energy, 13x WORK, 1x CARRY 14x MOVE
-					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
-					WORK, WORK, WORK,
-					CARRY,
-					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
-					MOVE, MOVE, MOVE, MOVE];
+				return [ // 1700 energy, 5x WORK, 6x CARRY, 11x MOVE - higher carry capacity
+					WORK, WORK, WORK, WORK, WORK,
+					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
 			case 7:
-				return [ // 2900 energy, 18x WORK, 2x CARRY, 20x MOVE
-					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
-					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
-					CARRY, CARRY,
+				return [ // 2050 energy, 5x WORK, 8x CARRY, 13x MOVE - optimized for long distance
+					WORK, WORK, WORK, WORK, WORK,
+					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
 					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
-					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
+					MOVE, MOVE, MOVE];
 			case 8:
-				return [ // 3650 energy, 23x WORK, 2x CARRY, 25x MOVE
-					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
-					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
-					WORK, WORK, WORK,
-					CARRY, CARRY,
-					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
+				return [ // 2400 energy, 5x WORK, 10x CARRY, 15x MOVE - maximum efficiency
+					WORK, WORK, WORK, WORK, WORK,
+					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
 					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
 					MOVE, MOVE, MOVE, MOVE, MOVE];
 		}
@@ -747,34 +733,33 @@
 				return [ // 400 energy, 4x CARRY, 4x MOVE
 					CARRY, MOVE, CARRY, MOVE, CARRY, MOVE, CARRY, MOVE];
 			case 3:
-				return [ // 600 energy, 8x CARRY, 4x MOVE
-					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
-					MOVE, MOVE, MOVE, MOVE];
+				return [ // 600 energy, 6x CARRY, 6x MOVE - balanced for efficiency
+					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
 			case 4:
-				return [ // 1000 energy, 13x CARRY, 7x MOVE
+				return [ // 1000 energy, 10x CARRY, 10x MOVE - optimized capacity
 					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
-					CARRY, CARRY, CARRY,
-					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
-			case 5:
-				return [ // 1400 energy, 18x CARRY, 10x MOVE
-					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
-					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
 					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
-			case 6:
-				return [ // 1800 energy, 24x CARRY, 12 MOVE
-					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+			case 5:
+				return [ // 1400 energy, 14x CARRY, 14x MOVE - increased throughput
 					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
 					CARRY, CARRY, CARRY, CARRY,
 					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
-					MOVE, MOVE];
-			case 7: case 8:
-				return [ // 2500 energy, 33x CARRY, 17x MOVE
+					MOVE, MOVE, MOVE, MOVE];
+			case 6:
+				return [ // 1800 energy, 18x CARRY, 18x MOVE - high capacity
 					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
-					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
-					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
-					CARRY, CARRY, CARRY,
+					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
 					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
-					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
+					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
+			case 7: case 8:
+				return [ // 2200 energy, 22x CARRY, 22x MOVE - maximum efficiency
+					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
+					CARRY, CARRY,
+					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
+					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
+					MOVE, MOVE];
 		}
 	},
 
@@ -807,13 +792,13 @@
 					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
 					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
 			case 7: case 8:
-				return [ // 2500 energy, 25x CARRY, 25x MOVE
+				return [ // 2200 energy, 22x CARRY, 22x MOVE
 					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
 					CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY,
-					CARRY, CARRY, CARRY, CARRY, CARRY,
+					CARRY, CARRY,
 					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
 					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE,
-					MOVE, MOVE, MOVE, MOVE, MOVE];
+					MOVE, MOVE];
 		}
 	},
 
