@@ -167,10 +167,11 @@
 					let shouldMine = false;
 					if (nearbySource && carryCapacity > 0) {
 						let remainingCapacity = carryCapacity - currentCarry;
-						let ticksToFill = Math.ceil(remainingCapacity / (creep.getActiveBodyparts(WORK) * 2));
+						let miningRate = creep.getActiveBodyparts(WORK) * HARVEST_POWER;
+						let ticksToFill = Math.ceil(remainingCapacity / miningRate);
 						
-						// Only mine if source has enough energy for efficient harvesting
-						if (nearbySource.energy >= remainingCapacity || ticksToFill <= 5) {
+						// Only mine if source is an energy source and has enough energy for efficient harvesting
+						if (nearbySource.energy !== undefined && (nearbySource.energy >= remainingCapacity || ticksToFill <= 5)) {
 							shouldMine = true;
 						}
 					}
