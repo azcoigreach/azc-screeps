@@ -677,25 +677,21 @@
 					return;
 				}
 
-				// Only get energy tasks if we're not full
-				if (_.sum(creep.carry) < creep.carryCapacity) {
-					creep.memory.task = creep.memory.task || creep.getTask_Boost();
+				// Get energy tasks while not at full capacity
+				creep.memory.task = creep.memory.task || creep.getTask_Boost();
 
-					if (!creep.memory.task && this.goToRoom(creep, creep.memory.room, true))
-						return;
-
-					// Priority: Controller links -> Controller containers -> Storage
-					creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Controller_Link();
-					creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Controller_Container();
-					creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage("energy", true);
-					creep.memory.task = creep.memory.task || creep.getTask_Pickup("energy");
-					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
-
-					
-
-					creep.runTask(creep);
+				if (!creep.memory.task && this.goToRoom(creep, creep.memory.room, true))
 					return;
-				}
+
+				// Priority: Controller links -> Controller containers -> Storage
+				creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Controller_Link();
+				creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Controller_Container();
+				creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage("energy", true);
+				creep.memory.task = creep.memory.task || creep.getTask_Pickup("energy");
+				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+
+				creep.runTask(creep);
+				return;
 			} else if (creep.memory.state == "upgrading") {
 				if (creep.carry["energy"] == 0) {
 					creep.memory.state = "refueling";
