@@ -787,7 +787,8 @@ Creep.prototype.getTask_Upgrade = function getTask_Upgrade(only_critical) {
 	if (!_.get(this.room, ["controller", "my"], false))
 		return;
 
-	if ((only_critical || only_critical == null) && _.get(this.room, ["controller", "ticksToDowngrade"]) <= 3500) {
+	// If only_critical is true, only upgrade when controller is in critical downgrade state
+	if (only_critical === true && _.get(this.room, ["controller", "ticksToDowngrade"]) <= 3500) {
 		return {
 			type: "upgrade",
 			id: this.room.controller.id,
@@ -796,7 +797,8 @@ Creep.prototype.getTask_Upgrade = function getTask_Upgrade(only_critical) {
 		};
 	}
 
-	if ((!only_critical || only_critical == null) && _.get(this.room, ["controller", "ticksToDowngrade"]) > 3500) {
+	// If only_critical is false or null, always upgrade
+	if (only_critical === false || only_critical == null) {
 		return {
 			type: "upgrade",
 			id: this.room.controller.id,
