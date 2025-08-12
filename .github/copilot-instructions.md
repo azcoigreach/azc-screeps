@@ -142,10 +142,19 @@ The bot stores configuration in `Memory` object:
 
 ### DO NOT Attempt
 - Adding Node.js dependencies (bot runs in Screeps engine, not Node.js)
-- Creating package.json or build scripts
+- Creating package.json or build scripts  
 - Using ES6 modules (use Screeps' require system)
 - Running npm/yarn commands
 - Setting up traditional unit tests
+- **NEVER CANCEL** profiling operations (they auto-complete after specified ticks)
+- Editing base_layouts CSV files directly (edit the Excel file instead)
+
+### CRITICAL Validation Before Committing
+1. **Syntax Test**: Verify code loads in Screeps without errors
+2. **Console Test**: Run `help()` to ensure console commands still work
+3. **Memory Test**: Ensure `Memory.hive` structure is not corrupted
+4. **CPU Test**: Verify bot doesn't exceed CPU limits with `Game.cpu.bucket > 500`
+5. **Function Test**: Test any new console commands work correctly in-game
 
 ### File Locations Reference
 - Main bot logic: `/` (root directory, 21 .js files)
