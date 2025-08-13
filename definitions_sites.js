@@ -245,38 +245,19 @@
 					delete Memory.rooms[rmColony].upgrader_force_spawn;
 				}
 
-				// Check if room has reached RCL 5+ and should spawn upgraders
-				let roomLevel = Game.rooms[rmColony].controller.level;
-				if (roomLevel >= 5) {
-					// Calculate upgrader amount based on remote mining sources
-					let remoteMiningSources = 0;
-					let remote_mining = _.get(Memory, ["sites", "mining"]);
-					if (remote_mining) {
-						let remote_list = _.filter(Object.keys(remote_mining), rem => { 
-							return rem != rmColony && _.get(remote_mining[rem], "colony") == rmColony; 
-						});
-						_.each(remote_list, rem => { 
-							remoteMiningSources += _.get(Memory, ["sites", "mining", rem, "survey", "source_amount"], 0); 
-						});
-					}
-					
-					// Base upgrader amount: 1 for every room level 5+
-					// Additional upgrader for every 2 remote mining sources
-					let baseUpgraders = 1;
-					let additionalUpgraders = Math.floor(remoteMiningSources / 2);
-					let totalUpgraders = baseUpgraders + additionalUpgraders;
-					
-					// Check if we need upgraders
-					if (_.get(popActual, "upgrader", 0) < totalUpgraders) {
-						Memory["hive"]["spawn_requests"].push({
-							room: rmColony, listRooms: listSpawnRooms,
-							priority: Math.lerpSpawnPriority(20, 22, _.get(popActual, "upgrader", 0), totalUpgraders),
-							level: _.get(popTarget, ["upgrader", "level"], room_level),
-							scale: _.get(popTarget, ["upgrader", "scale"], true),
-							body: _.get(popTarget, ["upgrader", "body"], "upgrader"),
-							name: null, args: { role: "upgrader", room: rmColony }
-						});
-					}
+				// Spawn upgraders based on population target and room level
+				let targetUpgraderCount = _.get(popTarget, ["upgrader", "amount"], 0);
+				let currentUpgraderCount = _.get(popActual, "upgrader", 0);
+				
+				if (currentUpgraderCount < targetUpgraderCount) {
+					Memory["hive"]["spawn_requests"].push({
+						room: rmColony, listRooms: listSpawnRooms,
+						priority: Math.lerpSpawnPriority(20, 22, currentUpgraderCount, targetUpgraderCount),
+						level: _.get(popTarget, ["upgrader", "level"], room_level),
+						scale: _.get(popTarget, ["upgrader", "scale"], true),
+						body: _.get(popTarget, ["upgrader", "body"], "upgrader"),
+						name: null, args: { role: "upgrader", room: rmColony }
+					});
 				}
 			},
 
