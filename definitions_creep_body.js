@@ -836,24 +836,46 @@
 
 	getBody_Upgrader: function (level) {
 		switch (level) {
-			case 1: case 2: case 3: case 4: case 5:
-				return [ // Prevent spawn locking with null body
-					MOVE];
-			case 6:
-				return [ // 650 energy, 4x WORK, 1x CARRY, 2x MOVE
-					WORK, WORK, WORK, WORK,
+			case 1:
+				return [ // 250 energy, 1x WORK, 1x CARRY, 2x MOVE
+					WORK,
 					CARRY,
 					MOVE, MOVE];
-			case 7:
-				return [ // 1050 energy, 6x WORK, 2x CARRY, 4x MOVE
-					WORK, WORK, WORK, WORK, WORK, WORK,
-					CARRY, CARRY,
+			case 2:
+				return [ // 400 energy, 2x WORK, 1x CARRY, 3x MOVE
+					WORK, WORK,
+					CARRY,
+					MOVE, MOVE, MOVE];
+			case 3:
+				return [ // 550 energy, 3x WORK, 1x CARRY, 4x MOVE
+					WORK, WORK, WORK,
+					CARRY,
 					MOVE, MOVE, MOVE, MOVE];
-			case 8:
-				return [ // 1450 energy, 8x WORK, 2x CARRY, 6x MOVE
-					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
-					CARRY, CARRY,
+			case 4:
+				return [ // 700 energy, 4x WORK, 1x CARRY, 5x MOVE
+					WORK, WORK, WORK, WORK,
+					CARRY,
+					MOVE, MOVE, MOVE, MOVE, MOVE];
+			case 5:
+				return [ // 850 energy, 5x WORK, 1x CARRY, 6x MOVE
+					WORK, WORK, WORK, WORK, WORK,
+					CARRY,
 					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
+			case 6:
+				return [ // 1000 energy, 6x WORK, 1x CARRY, 7x MOVE
+					WORK, WORK, WORK, WORK, WORK, WORK,
+					CARRY,
+					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
+			case 7:
+				return [ // 1150 energy, 7x WORK, 1x CARRY, 8x MOVE
+					WORK, WORK, WORK, WORK, WORK, WORK, WORK,
+					CARRY,
+					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
+			case 8:
+				return [ // 1300 energy, 8x WORK, 1x CARRY, 9x MOVE
+					WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK,
+					CARRY,
+					MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE];
 		}
 	},
 };
