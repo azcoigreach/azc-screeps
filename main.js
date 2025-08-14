@@ -48,6 +48,7 @@ require("definitions_hive_control");
 require("definitions_blueprint");
 require("definitions_blueprint_layouts");
 require("definitions_console_commands");
+require("definitions_flag_controller");
 require("definitions_visual_elements");
 require("definitions_cpu_profiling");
 require("definitions_grafana_statistics");
@@ -68,10 +69,12 @@ module.exports.loop = function () {
 	Control.clearDeadMemory();
 	Control.initMemory();
 	Control.initLabs();
-	Control.initVisuals();
+        Control.initVisuals();
 
-	Control.runColonies();
-	Control.runColonizations();
+        FlagController.run();
+        
+        Control.runColonies();
+        Control.runColonizations();
 	Control.runCombat();
 	Control.runHighwayMining();
 
