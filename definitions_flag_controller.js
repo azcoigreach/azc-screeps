@@ -10,7 +10,13 @@
  * Secondary colour (flag.secondaryColor) selects the action
  * within that group.
  *
- * Colour scheme:
+ * two-color scheme.
+ *
+ * Primary color (flag.color) selects the command group.
+ * Secondary color (flag.secondaryColor) selects the action
+ * within that group.
+ *
+ * Color scheme:
  * - COLOR_BLUE   : Expansion commands
  *     - COLOR_BROWN : Colonize room (place spawn)
  *     - COLOR_CYAN  : Reserve remote room (not implemented)
