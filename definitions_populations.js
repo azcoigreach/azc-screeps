@@ -11,24 +11,24 @@ Population_Colonization =
 
 Population_Colony = {
  Standalone: {
-     1: { worker: { level: 1, amount: 5, body: "worker_at" } },
-     2: { worker: { level: 2, amount: 5, body: "worker_at" } },
-     3: { worker: { level: 3, amount: 6, body: "worker_at" } },
-     4: { worker: { level: 4, amount: 6, body: "worker_at" } },
-     5: { worker: { level: 4, amount: 6, body: "worker_at" }, upgrader: { level: 5, amount: 1, body: "upgrader" } },
-     6: { worker: { level: 4, amount: 4 }, upgrader: { level: 6, amount: 1, body: "upgrader" } },
-     7: { worker: { level: 7, amount: 4 }, upgrader: { level: 7, amount: 1, body: "upgrader" } },
+     1: { worker: { level: 1, amount: 5, body: "worker_at" }, upgrader: { level: 1, amount: 2, body: "upgrader" } },
+     2: { worker: { level: 2, amount: 5, body: "worker_at" }, upgrader: { level: 2, amount: 2, body: "upgrader" } },
+     3: { worker: { level: 3, amount: 6, body: "worker_at" }, upgrader: { level: 3, amount: 3, body: "upgrader" } },
+     4: { worker: { level: 4, amount: 6, body: "worker_at" }, upgrader: { level: 4, amount: 3, body: "upgrader" } },
+     5: { worker: { level: 4, amount: 6, body: "worker_at" }, upgrader: { level: 5, amount: 4, body: "upgrader" } },
+     6: { worker: { level: 4, amount: 4 }, upgrader: { level: 6, amount: 4, body: "upgrader" } },
+     7: { worker: { level: 7, amount: 4 }, upgrader: { level: 7, amount: 2, body: "upgrader" } },
      8: { worker: { level: 7, amount: 3 }, upgrader: { level: 8, amount: 1, body: "upgrader" } }
  },
 
  Assisted: {
-     1: { worker: { level: 3, amount: 4, body: "worker_at" } },
-     2: { worker: { level: 3, amount: 4, body: "worker_at" } },
-     3: { worker: { level: 4, amount: 6, body: "worker_at" } },
-     4: { worker: { level: 5, amount: 6, body: "worker_at" } },
-     5: { worker: { level: 6, amount: 6, body: "worker_at" }, upgrader: { level: 5, amount: 1, body: "upgrader" } },
-     6: { worker: { level: 6, amount: 5 }, upgrader: { level: 6, amount: 1, body: "upgrader" } },
-     7: { worker: { level: 7, amount: 4 }, upgrader: { level: 7, amount: 1, body: "upgrader" } },
+     1: { worker: { level: 3, amount: 4, body: "worker_at" }, upgrader: { level: 1, amount: 2, body: "upgrader" } },
+     2: { worker: { level: 3, amount: 4, body: "worker_at" }, upgrader: { level: 2, amount: 2, body: "upgrader" } },
+     3: { worker: { level: 4, amount: 6, body: "worker_at" }, upgrader: { level: 3, amount: 3, body: "upgrader" } },
+     4: { worker: { level: 5, amount: 6, body: "worker_at" }, upgrader: { level: 4, amount: 3, body: "upgrader" } },
+     5: { worker: { level: 6, amount: 6, body: "worker_at" }, upgrader: { level: 5, amount: 4, body: "upgrader" } },
+     6: { worker: { level: 6, amount: 5 }, upgrader: { level: 6, amount: 4, body: "upgrader" } },
+     7: { worker: { level: 7, amount: 4 }, upgrader: { level: 7, amount: 2, body: "upgrader" } },
      8: { worker: { level: 7, amount: 3 }, upgrader: { level: 8, amount: 1, body: "upgrader" } }
  }
 };
