@@ -866,21 +866,47 @@ Creep.prototype.getTask_Repair = function getTask_Repair(only_critical) {
 };
 
 Creep.prototype.getTask_Build = function getTask_Build() {
-	let site = _.head(_.sortBy(_.filter(this.room.find(FIND_CONSTRUCTION_SITES),
+	let room = this.room;
+	let level = room.controller.level;
+	
+	let site = _.head(_.sortBy(_.filter(room.find(FIND_CONSTRUCTION_SITES),
 		s => { return s.my; }),
 		s => {
 			let p = 0;
-			switch (s.structureType) {
-				case "spawn": p = 2; break;
-				case "tower": p = 3; break;
-				case "extension": p = 4; break;
-				case "storage": p = 5; break;
-				default: p = 6; break;
-				case "road": p = 7; break;
+			
+			// Early game urgency system - prioritize RCL progression structures
+			if (level <= 4) {
+				switch (s.structureType) {
+					case "spawn": p = 1; break; // Highest priority
+					case "extension": p = 2; break; // Critical for RCL progression
+					case "tower": p = 3; break; // Defense and energy storage
+					case "storage": p = 4; break; // Needed for RCL 5
+					case "container": p = 5; break; // Energy management
+					case "road": p = 6; break;
+					default: p = 7; break;
+				}
+			} else {
+				// Mid/late game: Standard priorities
+				switch (s.structureType) {
+					case "spawn": p = 2; break;
+					case "tower": p = 3; break;
+					case "extension": p = 4; break;
+					case "storage": p = 5; break;
+					case "road": p = 7; break;
+					default: p = 6; break;
+				}
 			}
 
+			// Boost priority for structures that are already being built
 			if (s.progress > 0)
 				p -= 1;
+
+			// Additional urgency for critical RCL progression structures
+			if (level <= 4) {
+				if (s.structureType == "extension" && level < 3) p -= 2; // Urgent for RCL 2
+				if (s.structureType == "tower" && level == 3) p -= 2; // Urgent for RCL 3
+				if (s.structureType == "storage" && level == 4) p -= 2; // Urgent for RCL 4
+			}
 
 			return p;
 		}));

@@ -107,20 +107,43 @@
 					c.memory.role == "upgrader" && c.memory.room == creep.room.name).length > 0;
 				let isCriticalDowngrade = _.get(Memory, ["rooms", creep.room.name, "survey", "downgrade_critical"], false);
 
-				// Only upgrade if room is below RCL 6, or if critical downgrade and no upgraders available
-				let shouldUpgrade = roomLevel < 6 || (isCriticalDowngrade && !hasUpgraders);
+				// Early game priority: Focus on building structures for RCL progression
+				if (roomLevel <= 4) {
+					// Priority 1: Build critical RCL progression structures
+					creep.memory.task = creep.memory.task || creep.getTask_Build();
+					
+					// Priority 2: Repair critical structures (walls, ramparts)
+					creep.memory.task = creep.memory.task || creep.getTask_Repair(true);
+					
+					// Priority 3: Upgrade only if no upgraders and not critical downgrade
+					let shouldUpgrade = !hasUpgraders && !isCriticalDowngrade;
+					if (shouldUpgrade) {
+						creep.memory.task = creep.memory.task || creep.getTask_Upgrade(true);
+						creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
+					}
+					
+					// Priority 4: Other tasks
+					creep.memory.task = creep.memory.task || creep.getTask_Sign();
+					creep.memory.task = creep.memory.task || creep.getTask_Repair(false);
+					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral");
+					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+				} else {
+					// Mid/late game: Standard priority order
+					// Only upgrade if room is below RCL 6, or if critical downgrade and no upgraders available
+					let shouldUpgrade = roomLevel < 6 || (isCriticalDowngrade && !hasUpgraders);
 
-				if (shouldUpgrade) {
-					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(true);
-					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
+					if (shouldUpgrade) {
+						creep.memory.task = creep.memory.task || creep.getTask_Upgrade(true);
+						creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
+					}
+
+					creep.memory.task = creep.memory.task || creep.getTask_Sign();
+					creep.memory.task = creep.memory.task || creep.getTask_Repair(true);
+					creep.memory.task = creep.memory.task || creep.getTask_Build();
+					creep.memory.task = creep.memory.task || creep.getTask_Repair(false);
+					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral");
+					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 				}
-
-				creep.memory.task = creep.memory.task || creep.getTask_Sign();
-				creep.memory.task = creep.memory.task || creep.getTask_Repair(true);
-				creep.memory.task = creep.memory.task || creep.getTask_Build();
-				creep.memory.task = creep.memory.task || creep.getTask_Repair(false);
-				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral"); // Deposit any commodities to storage
-				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 
 				creep.runTask(creep);
 				return;
