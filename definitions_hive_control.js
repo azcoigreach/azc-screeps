@@ -97,7 +97,7 @@
 		this.setPulse("spawn", 29, 60);
 		this.setPulse("lab", 1999, 2000);
 		this.setPulse("factory", 199, 400); // Factory assignments every 199-400 ticks
-		this.setPulse("blueprint", 199, 1000);
+		this.setPulse("blueprint", 19, 100); // Much faster blueprint for early game building
 
 		if (_.get(Memory, ["rooms"]) == null) _.set(Memory, ["rooms"], new Object());
 		if (_.get(Memory, ["hive", "allies"]) == null) _.set(Memory, ["hive", "allies"], new Array());
@@ -268,11 +268,26 @@
 			let populationRatio = populationActual / populationTarget;
 			_.set(Memory, ["rooms", room, "population", "total"], populationRatio);
 
-			// Calculate level once
+			// Calculate level once - improved scaling for early game
 			let scale = _.get(request, "scale", true);
-			let level = scale == false
-				? Math.min(request.level, bestSpawn.room.getLevel())
-				: Math.max(1, Math.min(Math.round(populationRatio * request.level), bestSpawn.room.getLevel()));
+			let baseLevel = _.get(request, "level", 1);
+			let roomLevel = bestSpawn.room.getLevel();
+			
+			let level;
+			if (scale == false) {
+				level = Math.min(baseLevel, roomLevel);
+			} else {
+				// Improved scaling: ensure minimum level based on RCL, then scale by population
+				let minLevel = Math.max(1, Math.min(baseLevel, roomLevel));
+				let scaledLevel = Math.max(1, Math.min(Math.round(populationRatio * baseLevel), roomLevel));
+				
+				// For early game (RCL 1-4), ensure we don't go too low on level
+				if (roomLevel <= 4) {
+					level = Math.max(minLevel, Math.max(1, Math.floor(scaledLevel * 0.8)));
+				} else {
+					level = Math.max(minLevel, scaledLevel);
+				}
+			}
 			request.args["level"] = level;
 
 			let body = Creep_Body.getBody(request.body, level);

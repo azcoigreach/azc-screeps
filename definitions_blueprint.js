@@ -57,7 +57,8 @@
 		if (room.controller == null && !room.controller.my)
 			return;
 
-		let sites_per_room = 10;
+		// Dynamic sites per room based on RCL - more aggressive in early game
+		let sites_per_room = level <= 4 ? 15 : 10; // More construction sites in early game
 		let level = room.controller.level;
 		let origin = _.get(Memory, ["rooms", room.name, "layout", "origin"]);
 		let layout = _.get(Memory, ["rooms", room.name, "layout", "name"]);
@@ -152,9 +153,39 @@
 		if (_.filter(structures, s => { return s.structureType == "spawn"; }).length == 0)
 			return;
 
-		// Order by priority; defense, then increased creep capacity
-		sites = Blueprint.iterateStructure(room, sites, structures, layout, origin, sites_per_room, blocked_areas, "tower");
-		sites = Blueprint.iterateStructure(room, sites, structures, layout, origin, sites_per_room, blocked_areas, "extension");
+		// Early game priority: Focus on RCL progression structures
+		if (level <= 4) {
+			// Priority 1: Extensions for RCL progression (needed for RCL 2+)
+			sites = Blueprint.iterateStructure(room, sites, structures, layout, origin, sites_per_room, blocked_areas, "extension");
+			
+			// Priority 2: Tower for RCL 3+ (defense and energy storage)
+			if (level >= 3) {
+				sites = Blueprint.iterateStructure(room, sites, structures, layout, origin, sites_per_room, blocked_areas, "tower");
+			}
+			
+			// Priority 3: Storage for RCL 4+ (needed for RCL 5)
+			if (level >= 4) {
+				sites = Blueprint.iterateStructure(room, sites, structures, layout, origin, sites_per_room, blocked_areas, "storage");
+			}
+			
+			// Early game containers for energy management
+			if (sites < sites_per_room) {
+				let containers = _.filter(all_structures, s => { return s.structureType == "container"; });
+				_.each(sources, source => {
+					if (sites < sites_per_room && source.pos.findInRange(containers, 1).length < 2) {
+						let adj = source.pos.getBuildableTile_Adjacent();
+						if (adj != null && adj.createConstructionSite("container") == OK) {
+							console.log(`<font color=\"#6065FF\">[Blueprint]</font> ${room.name} placing container at (${adj.x}, ${adj.y})`);
+							sites += 1;
+						}
+					}
+				});
+			}
+		} else {
+			// Mid/late game: Standard priority order
+			sites = Blueprint.iterateStructure(room, sites, structures, layout, origin, sites_per_room, blocked_areas, "tower");
+			sites = Blueprint.iterateStructure(room, sites, structures, layout, origin, sites_per_room, blocked_areas, "extension");
+		}
 
 		if (level >= 3) {
 			// Iterate sources, create two containers adjacent to each source
