@@ -104,11 +104,11 @@ allies.clear();
 - `roomName` (string): Room name (e.g., "W1N1")
 - `originX` (integer): Top-left spawn X coordinate
 - `originY` (integer): Top-left spawn Y coordinate
-- `layoutName` (string): "default_horizontal", "default_vertical", or "default_compact"
+- `layoutName` (string): "def_hor", "def_vert", "def_comp", or variants with "_w" suffix for walled versions
 
 **Example**:
 ```javascript
-blueprint.set_layout("W1N1", 25, 25, "default_horizontal");
+blueprint.set_layout("W1N1", 25, 25, "def_hor");
 ```
 
 **Output**:
@@ -248,13 +248,13 @@ blueprint.redefine_links();
 
 **Example**:
 ```javascript
-empire.colonize("W1N1", "W3N3", {origin: {x: 25, y: 25}, name: "default_horizontal"});
+empire.colonize("W1N1", "W3N3", {origin: {x: 25, y: 25}, name: "def_hor"});
 ```
 
 **With Routing**:
 ```javascript
 empire.colonize("W1N1", "W5N5", 
-    {origin: {x: 25, y: 25}, name: "default_horizontal"},
+    {origin: {x: 25, y: 25}, name: "def_hor"},
     ["W1N1", "W2N2", "W3N3", "W4N4", "W5N5"]
 );
 ```

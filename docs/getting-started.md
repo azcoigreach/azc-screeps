@@ -140,13 +140,20 @@ The bot uses **base layouts** to auto-build structures. The origin is the **top-
 **Example**: If your spawn is at (25, 25), and you want the default horizontal layout:
 
 ```javascript
-blueprint.set_layout("W1N1", 25, 25, "default_horizontal");
+blueprint.set_layout("W1N1", 25, 25, "def_hor");
 ```
 
 **Available Layouts**:
-- `"default_horizontal"` – Standard horizontal spread (recommended for most rooms)
-- `"default_vertical"` – Vertical layout (good for narrow rooms)
-- `"default_compact"` – Compact design (for cramped spaces)
+- `"def_hor"` – Default horizontal spread (recommended for most rooms)
+- `"def_hor_w"` – Default horizontal with walls
+- `"def_vert"` – Default vertical layout (good for narrow rooms)
+- `"def_vert_w"` – Default vertical with walls
+- `"def_comp"` – Default compact design (for cramped spaces)
+- `"def_comp_w"` – Default compact with walls
+- `"comp_hor"` – Compact horizontal
+- `"comp_hor_w"` – Compact horizontal with walls
+- `"comp_vert"` – Compact vertical
+- `"comp_vert_w"` – Compact vertical with walls
 
 **What Happens**: Every 200-500 ticks, the bot places up to 5 construction sites automatically based on your layout.
 
@@ -282,7 +289,7 @@ Peak CPU: 34.2
 - Blocked by terrain or existing structures
 
 **Solutions**:
-1. Set layout: `blueprint.set_layout("W1N1", x, y, "default_horizontal")`
+1. Set layout: `blueprint.set_layout("W1N1", x, y, "def_hor")`
 2. Remove old construction sites manually or wait for them to complete
 3. Block obstructed areas: `blueprint.block_area(...)`
 
@@ -333,7 +340,7 @@ Before you expand beyond your first room, set these basics:
 
 ```javascript
 // ✅ Base layout defined
-blueprint.set_layout("W1N1", 25, 25, "default_horizontal");
+blueprint.set_layout("W1N1", 25, 25, "def_hor");
 
 // ✅ Ally list configured (if you have allies)
 allies.add_list(["Ally1", "Ally2"]);
@@ -366,7 +373,7 @@ help();                          // List all commands
 system_status();                 // Health check
 
 // Setup
-blueprint.set_layout("W1N1", 25, 25, "default_horizontal");
+blueprint.set_layout("W1N1", 25, 25, "def_hor");
 allies.add("FriendName");
 
 // Monitoring

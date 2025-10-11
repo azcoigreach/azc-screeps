@@ -265,7 +265,7 @@ log.population();           // Check worker count
 
 1. **Layout Not Set**:
    ```javascript
-   blueprint.set_layout("W1N1", 25, 25, "default_horizontal");
+   blueprint.set_layout("W1N1", 25, 25, "def_hor");
    ```
 
 2. **Construction Site Limit Reached** (100 per player):

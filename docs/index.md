@@ -19,7 +19,7 @@
 5. **Set Up Your First Room**:
    ```javascript
    // Set your base layout (origin = top-left spawn position)
-   blueprint.set_layout("W1N1", 25, 25, "default_horizontal");
+   blueprint.set_layout("W1N1", 25, 25, "def_hor");
    ```
 6. **Monitor Performance**: Run `profiler.run(50)` to baseline your CPU usage
 7. **Adjust Visuals** (if CPU > 80%):
@@ -108,11 +108,11 @@ visuals.set_performance(10);     // Update visuals every 10 ticks
 visuals.get_performance();       // Show current visual settings
 
 // === ROOM SETUP ===
-blueprint.set_layout("W1N1", 25, 25, "default_horizontal");  // Set base origin
+blueprint.set_layout("W1N1", 25, 25, "def_hor");  // Set base origin
 blueprint.block_area("W1N1", 10, 10, 15, 15);                // Block construction area
 
 // === EXPANSION ===
-empire.colonize("W1N1", "W2N1", {origin: {x: 25, y: 25}, name: "default_horizontal"});
+empire.colonize("W1N1", "W2N1", {origin: {x: 25, y: 25}, name: "def_hor"});
 empire.remote_mining("W1N1", "W2N1");  // Start remote mining
 
 // === ECONOMY ===
