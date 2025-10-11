@@ -38,10 +38,7 @@ help();
 // 3. Set your base layout:
 blueprint.set_layout("W1N1", 25, 25, "def_hor");
 
-// 4. Check health:
-system_status();
-
-// 5. Expand:
+// 4. Expand:
 empire.remote_mining("W1N1", "W2N1");
 ```
 
