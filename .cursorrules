@@ -414,4 +414,5 @@ The user prefers thorough documentation of context in case a new chat session is
 - Why changes were made
 - How to test the changes
 - Any dependencies or related systems affected
+- All documentation including deveopment notes go into the wiki in the 'docs' folder. The only exception is the readme.md in the root of the repo.
 

@@ -494,6 +494,7 @@ Always document:
 - **Why**: Purpose and reasoning
 - **How**: Usage examples
 - **Dependencies**: Related systems
+- **Wiki**: All documentation including deveopment notes go into the wiki in the 'docs' folder. The only exception is the readme.md in the root of the repo.
 
 Use comments:
 ```javascript
