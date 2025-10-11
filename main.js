@@ -98,6 +98,9 @@ module.exports.loop = function () {
 	Control.endMemory();
 	Stats_Grafana.Run();
 
+	// Pixel generation logic
+	Control.generatePixels();
+
 	Stats_CPU.Finish();
 };
 

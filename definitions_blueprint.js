@@ -54,12 +54,12 @@
 	},
 
 	Run: function (room) {
-		if (room.controller == null && !room.controller.my)
+		if (room.controller == null || !room.controller.my)
 			return;
 
+		let level = room.controller.level;
 		// Dynamic sites per room based on RCL - more aggressive in early game
 		let sites_per_room = level <= 4 ? 15 : 10; // More construction sites in early game
-		let level = room.controller.level;
 		let origin = _.get(Memory, ["rooms", room.name, "layout", "origin"]);
 		let layout = _.get(Memory, ["rooms", room.name, "layout", "name"]);
 		let blocked_areas = _.get(Memory, ["rooms", room.name, "layout", "blocked_areas"]);

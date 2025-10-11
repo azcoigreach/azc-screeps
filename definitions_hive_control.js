@@ -494,4 +494,54 @@
 				}
 			});
 	},
+
+	generatePixels: function () {
+		// Get pixel generation settings from memory (defaults: enabled, 80% CPU threshold)
+		let pixelEnabled = _.get(Memory, ["hive", "pixels", "enabled"], true);
+		let cpuThreshold = _.get(Memory, ["hive", "pixels", "cpu_threshold"], 0.8);
+
+		// Exit early if pixel generation is disabled
+		if (!pixelEnabled) {
+			return;
+		}
+
+		// Check if bucket is full (required for pixel generation)
+		if (Game.cpu.bucket < 10000) {
+			return;
+		}
+
+		// Calculate average CPU usage (use getUsed at end of tick)
+		let cpuUsed = Game.cpu.getUsed();
+		let cpuLimit = Game.cpu.limit;
+		let cpuUsagePercent = cpuUsed / cpuLimit;
+
+		// Only generate pixels if CPU usage is below threshold
+		if (cpuUsagePercent < cpuThreshold) {
+			let result = Game.cpu.generatePixel();
+			
+			if (result === OK) {
+				// Track pixel generation statistics
+				if (!Memory.hive.pixels.stats) {
+					Memory.hive.pixels.stats = {
+						total_generated: 0,
+						last_generated: 0,
+						generation_history: []
+					};
+				}
+				
+				Memory.hive.pixels.stats.total_generated++;
+				Memory.hive.pixels.stats.last_generated = Game.time;
+				
+				// Keep last 10 generation times for rate calculation
+				Memory.hive.pixels.stats.generation_history.push(Game.time);
+				if (Memory.hive.pixels.stats.generation_history.length > 10) {
+					Memory.hive.pixels.stats.generation_history.shift();
+				}
+				
+				console.log(`<font color=\"#FFD700\">[Pixels]</font> Generated pixel! Total: ${Memory.hive.pixels.stats.total_generated}, CPU: ${(cpuUsagePercent * 100).toFixed(1)}%, Bucket: ${Game.cpu.bucket}`);
+			} else {
+				console.log(`<font color=\"#FF6B6B\">[Pixels]</font> Failed to generate pixel. Error code: ${result}`);
+			}
+		}
+	},
 };

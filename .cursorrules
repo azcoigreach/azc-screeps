@@ -1,0 +1,368 @@
+# Screeps Bot Development Instructions
+
+## Project Overview
+This is an advanced Screeps bot codebase forked from tanjera/screeps with extensive enhancements for colony management, combat, resource management, and factory operations. The bot is designed to be semi-automated with manual console command control for strategic decisions.
+
+## Code Organization & Architecture
+
+### Main Entry Point
+- **`main.js`**: Central entry point with module.exports.loop function
+  - Contains table of contents with section markers (e.g., [sec01a], [sec02b])
+  - Requires all module files in specific order
+  - Implements the main game loop with Control flow
+
+### File Structure by Category
+
+#### 1. Overloads (Prototype Extensions)
+Location: `overloads_*.js` files
+Purpose: Extend built-in Screeps prototypes (Creep, Room, RoomPosition, Lab)
+
+- **`overloads_general.js`** [sec01a]: General utility overloads and helper functions
+- **`overloads_creep.js`** [sec01b]: Creep prototype extensions (behavior, state management)
+- **`overloads_creep_tasks.js`** [sec01c]: Task system for creeps (withdraw, deposit, pickup, mine, build, repair)
+- **`overloads_creep_travel.js`** [sec01d]: Travel and pathfinding logic for creeps
+- **`overloads_lab.js`** [sec01e]: Lab automation and reaction management
+- **`overloads_room.js`** [sec01f]: Room prototype extensions (resource tracking, level calculation)
+- **`overloads_room_position.js`** [sec01g]: RoomPosition utilities
+
+**When to add code here:**
+- Extending Creep, Room, RoomPosition, Lab, or other game objects with new methods
+- Adding utility functions that should be available on game objects
+- Format: `Creep.prototype.methodName = function() { ... };`
+
+#### 2. Definitions (Core Logic Modules)
+Location: `definitions_*.js` files
+Purpose: Define global objects and systems
+
+- **`definitions_populations.js`** [sec02a]: Population templates for different room types (colonies, mining)
+- **`definitions_combat_populations.js`** [sec02b]: Combat-specific population templates
+- **`definitions_creep_body.js`** [sec03a]: Creep body part configurations by type and level
+- **`definitions_creep_roles.js`** [sec03b]: Creep role behaviors (Worker, Scout, Soldier, etc.)
+- **`definitions_creep_combat_roles.js`** [sec03c]: Combat-specific role behaviors
+- **`definitions_sites.js`** [sec04a]: Site management system (colonies, mining, combat)
+- **`definitions_hive_control.js`** [sec05a]: Central Control object (main colony management)
+- **`definitions_blueprint.js`** [sec06a]: Automated base building system
+- **`definitions_blueprint_layouts.js`** [sec06b]: Base layout definitions and coordinates
+- **`definitions_console_commands.js`** [sec07a]: Console command interface (help, empire, resources, etc.)
+- **`definitions_flag_controller.js`**: Flag-based control system
+- **`definitions_visual_elements.js`** [sec08a]: Visual overlays and room info displays
+- **`definitions_cpu_profiling.js`** [sec09a]: CPU profiling system
+- **`definitions_grafana_statistics.js`** [sec10a]: Statistics export for Grafana
+
+**When to add code here:**
+- Creating new systems or subsystems
+- Defining global objects (global.ObjectName = { ... })
+- Adding new console commands
+- Format: `global.SystemName = { method: function() { ... } };`
+
+#### 3. Base Layouts
+Location: `base_layouts/` directory
+- **`base_layouts.xlsx`**: Visual representation of base layouts
+- **`*.csv`**: CSV exports of layouts (default horizontal/vertical/compact with walls)
+- **`csv_to_coords/`**: Conversion utilities
+
+### Coding Conventions
+
+#### Global Object Pattern
+```javascript
+// In definitions files
+global.SystemName = {
+    method: function(params) {
+        // Implementation
+    },
+    
+    anotherMethod: function() {
+        // Implementation
+    }
+};
+```
+
+#### Prototype Extension Pattern
+```javascript
+// In overloads files
+Creep.prototype.newMethod = function() {
+    // Access instance with 'this'
+    return this.property;
+};
+
+Room.prototype.customFunction = function(param) {
+    // Implementation
+};
+```
+
+#### Memory Access Pattern
+```javascript
+// Use lodash _.get for safe memory access
+let value = _.get(Memory, ["rooms", roomName, "field"], defaultValue);
+
+// Use _.get for nested game objects too
+let controller = _.get(Game, ["rooms", roomName, "controller"]);
+```
+
+#### Task System Pattern
+```javascript
+// Tasks are stored in creep.memory.task
+creep.memory.task = {
+    type: "withdraw",      // Task type
+    target: targetId,      // Target object ID
+    resource: "energy",    // Resource type (if applicable)
+    timer: 30             // Timeout timer
+};
+
+// Get task (returns task object or null)
+creep.memory.task = creep.getTask_Withdraw_Storage("energy", false);
+
+// Run task
+creep.runTask(creep);
+```
+
+## MCP Integration for Screeps
+
+### Available MCP Tools
+This project has access to Screeps MCP tools for direct server interaction:
+
+#### 1. Code Upload (Multi-File Support)
+```javascript
+// Upload entire directory (PREFERRED METHOD)
+mcp_screeps_upload_code({
+    mainJsPath: "/home/azcoigreach/repos/azc-screeps",  // Directory path
+    branch: "default"  // Optional, defaults to "default"
+});
+
+// Upload single main.js file
+mcp_screeps_upload_code({
+    mainJsPath: "/home/azcoigreach/repos/azc-screeps/main.js",
+    branch: "default"
+});
+```
+
+**Important Notes:**
+- When uploading a directory, ALL .js files are uploaded as modules
+- The Screeps server automatically bundles modules using require()
+- Always upload the entire directory, not individual files
+- The branch parameter defaults to "default"
+
+#### 2. Console Operations
+```javascript
+// Get console logs
+mcp_screeps_get_console({ clearBuffer: false });
+
+// Execute console commands
+mcp_screeps_execute_command({ command: "Game.time" });
+mcp_screeps_execute_command({ command: "help()" });
+```
+
+#### 3. Memory Management
+```javascript
+// Get memory
+mcp_screeps_get_memory({ path: "rooms.W1N1" });
+mcp_screeps_get_memory({ path: "" }); // Get full memory
+
+// Set memory
+mcp_screeps_set_memory({ 
+    path: "config.debug", 
+    value: JSON.stringify(true) 
+});
+```
+
+#### 4. Game Information
+```javascript
+// Get room terrain
+mcp_screeps_get_room_terrain({ 
+    roomName: "W1N1", 
+    shard: "shard0" 
+});
+
+// Get room status
+mcp_screeps_get_room_status({ 
+    roomName: "W1N1", 
+    shard: "shard0" 
+});
+
+// Get room objects (structures, creeps, etc.)
+mcp_screeps_get_room_objects({ roomName: "W1N1" });
+
+// Get user info
+mcp_screeps_get_user_info({});
+
+// Get game time
+mcp_screeps_get_game_time({ shard: "shard0" });
+```
+
+#### 5. Troubleshooting & Analysis
+```javascript
+// Analyze performance
+mcp_screeps_analyze_performance({});
+
+// Check for errors
+mcp_screeps_check_for_errors({});
+
+// Comprehensive health check
+mcp_screeps_troubleshoot_bot({});
+```
+
+### Typical Development Workflow with MCP
+
+1. **Make Code Changes**: Edit files locally
+2. **Upload to Screeps**: Use MCP to upload the entire directory
+3. **Check Console**: View logs to see if code loaded successfully
+4. **Test Commands**: Execute console commands to test functionality
+5. **Debug**: Check memory, performance, and errors using MCP tools
+
+Example workflow:
+```javascript
+// 1. Upload code
+mcp_screeps_upload_code({
+    mainJsPath: "/home/azcoigreach/repos/azc-screeps"
+});
+
+// 2. Check console for errors
+mcp_screeps_get_console({ clearBuffer: false });
+
+// 3. Test a console command
+mcp_screeps_execute_command({ command: "system_status()" });
+
+// 4. Check for runtime errors
+mcp_screeps_check_for_errors({});
+
+// 5. Analyze performance
+mcp_screeps_analyze_performance({});
+```
+
+## Console Command System
+
+All console commands are defined in `definitions_console_commands.js`. Commands are registered globally and available in the Screeps console.
+
+### Main Command Categories
+- **`help(category)`**: Display help for commands
+- **`empire.*`**: Empire management (colonize, remote mining, spawn assist)
+- **`blueprint.*`**: Base layout and construction
+- **`resources.*`**: Resource management (labs, factories, market)
+- **`factories.*`**: Factory production management
+- **`allies.*`**: Ally management
+- **`log.*`**: Information logging commands
+- **`profiler.*`**: CPU profiling
+- **`visuals.*`**: Visual performance controls
+
+### Adding New Console Commands
+```javascript
+// In definitions_console_commands.js
+global.commandName = function(params) {
+    // Command implementation
+    console.log("Command output");
+};
+
+// Add to help system
+global.help = function(category) {
+    // ... existing help code ...
+    
+    // Add your command to appropriate category
+    if (category === "your_category") {
+        console.log("commandName(params) - Description");
+    }
+};
+```
+
+## Performance & Optimization
+
+### CPU Management
+- **Pulsing System**: Tasks pulse at variable intervals based on CPU bucket
+- **`hasCPU()`**: Check before running expensive operations
+- **`isPulse_Short()`, `isPulse_Long()`**: Check pulse timing
+- **Profiling**: Use `profiler.run(cycles)` and `profiler.analyze()`
+
+### Visual Performance
+- Visuals can be CPU-intensive
+- Use `visuals.set_performance(ticks)` to control update interval
+- Cache expensive calculations
+- Default: 5 tick intervals
+
+### Memory Optimization
+- Clean dead memory with `Control.clearDeadMemory()`
+- Use safe memory access with `_.get()`
+- Avoid deep memory structures when possible
+
+## Common Development Tasks
+
+### Adding a New Creep Role
+1. Define body configuration in `definitions_creep_body.js`
+2. Add role behavior in `definitions_creep_roles.js` or `definitions_creep_combat_roles.js`
+3. Add to population template in `definitions_populations.js`
+4. Update task system in `overloads_creep_tasks.js` if new tasks needed
+
+### Adding a New Console Command
+1. Open `definitions_console_commands.js`
+2. Add global function: `global.commandName = function() { ... };`
+3. Add to help system in appropriate category
+4. Test with MCP: `mcp_screeps_execute_command({ command: "commandName()" })`
+
+### Modifying Base Layouts
+1. Edit layouts in `base_layouts/base_layouts.xlsx`
+2. Export to CSV files
+3. Update `definitions_blueprint_layouts.js` with new coordinates
+4. Test with `blueprint.set_layout(room, x, y, "layout_name")`
+
+### Adding New Factory Production
+1. Commodity definitions are pulled from `COMMODITIES` constant
+2. Set targets via console: `factories.set_production(commodity, amount, priority)`
+3. Factory logic is in `definitions_hive_control.js` (Control.factories)
+4. Operator creeps managed in `definitions_creep_roles.js`
+
+### Debugging Issues
+1. Check console logs: `mcp_screeps_get_console()`
+2. Run error check: `mcp_screeps_check_for_errors()`
+3. Profile CPU usage: `profiler.run(100)` then `profiler.analyze()`
+4. Check system status: Execute `system_status()` command
+5. Inspect memory: `mcp_screeps_get_memory({ path: "..." })`
+
+## Important Notes
+
+### Load Order
+- Files MUST be required in `main.js` in dependency order
+- Overloads before definitions (prototypes must exist first)
+- Core systems before specialized systems
+
+### Memory Structure
+- `Memory.hive`: Central control data
+- `Memory.rooms[roomName]`: Room-specific data
+- `Memory.sites[siteId]`: Site management data
+- `Memory.creeps[creepName]`: Creep-specific data (auto-cleaned)
+
+### Task System
+- Tasks are temporary and have timers
+- Tasks auto-expire and are deleted
+- Use `creep.getTask_*()` methods to generate tasks
+- Use `creep.runTask(creep)` to execute tasks
+
+### Spawning System
+- Based on population demand and room level
+- Uses creep "levels" (1-8) matching RCL
+- Auto-scales based on energy and available spawns
+- Spawn assistance allows multi-room cooperation
+
+## Testing Checklist
+
+Before uploading code to Screeps:
+- [ ] No syntax errors (linter check)
+- [ ] Required order maintained in main.js
+- [ ] Global objects properly defined
+- [ ] Memory access uses _.get() for safety
+- [ ] CPU-intensive operations wrapped in hasCPU() checks
+- [ ] Console commands added to help system
+- [ ] Comments follow existing style
+
+After uploading:
+- [ ] Check console for runtime errors
+- [ ] Verify Game.time is incrementing
+- [ ] Test new console commands
+- [ ] Run `system_status()` to verify systems
+- [ ] Profile CPU if adding significant logic
+
+## Documentation Preference
+The user prefers thorough documentation of context in case a new chat session is started. Always document:
+- What changes were made
+- Where changes were made (file and section)
+- Why changes were made
+- How to test the changes
+- Any dependencies or related systems affected
+
