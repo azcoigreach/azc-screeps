@@ -1,0 +1,74 @@
+name: Sync Docs to Wiki
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+
+jobs:
+  sync-wiki:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Clone Wiki Repository
+        run: |
+          git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki
+
+      - name: Prepare Wiki Content
+        run: |
+          # Remove all existing content from wiki
+          rm -rf wiki/*
+          
+          # Copy all documentation files to wiki
+          cp -R docs/* wiki/
+          
+          # Rename index.md to Home.md (GitHub Wiki convention)
+          if [ -f wiki/index.md ]; then
+            mv wiki/index.md wiki/Home.md
+          fi
+
+      - name: Commit and Push to Wiki
+        run: |
+          cd wiki
+          
+          # Configure git
+          git config user.name "azc-screeps-docs-bot"
+          git config user.email "bot@users.noreply.github.com"
+          
+          # Add all changes
+          git add .
+          
+          # Check if there are changes to commit
+          if git diff --cached --quiet; then
+            echo "No wiki changes detected."
+          else
+            # Commit and push
+            git commit -m "Sync docs from /docs (automated)" \
+              -m "Synced from commit: ${{ github.sha }}" \
+              -m "Triggered by: ${{ github.actor }}" \
+              -m "Branch: ${{ github.ref }}"
+            
+            git push origin master
+            
+            echo "✅ Wiki successfully updated!"
+          fi
+
+      - name: Summary
+        run: |
+          echo "### 📘 Wiki Sync Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Documentation has been synced from \`/docs\` to the GitHub Wiki." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **View Wiki**: [https://github.com/${{ github.repository }}/wiki](https://github.com/${{ github.repository }}/wiki)" >> $GITHUB_STEP_SUMMARY
+
