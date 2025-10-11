@@ -85,7 +85,7 @@
 | **Tower Defense** | ✅ Fully Automated | Towers auto-target enemies if energized |
 | **Combat Operations** | 🎮 Manual | `empire.combat_*` commands (see docs) |
 | **Wall/Rampart Repair** | ✅ Fully Automated | Target HP scales with RCL |
-| **Pixel Generation** | ✅ Fully Automated | Auto-generates pixels when CPU is low |
+| **Pixel Generation** | ✅ Fully Automated | Auto-generates pixels when CPU usage is below threshold and bucket is full |
 
 **Legend**: ✅ Fully Automated | ⚙️ Semi-Automated (you set targets/goals) | 🎮 Manual (you issue orders)
 
