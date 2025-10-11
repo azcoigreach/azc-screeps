@@ -8,6 +8,32 @@ This is the azcoigreach/azc-screeps repository - feel free to use, copy, etc. No
 
 Note: This is not a fully automated codebase, and has no intention of being fully automated! It is just an interface for controlling your colonies, and manages much of the mundane creep tasks.
 
+---
+
+## 📘 Documentation
+
+**NEW!** Complete player-facing documentation is now available:
+
+- **📖 [Full Documentation](/docs/index.md)** – Start here for comprehensive guides
+- **🌐 [GitHub Wiki](https://github.com/azcoigreach/azc-screeps/wiki)** – Same docs, wiki format (auto-synced)
+
+### Player Quickstart
+
+New to azc-screeps? Follow these 5 steps:
+
+1. **Install**: Copy all `.js` files to your Screeps account
+2. **Discover**: Run `help()` in console to see available commands
+3. **Set Layout**: `blueprint.set_layout("W1N1", 25, 25, "default_horizontal")`
+4. **Monitor**: Run `system_status()` to check health
+5. **Expand**: `empire.remote_mining("W1N1", "W2N1")` to add a remote mine
+
+**Learn More**:
+- [Getting Started Guide](/docs/getting-started.md) – Installation and first-time setup
+- [Driving the Bot](/docs/driving-the-bot.md) – Core commands and daily workflows
+- [Command Reference](/docs/reference-commands.md) – Alphabetical command list
+
+---
+
 ### main.js
 
 **The goal for this codebase is to supply a complete interface for players to control their colonies via console commands. This is not a fully automated codebase, and does not aim to be one!** Colony tasks (spawning, building), mining tasks (burrowing, carrying), and many industry functions are all automated. Directing which rooms are to be colonized, the shape and placement of the colonies, goal amount of minerals to stockpile, and all combat functionality all needs to be entered via console commands. For a full list of console commands, type:
