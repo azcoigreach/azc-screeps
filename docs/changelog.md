@@ -1,6 +1,52 @@
 # Documentation Update Changelog
 
-## [2025-10-11] - Complete Player-Facing Documentation
+## [Unreleased] - Multi-Shard Feature Planning
+
+### Added
+- **Multi-Shard Implementation Plan** (`docs/multi-shard-implementation-plan.md`)
+  - Comprehensive implementation plan for multi-shard functionality
+  - 7 development phases from foundation to optimization
+  - Detailed architecture changes and memory refactoring plan
+  - Risk mitigation strategies and success metrics
+  - Testing strategy for PTR and production deployment
+  
+- **Multi-Shard Overview** (`docs/multi-shard-overview.md`)
+  - User-facing introduction to multi-shard gameplay
+  - Feature overview and architecture explanation
+  - Console command reference for `shard.*` commands
+  - Best practices and troubleshooting guide
+  - Performance considerations and optimization tips
+
+- **Multi-Shard Migration Guide** (`docs/multi-shard-migration-guide.md`)
+  - Step-by-step migration procedure from single to multi-shard
+  - Memory structure migration with safety checks
+  - Testing and validation procedures
+  - Rollback instructions and troubleshooting
+  - Phase 1 validation checklist
+
+- **Multi-Shard Roadmap** (`docs/multi-shard-roadmap.md`)
+  - Visual phase breakdown and progression
+  - Progress tracking dashboard
+  - Phase 1 planning details
+  - Success metrics and quality gates
+  - Development workflow and release strategy
+
+- **Updated Documentation Index** (`docs/index.md`)
+  - Added new "Multi-Shard (🚧 In Development)" section
+  - Links to all multi-shard planning and implementation documents
+
+### Planning Notes
+- Multi-shard feature will enable colonies across multiple game shards
+- Uses InterShardMemory for cross-shard coordination (100KB per shard)
+- Portal-based creep traversal between shards
+- Cross-shard colonization, resource sharing, and combat operations
+- Development structured in 7 phases
+- Will require major refactoring of memory structure (Memory.hive split)
+- Target: Version 3.0.0
+
+---
+
+## [Previous] - Complete Player-Facing Documentation
 
 ### Summary
 Created comprehensive player-facing documentation for the azc-screeps bot, including a complete `/docs` directory structure, automated GitHub Wiki sync, and updated README with quickstart guide.
