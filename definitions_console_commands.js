@@ -31,9 +31,10 @@
 		help_main.push(`- "path" \t Utilities for enhancing creep pathfinding abilities`);
 		help_main.push(`- "pause" \t Utilities for pausing specific creep or colony functions`);
 		help_main.push(`- "pixels" \t Pixel generation management and statistics`);
-		help_main.push(`- "profiler" \t Built-in CPU profiler`);
-		help_main.push(`- "resources" \t Management of resources, empire-wide sharing and/or selling to market`);
-		help_main.push(`- "visuals" \t Manage visual objects (RoomVisual class)`);
+	help_main.push(`- "profiler" \t Built-in CPU profiler`);
+	help_main.push(`- "resources" \t Management of resources, empire-wide sharing and/or selling to market`);
+	help_main.push(`- "shard" \t Multi-shard coordination and management`);
+	help_main.push(`- "visuals" \t Manage visual objects (RoomVisual class)`);
 		help_main.push("");
 
 
@@ -116,12 +117,12 @@
 			return `<font color=\"#D3FFA3\">[Console]</font> Setting Blueprint() request for ${rmName}; Blueprint() will run this request next tick.`;
 		};
 
-		help_blueprint.push("blueprint.reset()");
-		blueprint.reset = function () {
-			if (_.get(Memory, ["hive", "pulses", "blueprint"], null) != null)
-				delete Memory.hive.pulses.blueprint;				
-			return `<font color=\"#D3FFA3\">[Console]</font> Resetting Blueprint() cycles; Blueprint() will initiate next tick.`;
-		};
+	help_blueprint.push("blueprint.reset()");
+	blueprint.reset = function () {
+		if (_.get(Memory, ["shard", "pulses", "blueprint"], null) != null)
+			delete Memory.shard.pulses.blueprint;				
+		return `<font color=\"#D3FFA3\">[Console]</font> Resetting Blueprint() cycles; Blueprint() will initiate next tick.`;
+	};
 
 		help_blueprint.push("blueprint.redefine_links()");
 		blueprint.redefine_links = function () {
@@ -2110,6 +2111,98 @@
 		};
 
 
+	/* ***********************************************************
+	 *	SHARD COMMANDS (Multi-Shard Coordination)
+	 * *********************************************************** */
+	
+	help_shard = new Array();
+	help_shard.push(`<font color=\"#D3FFA3\"><u>Multi-Shard Commands:</u></font>`);
+	
+	global.shard = new Object();
+	
+		help_shard.push("shard.status()");
+		help_shard.push(" - Display status of all shards");
+		
+		shard.status = function() {
+			ShardCoordinator.displayStatus();
+			return `<font color=\"#00FFFF\">[Shard]</font> Status displayed`;
+		};
+		
+		help_shard.push("shard.portals()");
+		help_shard.push(" - Display all known portals on current shard");
+		
+		shard.portals = function() {
+			Portals.display();
+			return `<font color=\"#00FFFF\">[Shard]</font> Portal list displayed`;
+		};
+		
+		help_shard.push("shard.debug_ism()");
+		help_shard.push(" - Show InterShardMemory contents and size");
+		
+		shard.debug_ism = function() {
+			ISM.debug();
+			return `<font color=\"#00FFFF\">[Shard]</font> ISM debug info displayed`;
+		};
+		
+		help_shard.push("shard.colonize(targetShard, targetRoom, options)");
+		help_shard.push(" - Plan colonization on another shard");
+		help_shard.push(" - targetShard: Destination shard name (e.g., 'shard1')");
+		help_shard.push(" - targetRoom: Destination room name (e.g., 'W1N1')");
+		help_shard.push(" - options: { sourceRoom: 'W5N5', layout: 'def_hor' }");
+		
+		shard.colonize = function(targetShard, targetRoom, options = {}) {
+			if (!targetShard || !targetRoom) {
+				return `<font color=\"#FF0000\">[Shard]</font> Error: targetShard and targetRoom required`;
+			}
+			
+			let opId = ShardCoordinator.planColonization(targetShard, targetRoom, options);
+			if (opId) {
+				return `<font color=\"#00FF00\">[Shard]</font> Colonization operation ${opId} created`;
+			} else {
+				return `<font color=\"#FF0000\">[Shard]</font> Failed to create colonization operation`;
+			}
+		};
+		
+		help_shard.push("shard.operations()");
+		help_shard.push(" - Display all active cross-shard operations");
+		
+		shard.operations = function() {
+			let colonizations = _.get(Memory, ["shard", "operations", "colonizations"], []);
+			let transfers = _.get(Memory, ["shard", "operations", "creep_transfers"], []);
+			
+			console.log(`<font color=\"#00FFFF\">[Shard]</font> === Active Cross-Shard Operations ===`);
+			
+			if (colonizations.length > 0) {
+				console.log(`<font color=\"#00FFFF\">[Shard]</font> <b>Colonizations (${colonizations.length}):</b>`);
+				_.each(colonizations, op => {
+					console.log(`<font color=\"#00FFFF\">[Shard]</font>   ${op.id}: ${op.dest_shard}/${op.dest_room} - ${op.status}`);
+				});
+			}
+			
+			if (transfers.length > 0) {
+				console.log(`<font color=\"#00FFFF\">[Shard]</font> <b>Creep Transfers (${transfers.length}):</b>`);
+				_.each(transfers, transfer => {
+					console.log(`<font color=\"#00FFFF\">[Shard]</font>   ${transfer.creep_name}: → ${transfer.dest_shard}/${transfer.dest_room} - ${transfer.status}`);
+				});
+			}
+			
+			if (colonizations.length === 0 && transfers.length === 0) {
+				console.log(`<font color=\"#00FFFF\">[Shard]</font> No active operations`);
+			}
+			
+			return `<font color=\"#00FFFF\">[Shard]</font> Operations displayed`;
+		};
+		
+		help_shard.push("shard.clear_operations()");
+		help_shard.push(" - Clear all stuck operations");
+		
+		shard.clear_operations = function() {
+			_.set(Memory, ["shard", "operations", "colonizations"], []);
+			_.set(Memory, ["shard", "operations", "creep_transfers"], []);
+			return `<font color=\"#00FFFF\">[Shard]</font> All operations cleared`;
+		};
+
+
 		help = function (submenu) {
 			let menu = new Array()
 			if (submenu == null)
@@ -2127,6 +2220,7 @@
 					case "pixels": menu = help_pixels; break;
 					case "profiler": menu = help_profiler; break;
 					case "resources": menu = help_resources; break;
+					case "shard": menu = help_shard; break;
 					case "visuals": menu = help_visuals; break;
 				}
 			}

@@ -26,35 +26,35 @@
     };
     
     isPulse_Defense = function () {
-        return _.get(Memory, ["hive", "pulses", "defense", "active"], true);
+        return _.get(Memory, ["shard", "pulses", "defense", "active"], true);
     };
     
     isPulse_Short = function () {
-        return _.get(Memory, ["hive", "pulses", "short", "active"], true);
+        return _.get(Memory, ["shard", "pulses", "short", "active"], true);
     };
     
     isPulse_Mid = function () {
-        return _.get(Memory, ["hive", "pulses", "mid", "active"], true);
+        return _.get(Memory, ["shard", "pulses", "mid", "active"], true);
     };
     
     isPulse_Long = function () {
-        return _.get(Memory, ["hive", "pulses", "long", "active"], true);
+        return _.get(Memory, ["shard", "pulses", "long", "active"], true);
     };
     
     isPulse_Spawn = function () {
-        return _.get(Memory, ["hive", "pulses", "spawn", "active"], true);
+        return _.get(Memory, ["shard", "pulses", "spawn", "active"], true);
     };
     
     isPulse_Lab = function () {
-        return _.get(Memory, ["hive", "pulses", "lab", "active"], true);
+        return _.get(Memory, ["shard", "pulses", "lab", "active"], true);
     };
     
     isPulse_Factory = function () {
-        return _.get(Memory, ["hive", "pulses", "factory", "active"], true);
+        return _.get(Memory, ["shard", "pulses", "factory", "active"], true);
     };
     
     isPulse_Blueprint = function () {
-        return _.get(Memory, ["hive", "pulses", "blueprint", "active"], true);
+        return _.get(Memory, ["shard", "pulses", "blueprint", "active"], true);
     };
     
     getReagents = function (mineral) {
