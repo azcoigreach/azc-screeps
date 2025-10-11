@@ -13,6 +13,7 @@
 		let help_log = new Array();
 		let help_path = new Array();
 		let help_pause = new Array();
+		let help_pixels = new Array();
 		let help_profiler = new Array();
 		let help_resources = new Array();
 		let help_visuals = new Array();
@@ -29,6 +30,7 @@
 		help_main.push(`- "log" \t Logs for statistical output`);
 		help_main.push(`- "path" \t Utilities for enhancing creep pathfinding abilities`);
 		help_main.push(`- "pause" \t Utilities for pausing specific creep or colony functions`);
+		help_main.push(`- "pixels" \t Pixel generation management and statistics`);
 		help_main.push(`- "profiler" \t Built-in CPU profiler`);
 		help_main.push(`- "resources" \t Management of resources, empire-wide sharing and/or selling to market`);
 		help_main.push(`- "visuals" \t Manage visual objects (RoomVisual class)`);
@@ -1989,6 +1991,124 @@
 		};
 
 
+		pixels = new Object();
+
+		help_pixels.push("pixels.status()");
+		help_pixels.push(" - Shows pixel generation statistics and current settings");
+		help_pixels.push(" - Displays total pixels generated, generation rate, CPU threshold");
+
+		pixels.status = function () {
+			let enabled = _.get(Memory, ["hive", "pixels", "enabled"], true);
+			let cpuThreshold = _.get(Memory, ["hive", "pixels", "cpu_threshold"], 0.8);
+			let stats = _.get(Memory, ["hive", "pixels", "stats"], null);
+			
+			let cpuUsed = Game.cpu.getUsed();
+			let cpuLimit = Game.cpu.limit;
+			let cpuPercent = (cpuUsed / cpuLimit * 100).toFixed(1);
+			let bucket = Game.cpu.bucket;
+			
+			// CSS styles for table
+			let tableStyle = "style=\"border-collapse: collapse; border: 1px solid #666; margin: 5px 0;\"";
+			let cellStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left;\"";
+			let headerStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left; background-color: #444; color: #FFD700; font-weight: bold;\"";
+			
+			console.log(`<font color=\"#FFD700\">[Pixels]</font> <b>Pixel Generation Status:</b>`);
+			
+			let statusTable = `<table ${tableStyle}>`;
+			statusTable += `<tr><th ${headerStyle}>Setting</th><th ${headerStyle}>Value</th><th ${headerStyle}>Status</th></tr>`;
+			statusTable += `<tr><td ${cellStyle}>Enabled</td><td ${cellStyle}>${enabled}</td><td ${cellStyle}>${enabled ? "<font color=\"#47FF3E\">✓ Active</font>" : "<font color=\"#FF6B6B\">✗ Disabled</font>"}</td></tr>`;
+			statusTable += `<tr><td ${cellStyle}>CPU Threshold</td><td ${cellStyle}>${(cpuThreshold * 100).toFixed(0)}%</td><td ${cellStyle}>${cpuPercent < (cpuThreshold * 100) ? "<font color=\"#47FF3E\">✓ Below</font>" : "<font color=\"#FFA500\">⚠ Above</font>"}</td></tr>`;
+			statusTable += `<tr><td ${cellStyle}>Current CPU</td><td ${cellStyle}>${cpuPercent}%</td><td ${cellStyle}>${cpuUsed.toFixed(2)}/${cpuLimit}</td></tr>`;
+			statusTable += `<tr><td ${cellStyle}>CPU Bucket</td><td ${cellStyle}>${bucket}</td><td ${cellStyle}>${bucket >= 10000 ? "<font color=\"#47FF3E\">✓ Full</font>" : "<font color=\"#FFA500\">⚠ " + bucket + "/10000</font>"}</td></tr>`;
+			statusTable += `</table>`;
+			console.log(statusTable);
+			
+			if (stats) {
+				let totalGenerated = stats.total_generated || 0;
+				let lastGenerated = stats.last_generated || 0;
+				let history = stats.generation_history || [];
+				
+				let generationRate = "N/A";
+				if (history.length >= 2) {
+					let timeSpan = history[history.length - 1] - history[0];
+					let pixelsInSpan = history.length;
+					if (timeSpan > 0) {
+						let ticksPerPixel = timeSpan / pixelsInSpan;
+						generationRate = `${ticksPerPixel.toFixed(0)} ticks/pixel`;
+					}
+				}
+				
+				let timeSinceLastPixel = lastGenerated > 0 ? (Game.time - lastGenerated) : "Never";
+				
+				console.log(`<font color=\"#FFD700\">[Pixels]</font> <b>Statistics:</b>`);
+				let statsTable = `<table ${tableStyle}>`;
+				statsTable += `<tr><th ${headerStyle}>Metric</th><th ${headerStyle}>Value</th></tr>`;
+				statsTable += `<tr><td ${cellStyle}>Total Pixels Generated</td><td ${cellStyle}>${totalGenerated}</td></tr>`;
+				statsTable += `<tr><td ${cellStyle}>Last Generated</td><td ${cellStyle}>${lastGenerated > 0 ? "Tick " + lastGenerated : "Never"}</td></tr>`;
+				statsTable += `<tr><td ${cellStyle}>Time Since Last Pixel</td><td ${cellStyle}>${timeSinceLastPixel !== "Never" ? timeSinceLastPixel + " ticks ago" : "Never"}</td></tr>`;
+				statsTable += `<tr><td ${cellStyle}>Generation Rate</td><td ${cellStyle}>${generationRate}</td></tr>`;
+				statsTable += `</table>`;
+				console.log(statsTable);
+			} else {
+				console.log(`<font color=\"#FFD700\">[Pixels]</font> <b>Statistics:</b> No pixels generated yet.`);
+			}
+			
+			// Recommendation
+			if (enabled && bucket >= 10000 && cpuPercent >= (cpuThreshold * 100)) {
+				console.log(`<font color=\"#FFA500\">[Pixels]</font> <b>⚠ Recommendation:</b> CPU usage (${cpuPercent}%) is above threshold (${(cpuThreshold * 100).toFixed(0)}%). Pixels will not generate until CPU usage decreases. Consider increasing threshold with pixels.set_threshold().`);
+			} else if (!enabled) {
+				console.log(`<font color=\"#FFA500\">[Pixels]</font> <b>Note:</b> Pixel generation is disabled. Use pixels.enable() to start generating.`);
+			} else if (bucket < 10000) {
+				console.log(`<font color=\"#FFA500\">[Pixels]</font> <b>Note:</b> Bucket must be full (10,000) to generate pixels. Current: ${bucket}.`);
+			} else {
+				console.log(`<font color=\"#47FF3E\">[Pixels]</font> <b>✓ Status:</b> All conditions met for pixel generation!`);
+			}
+			
+			return `<font color=\"#FFD700\">[Pixels]</font> Pixel status displayed.`;
+		};
+
+		help_pixels.push("pixels.enable()");
+		help_pixels.push(" - Enables automatic pixel generation");
+
+		pixels.enable = function () {
+			_.set(Memory, ["hive", "pixels", "enabled"], true);
+			return `<font color=\"#FFD700\">[Pixels]</font> Pixel generation enabled.`;
+		};
+
+		help_pixels.push("pixels.disable()");
+		help_pixels.push(" - Disables automatic pixel generation");
+
+		pixels.disable = function () {
+			_.set(Memory, ["hive", "pixels", "enabled"], false);
+			return `<font color=\"#FFD700\">[Pixels]</font> Pixel generation disabled.`;
+		};
+
+		help_pixels.push("pixels.set_threshold(percent)");
+		help_pixels.push(" - Sets the maximum CPU usage threshold for pixel generation");
+		help_pixels.push(" - percent: 0-100, pixels only generate when CPU usage is below this");
+		help_pixels.push(" - Default is 80%. Lower = more conservative, higher = more pixels");
+		help_pixels.push(" - Example: pixels.set_threshold(70) for 70% threshold");
+
+		pixels.set_threshold = function (percent) {
+			if (percent == null || percent < 0 || percent > 100) {
+				return `<font color=\"#FF6B6B\">[Pixels]</font> Error: Threshold must be between 0 and 100.`;
+			}
+			_.set(Memory, ["hive", "pixels", "cpu_threshold"], percent / 100);
+			return `<font color=\"#FFD700\">[Pixels]</font> CPU threshold set to ${percent}%. Pixels will only generate when CPU usage is below this level.`;
+		};
+
+		help_pixels.push("pixels.reset_stats()");
+		help_pixels.push(" - Resets pixel generation statistics (does not affect settings)");
+
+		pixels.reset_stats = function () {
+			_.set(Memory, ["hive", "pixels", "stats"], {
+				total_generated: 0,
+				last_generated: 0,
+				generation_history: []
+			});
+			return `<font color=\"#FFD700\">[Pixels]</font> Pixel statistics reset.`;
+		};
+
 
 		help = function (submenu) {
 			let menu = new Array()
@@ -2004,6 +2124,7 @@
 					case "log": menu = help_log; break;
 					case "path": menu = help_path; break;
 					case "pause": menu = help_pause; break;
+					case "pixels": menu = help_pixels; break;
 					case "profiler": menu = help_profiler; break;
 					case "resources": menu = help_resources; break;
 					case "visuals": menu = help_visuals; break;
