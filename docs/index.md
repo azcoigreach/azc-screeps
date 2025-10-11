@@ -62,7 +62,12 @@
 
 - **[Command Reference](reference-commands.md)** – Alphabetical listing of all console commands with examples
 - **[Maintenance and Debugging](maintenance-and-debug.md)** – Status dashboards, logs, common issues, recovery playbooks
+- **[Pixel Generation](pixel-generation.md)** – Automated pixel generation system, commands, optimization tips
 - **[Contributing](contributing.md)** – How to contribute code, update docs, and submit PRs
+
+### Developer Resources
+
+- **[Development Guide](development.md)** – Developer documentation, MCP integration, project structure, coding patterns
 
 ---
 
@@ -80,6 +85,7 @@
 | **Tower Defense** | ✅ Fully Automated | Towers auto-target enemies if energized |
 | **Combat Operations** | 🎮 Manual | `empire.combat_*` commands (see docs) |
 | **Wall/Rampart Repair** | ✅ Fully Automated | Target HP scales with RCL |
+| **Pixel Generation** | ✅ Fully Automated | Auto-generates pixels when CPU is low |
 
 **Legend**: ✅ Fully Automated | ⚙️ Semi-Automated (you set targets/goals) | 🎮 Manual (you issue orders)
 
@@ -118,6 +124,10 @@ resources.set_energy_threshold(50000);            // Buy energy if below 50k
 // === DEFENSE ===
 allies.add("PlayerName");                         // Add an ally
 empire.wall_target(5000000);                      // Set wall/rampart HP target
+
+// === PIXEL GENERATION ===
+pixels.status();                                  // Check pixel generation status
+pixels.set_threshold(80);                         // Set CPU threshold for pixel generation
 ```
 
 ---

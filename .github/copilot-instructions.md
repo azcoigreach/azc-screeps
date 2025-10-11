@@ -3,6 +3,49 @@
 ## Project Context
 This is an advanced Screeps AI bot with semi-automated colony management. The bot handles routine tasks automatically but requires console commands for strategic decisions like colonization, combat, and resource management.
 
+## Git Workflow
+
+**IMPORTANT**: This project uses a branch-and-PR workflow. **Never commit directly to master.**
+
+### Standard Development Process
+
+1. **Create a feature branch**:
+   ```bash
+   git checkout master
+   git pull origin master
+   git checkout -b feature/descriptive-name
+   ```
+
+2. **Make changes and commit**:
+   ```bash
+   git add .
+   git commit -m "type: description of changes"
+   ```
+
+3. **Push to remote**:
+   ```bash
+   git push origin feature/descriptive-name
+   ```
+
+4. **Create Pull Request on GitHub**:
+   - Base branch: `master`
+   - Compare branch: `feature/descriptive-name`
+   - Add description and context
+   - Request review if needed
+
+5. **Merge after approval**
+
+### Branch Naming
+- `feature/` - New features
+- `fix/` - Bug fixes
+- `docs/` - Documentation changes
+- `refactor/` - Code refactoring
+- `perf/` - Performance improvements
+
+### Commit Messages
+Format: `type: description`
+- Types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `chore`
+
 ## Code Architecture
 
 ### File Organization
