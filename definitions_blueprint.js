@@ -54,7 +54,7 @@
 	},
 
 	Run: function (room) {
-		if (room.controller == null && !room.controller.my)
+		if (room.controller == null || !room.controller.my)
 			return;
 
 		let level = room.controller.level;
