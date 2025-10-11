@@ -100,7 +100,7 @@ visuals.set_performance(10);
 Memory.rooms["W1N1"] = {
     layout: {
         origin: { x: 25, y: 25 },        // Base layout origin (top-left spawn)
-        name: "default_horizontal",      // Layout name
+        name: "def_hor",      // Layout name
         place_defenses: true,            // Whether to build walls/ramparts
         blocked_areas: []                // Areas blocked from construction
     },
@@ -122,23 +122,27 @@ Memory.rooms["W1N1"] = {
 
 **Setting Layout via Console**:
 ```javascript
-blueprint.set_layout("W1N1", 25, 25, "default_horizontal");
+blueprint.set_layout("W1N1", 25, 25, "def_hor");
 ```
 
 **Manual Memory Edit**:
 ```javascript
 Memory.rooms["W1N1"].layout = {
     origin: { x: 25, y: 25 },
-    name: "default_horizontal",
+    name: "def_hor",
     place_defenses: true,
     blocked_areas: []
 };
 ```
 
 **Available Layouts**:
-- `"default_horizontal"` – Standard horizontal spread
-- `"default_vertical"` – Vertical layout
-- `"default_compact"` – Compact design
+- `"def_hor"` – Default horizontal spread
+- `"def_hor_w"` – Default horizontal with walls
+- `"def_vert"` – Default vertical layout
+- `"def_vert_w"` – Default vertical with walls
+- `"def_comp"` – Default compact design
+- `"def_comp_w"` – Default compact with walls
+- `"comp_hor"`, `"comp_hor_w"`, `"comp_vert"`, `"comp_vert_w"` – Compact variants
 
 ---
 
@@ -268,7 +272,7 @@ Memory.sites = {
             target: "W3N3",               // Room to claim
             layout: {
                 origin: { x: 25, y: 25 },
-                name: "default_horizontal"
+                name: "def_hor"
             },
             list_route: ["W1N1", "W2N2", "W3N3"]
         }
@@ -311,7 +315,7 @@ delete Memory.sites.mining["W2N1"];
 
 **Console Command**:
 ```javascript
-empire.colonize("W1N1", "W3N3", {origin: {x: 25, y: 25}, name: "default_horizontal"});
+empire.colonize("W1N1", "W3N3", {origin: {x: 25, y: 25}, name: "def_hor"});
 ```
 
 **Manual Edit** (to cancel colonization):
@@ -533,7 +537,7 @@ Memory.hive.visuals.update_interval = 10;            // 10 ticks (balanced CPU)
 // === PER-ROOM ===
 Memory.rooms["W1N1"].layout = {
     origin: { x: 25, y: 25 },
-    name: "default_horizontal",
+    name: "def_hor",
     place_defenses: true
 };
 Memory.rooms["W1N1"].wall_target = 1000000;          // 1M HP (balanced)

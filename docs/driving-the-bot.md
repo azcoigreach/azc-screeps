@@ -110,16 +110,20 @@ The bot auto-builds structures based on layouts, but you need to set the layout 
 
 ```javascript
 // Define where your base starts (top-left spawn position)
-blueprint.set_layout("W1N1", 25, 25, "default_horizontal");
+blueprint.set_layout("W1N1", 25, 25, "def_hor");
 ```
 
 **Parameters**:
 - `rmName`: Room name (e.g., "W1N1")
 - `originX`, `originY`: Top-left spawn coordinates (excluding walls)
 - `layoutName`: One of:
-  - `"default_horizontal"` – Standard spread (most common)
-  - `"default_vertical"` – Tall layout
-  - `"default_compact"` – Tight, efficient layout
+  - `"def_hor"` – Default horizontal (most common)
+  - `"def_hor_w"` – Default horizontal with walls
+  - `"def_vert"` – Default vertical
+  - `"def_vert_w"` – Default vertical with walls
+  - `"def_comp"` – Default compact
+  - `"def_comp_w"` – Default compact with walls
+  - `"comp_hor"`, `"comp_hor_w"`, `"comp_vert"`, `"comp_vert_w"` – Compact variants
 
 **What happens**: Every 200-500 ticks, up to 5 construction sites are automatically placed. Workers build them.
 
@@ -168,7 +172,7 @@ Run again to re-enable.
 When you're ready to claim a new room:
 
 ```javascript
-empire.colonize("W1N1", "W2N1", {origin: {x: 25, y: 25}, name: "default_horizontal"});
+empire.colonize("W1N1", "W2N1", {origin: {x: 25, y: 25}, name: "def_hor"});
 ```
 
 **What happens**:
@@ -181,7 +185,7 @@ empire.colonize("W1N1", "W2N1", {origin: {x: 25, y: 25}, name: "default_horizont
 
 ```javascript
 empire.colonize("W1N1", "W5N5", 
-    {origin: {x: 25, y: 25}, name: "default_horizontal"},
+    {origin: {x: 25, y: 25}, name: "def_hor"},
     ["W1N1", "W2N2", "W3N3", "W4N4", "W5N5"]  // Path to follow
 );
 ```
@@ -535,7 +539,7 @@ profiler.run(50);  // Run in background, check later
 // 2. Decide on layout and origin (plan on paper or in-game)
 
 // 3. Colonize
-empire.colonize("W1N1", "W2N1", {origin: {x: 25, y: 25}, name: "default_horizontal"});
+empire.colonize("W1N1", "W2N1", {origin: {x: 25, y: 25}, name: "def_hor"});
 
 // 4. Set up remote mining to support the new colony
 empire.remote_mining("W1N1", "W2N2");  // Adjacent room

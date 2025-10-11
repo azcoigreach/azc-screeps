@@ -23,7 +23,7 @@ New to azc-screeps? Follow these 5 steps:
 
 1. **Install**: Copy all `.js` files to your Screeps account
 2. **Discover**: Run `help()` in console to see available commands
-3. **Set Layout**: `blueprint.set_layout("W1N1", 25, 25, "default_horizontal")`
+3. **Set Layout**: `blueprint.set_layout("W1N1", 25, 25, "def_hor")`
 4. **Monitor**: Run `system_status()` to check health
 5. **Expand**: `empire.remote_mining("W1N1", "W2N1")` to add a remote mine
 
@@ -70,7 +70,7 @@ If you must manually build structures, you can run the following command to see 
 
 When you are ready to expand to a new room (create a new "colony"), you can use a console command to commit a colonization request to Memory, which will automatically spawn a colonizer (as long as the sending colony has enough energy and extensions, at least RCL 4), and the colonizer will move to the room and claim the controller. If your colonizer will need to travel through 3+ rooms to get there, you may want to include a list\_route to make sure the colonizer takes the quickest route and to avoid pathfinding problems (list_route is a list of rooms in order that you want the creep to travel through, including the room\_from, room\_to, and everything in-between, e.g. ["W1N1", "W1N2", "W2N2", "W3N2"] ... but list\_route is optional). To place a colonization request:
 
-`empire.colonize("room_from", "room_target", {origin: {x: base_origin_x, y: base_origin_y}, name: "default_horizontal"}, [list_route]);`
+`empire.colonize("room_from", "room_target", {origin: {x: base_origin_x, y: base_origin_y}, name: "def_hor"}, [list_route]);`
 
 Once the colonizer claims the new controller, the code-base will remove the colonization request from Memory and start running the new room as a colony _assisted by the colony that sent the colonizer, using the same route as the colonizer_. It will utilize the layout origin for automatically setting construction sites for your base as the colony progresses. You can either set a specific room layout via layout_name, or leave it as null to use the default horizontal layout. If you want to modify or add rooms to assist in the spawning burden, you can modify the spawn\_assist.rooms field for a colony like this:
 
