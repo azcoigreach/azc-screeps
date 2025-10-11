@@ -358,6 +358,55 @@ After uploading:
 - [ ] Run `system_status()` to verify systems
 - [ ] Profile CPU if adding significant logic
 
+## Git Workflow
+This project follows a branch-and-PR workflow. **NEVER commit directly to master.**
+
+### Standard Workflow
+1. **Create a feature branch** from master:
+   ```bash
+   git checkout master
+   git pull origin master
+   git checkout -b feature/descriptive-name
+   ```
+
+2. **Make changes** and commit to the feature branch:
+   ```bash
+   git add .
+   git commit -m "type: description"
+   ```
+
+3. **Push the feature branch**:
+   ```bash
+   git push origin feature/descriptive-name
+   ```
+
+4. **Create a Pull Request** on GitHub:
+   - Base: `master`
+   - Compare: `feature/descriptive-name`
+   - Include description of changes
+   - Request review if applicable
+
+5. **Merge after review/approval**
+
+### Branch Naming Convention
+- `feature/description` – New features
+- `fix/description` – Bug fixes
+- `docs/description` – Documentation updates
+- `refactor/description` – Code refactoring
+- `perf/description` – Performance improvements
+
+### Commit Message Format
+```
+type: Short description (50 chars max)
+
+Longer explanation if needed (72 chars per line).
+Include reasoning, tradeoffs, and context.
+
+Closes #123
+```
+
+**Types**: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `chore`
+
 ## Documentation Preference
 The user prefers thorough documentation of context in case a new chat session is started. Always document:
 - What changes were made
