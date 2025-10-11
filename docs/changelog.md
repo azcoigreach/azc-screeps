@@ -1,5 +1,89 @@
 # Documentation Update Changelog
 
+## [2025-01-11] - Target Commitment System
+
+### Added
+- **Target Commitment System** - Prevents creeps from bouncing between energy sources
+  - Added commitment logic to `getTask_Mine()` for source selection
+  - Added commitment logic to `getTask_Withdraw_Container()` for container selection
+  - Added commitment logic to `getTask_Pickup()` for dropped resource selection
+  - Creeps commit to targets for 20-100 ticks depending on task type and RCL
+  - Adaptive durations: shorter commitments in early game (RCL ≤3) for flexibility
+  - Graceful validation: invalid targets trigger immediate re-evaluation
+
+### Changed
+- `overloads_creep_tasks.js`:
+  - `getTask_Mine()` - Lines 922-1007: Added source commitment with 50-100 tick duration
+  - `getTask_Withdraw_Container()` - Lines 495-565: Added container commitment with 30-60 tick duration
+  - `getTask_Pickup()` - Lines 728-804: Added pickup commitment with 20 tick duration
+
+### Fixed
+- **Bouncing behavior**: Workers and miners no longer constantly switch between sources
+- **Path thrashing**: Reduced pathfinding calls by maintaining target commitments
+- **Early game efficiency**: RCL 1-3 rooms now have more stable energy collection patterns
+- **CPU waste**: Eliminated repeated target re-evaluation every tick
+
+### Performance Impact
+- Reduced CPU usage from target selection (fewer `findClosestByPath()` calls)
+- More efficient movement patterns (fewer direction changes)
+- Better creep distribution across sources
+- Lower memory overhead (~50-80 bytes per creep with active commitment)
+
+### Documentation
+- Added comprehensive guide: `docs/target-commitment-system.md`
+  - Problem description and solution overview
+  - Implementation details with code examples
+  - Memory structure documentation
+  - Tuning parameters and troubleshooting
+  - Testing and validation procedures
+
+### Testing
+- Deployed to W21N11 (Shard1, RCL 2)
+- No runtime errors detected
+- CPU usage normal (1-4%)
+- Workers spawning and operating normally
+
+---
+
+## [2025-10-11] - Multi-Shard Phase 1 Complete
+
+### Completed
+- **Phase 1: Foundation** - Multi-shard awareness and basic coordination
+  - Memory structure refactored (`Memory.hive` split into global and shard-specific)
+  - InterShardMemory integration (`definitions_intershard_memory.js`)
+  - Portal detection system (`definitions_portals.js`)
+  - Shard coordinator (`definitions_shard_coordinator.js`)
+  - Console commands (`shard.*` - status, portals, debug_ism, etc.)
+  - All existing functionality preserved (CPU ~1-2%, no regression)
+
+### Added
+- 3 new core modules:
+  - `definitions_intershard_memory.js` - ISM read/write and coordination
+  - `definitions_portals.js` - Portal scanning and route finding
+  - `definitions_shard_coordinator.js` - Cross-shard operation management
+
+### Changed
+- `main.js` - Integrated multi-shard coordination into main loop
+- `definitions_hive_control.js` - Updated memory initialization for multi-shard
+- `overloads_general.js` - Updated all `isPulse` functions for new memory structure
+- `definitions_console_commands.js` - Added `shard.*` command category
+- `overloads_creep_travel.js` - Integrated multi-shard portal awareness into existing travel system
+
+### Fixed
+- Removed optional chaining operators (`?.`) for Screeps compatibility
+- Replaced with `_.get()` for safe property access
+- **Portal system integration**: Updated old portal detection code to be multi-shard aware
+  - Now only uses same-shard portals for automatic pathfinding
+  - Prevents accidental cross-shard portal traversal
+  - Cross-shard portals tracked separately for Phase 3 implementation
+
+### Documentation
+- Updated all multi-shard documentation with Phase 1 completion status
+- Updated progress tracking (25% complete)
+- Marked all Phase 1 tasks as complete
+
+---
+
 ## [Unreleased] - Multi-Shard Feature Planning
 
 ### Added

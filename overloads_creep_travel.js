@@ -126,9 +126,19 @@ Creep.prototype.travelToRoom = function travelToRoom(tgtRoom, forward) {
 		if (forward === true) {
 			for (let i = 1; i < list_route.length; i++) {
 				if (this.room.name === list_route[i - 1]) {
-					// Check for portal to next room in the route
+					// Check for portal to next room in the route (same-shard only)
 					let portal = this.pos.findClosestByRange(FIND_STRUCTURES, {
-						filter: (structure) => structure.structureType == STRUCTURE_PORTAL && structure.destination.roomName == list_route[i]
+						filter: (structure) => {
+							if (structure.structureType !== STRUCTURE_PORTAL) return false;
+							
+							// Multi-shard aware: Only use same-shard portals for pathfinding
+							// Cross-shard portals handled by Phase 3 multi-shard travel system
+							let currentShard = Game.shard ? Game.shard.name : "sim";
+							let destShard = structure.destination.shard || currentShard;
+							
+							return structure.destination.roomName === list_route[i] && 
+							       destShard === currentShard;
+						}
 					});
 					if (portal) {
 						_.set(this, ["memory", "path", "portal"], portal.id);
@@ -154,9 +164,19 @@ Creep.prototype.travelToRoom = function travelToRoom(tgtRoom, forward) {
 		} else if (forward === false) {
 			for (let i = list_route.length - 2; i >= 0; i--) {
 				if (this.room.name === list_route[i + 1]) {
-					// Check for portal to previous room in the route
+					// Check for portal to previous room in the route (same-shard only)
 					let portal = this.pos.findClosestByRange(FIND_STRUCTURES, {
-						filter: (structure) => structure.structureType == STRUCTURE_PORTAL && structure.destination.roomName == list_route[i]
+						filter: (structure) => {
+							if (structure.structureType !== STRUCTURE_PORTAL) return false;
+							
+							// Multi-shard aware: Only use same-shard portals for pathfinding
+							// Cross-shard portals handled by Phase 3 multi-shard travel system
+							let currentShard = Game.shard ? Game.shard.name : "sim";
+							let destShard = structure.destination.shard || currentShard;
+							
+							return structure.destination.roomName === list_route[i] && 
+							       destShard === currentShard;
+						}
 					});
 					if (portal) {
 						_.set(this, ["memory", "path", "portal"], portal.id);
@@ -182,9 +202,18 @@ Creep.prototype.travelToRoom = function travelToRoom(tgtRoom, forward) {
 		}
 	}
 
-	// Check for portals in the current room leading to the target room
+	// Check for portals in the current room leading to the target room (same-shard only)
+	// Multi-shard aware: Uses new portal detection system from Phase 1
+	// Cross-shard portals are stored in Memory.shard.portals and handled by Phase 3
+	let currentShard = Game.shard ? Game.shard.name : "sim";
 	let portals = this.room.find(FIND_STRUCTURES, {
-		filter: (structure) => structure.structureType == STRUCTURE_PORTAL
+		filter: (structure) => {
+			if (structure.structureType !== STRUCTURE_PORTAL) return false;
+			
+			// Only use same-shard portals for automatic pathfinding
+			let destShard = structure.destination.shard || currentShard;
+			return destShard === currentShard;
+		}
 	});
 
 	if (portals.length > 0) {
