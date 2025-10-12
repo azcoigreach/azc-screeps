@@ -208,9 +208,17 @@
 					creep.memory.task = creep.memory.task || creep.getTask_Wait(5); // Shorter wait for faster response
 
 				} else if (creep.memory.role == "miner" || creep.memory.role == "carrier") {
+					// PRIORITY 1: Mine if we have WORK parts (miners should mine, not scavenge)
+					if (creep.hasPart("work") > 0)
+						creep.memory.task = creep.memory.task || creep.getTask_Mine();
+					
+					// PRIORITY 2: Pick up dropped energy nearby (free energy on ground)
 					creep.memory.task = creep.memory.task || creep.getTask_Pickup("energy");
+					
+					// PRIORITY 3: Withdraw from link (efficient transfer point)
 					creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Link(15);
 
+					// PRIORITY 4: Withdraw from containers/storage (only if can't mine)
 					let energy_level = _.get(Memory, ["rooms", creep.room.name, "survey", "energy_level"]);
 					if (energy_level == CRITICAL || energy_level == LOW
 						|| _.get(Memory, ["sites", "mining", creep.memory.room, "store_percent"], 0) > 0.25) {
@@ -221,9 +229,10 @@
 						creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Container("energy", true);
 					}
 
-					if (creep.hasPart("work") > 0)
-						creep.memory.task = creep.memory.task || creep.getTask_Mine();
+					// PRIORITY 5: Pick up minerals if available
 					creep.memory.task = creep.memory.task || creep.getTask_Pickup("mineral");
+					
+					// PRIORITY 6: Wait as last resort
 					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 				}
 
@@ -240,6 +249,7 @@
 				if (this.goToRoom(creep, creep.memory.colony, false))
 					return;
 
+				// PRIORITY 1: Fill spawns and extensions (critical for spawning)
 				if (creep.room.energyAvailable < creep.room.energyCapacityAvailable * 0.75) {
 					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Spawns();
 					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Towers();
@@ -247,10 +257,26 @@
 					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Towers();
 					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Spawns();
 				}
+				
+				// PRIORITY 2: Deposit to links for distribution
 				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Link();
+				
+				// PRIORITY 3: Deposit minerals to storage
 				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral");
-				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("energy");
+				
+				// PRIORITY 4: If spawns/extensions/towers are full, deposit to containers near sources
+				// (This is the fallback behavior for miners when spawns are full)
 				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Container("energy");
+				
+				// PRIORITY 5: Deposit to storage (if available)
+				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("energy");
+				
+				// PRIORITY 6: If nowhere to deposit energy, upgrade controller
+				// This accelerates RCL progression when energy backs up
+				if (creep.carry["energy"] > 0 && creep.hasPart("work") > 0)
+					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
+				
+				// PRIORITY 7: Wait as last resort
 				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 
 				creep.runTask(creep);

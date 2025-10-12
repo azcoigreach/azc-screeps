@@ -99,48 +99,56 @@
 				}
 			}
 
-			// Regular harvest logic for energy sources
-			let result = this.harvest(obj);
-			if (result == OK) {
-				let interval = 3;
-				if (Game.time % interval == 0) {
-					// Burrower fill adjacent link if possible; also fill adjacent container
-					if (this.memory.role == "burrower" && this.carry["energy"] > 0) {
-
-						let link_id = _.get(this.memory, ["task", "dump_link"]);
-						if (link_id != "unavailable" || Game.time % (interval * 5) == 0) {
-							let link = Game.getObjectById(link_id);
-							if (link == null || this.pos.getRangeTo(link) > 1 || link.energy == link.energyCapacity)
-								link = _.head(this.pos.findInRange(FIND_STRUCTURES, 1, { filter: (s) => { return s.structureType == "link"; } }));
-							if (link != null) {
-								_.set(this.memory, ["task", "dump_link"], _.get(link, "id"));
-								this.transfer(link, "energy");
-								Stats_Visual.CreepSay(this, 'transfer');
-								return;
-							} else {
-								_.set(this.memory, ["task", "dump_link"], "unavailable");
-							}
-						}
-
-						let container_id = _.get(this.memory, ["task", "dump_container"]);
-						if (container_id != "unavailable" || Game.time % (interval * 5) == 0) {
-							let container = Game.getObjectById(container_id);
-							if (container == null || this.pos.getRangeTo(container) > 1 || _.sum(container.store) == container.storeCapacity)
-								container = _.head(this.pos.findInRange(FIND_STRUCTURES, 1, { filter: (s) => { return s.structureType == "container"; } }));
-							if (container != null) {
-								_.set(this.memory, ["task", "dump_container"], _.get(container, "id"));
-								this.transfer(container, "energy");
-								Stats_Visual.CreepSay(this, 'transfer');
-								return;
-							} else {
-								_.set(this.memory, ["task", "dump_container"], "unavailable");
-							}
-						}
-
-					}
-				}
+		// Regular harvest logic for energy sources
+		let result = this.harvest(obj);
+		if (result == OK) {
+			// Miners: stop mining when full to trigger state change to "delivering"
+			if (this.memory.role == "miner" && _.sum(this.carry) >= this.carryCapacity) {
+				delete this.memory.task;
 				return;
+			}
+			
+			let interval = 3;
+			if (Game.time % interval == 0) {
+				// Burrowers: dump to adjacent containers/links when carrying energy
+				// (Burrowers have no carry, so they dump continuously)
+				if (this.memory.role == "burrower" && this.carry["energy"] > 0) {
+
+					let link_id = _.get(this.memory, ["task", "dump_link"]);
+					if (link_id != "unavailable" || Game.time % (interval * 5) == 0) {
+						let link = Game.getObjectById(link_id);
+						if (link == null || this.pos.getRangeTo(link) > 1 || link.energy == link.energyCapacity)
+							link = _.head(this.pos.findInRange(FIND_STRUCTURES, 1, { filter: (s) => { return s.structureType == "link"; } }));
+						if (link != null) {
+							_.set(this.memory, ["task", "dump_link"], _.get(link, "id"));
+							this.transfer(link, "energy");
+							Stats_Visual.CreepSay(this, 'transfer');
+							return;
+						} else {
+							_.set(this.memory, ["task", "dump_link"], "unavailable");
+						}
+					}
+
+					let container_id = _.get(this.memory, ["task", "dump_container"]);
+					if (container_id != "unavailable" || Game.time % (interval * 5) == 0) {
+						let container = Game.getObjectById(container_id);
+						if (container == null || this.pos.getRangeTo(container) > 1 || _.sum(container.store) == container.storeCapacity)
+							container = _.head(this.pos.findInRange(FIND_STRUCTURES, 1, { filter: (s) => { return s.structureType == "container"; } }));
+						if (container != null) {
+							_.set(this.memory, ["task", "dump_container"], _.get(container, "id"));
+							this.transfer(container, "energy");
+							Stats_Visual.CreepSay(this, 'transfer');
+							return;
+						} else {
+							_.set(this.memory, ["task", "dump_container"], "unavailable");
+						}
+					}
+
+				}
+			}
+			return;
 			} else if (result == ERR_NOT_IN_RANGE) {
+				// Burrowers drop energy when moving to source (they have no carry capacity)
 				if (this.memory.role == "burrower" && this.carry["energy"] > 0)
 					this.drop("energy");
 				if (this.travelTask(obj) == ERR_NO_PATH)
@@ -545,8 +553,8 @@ Creep.prototype.getTask_Withdraw_Container = function getTask_Withdraw_Container
 				s => { return this.pos.getRangeTo(s.pos); }));
 
 			if (cont != null) {
-				// COMMIT to this container: stay committed for 30-60 ticks
-				let commitDuration = room_level <= 3 ? 30 : 60; // Shorter commitment for early game
+				// COMMIT to this container: stay committed for 40-60 ticks
+				let commitDuration = room_level <= 3 ? 40 : 60; // Shorter commitment for early game
 				
 				_.set(this.memory, ["committed_target", "container"], cont.id);
 				_.set(this.memory, ["committed_target", "until"], Game.time + commitDuration);
