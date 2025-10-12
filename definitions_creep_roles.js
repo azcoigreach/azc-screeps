@@ -112,8 +112,10 @@
 					// Priority 1: Build critical RCL progression structures
 					creep.memory.task = creep.memory.task || creep.getTask_Build();
 					
-					// Priority 2: Repair critical structures (walls, ramparts)
+					// Priority 2: Repair critical AND maintenance (ramparts/walls to target HP)
+					// In early game, complete rampart repairs to avoid constant task switching
 					creep.memory.task = creep.memory.task || creep.getTask_Repair(true);
+					creep.memory.task = creep.memory.task || creep.getTask_Repair(false);
 					
 					// Priority 3: Upgrade only if no upgraders and not critical downgrade
 					let shouldUpgrade = !hasUpgraders && !isCriticalDowngrade;
@@ -124,7 +126,6 @@
 					
 					// Priority 4: Other tasks
 					creep.memory.task = creep.memory.task || creep.getTask_Sign();
-					creep.memory.task = creep.memory.task || creep.getTask_Repair(false);
 					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral");
 					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 				} else {
@@ -180,32 +181,12 @@
 					return;
 
 				if (creep.memory.role == "burrower") {
-					// Enhanced burrower logic to minimize idle time and optimize energy flow
-					let carryCapacity = creep.carryCapacity;
-					let currentCarry = _.sum(creep.carry);
-					let sources = creep.room.find(FIND_SOURCES);
-					let nearbySource = creep.pos.findClosestByPath(sources);
-					
-					// Check if source has enough energy to make mining worthwhile
-					let shouldMine = false;
-					if (nearbySource && carryCapacity > 0) {
-						let remainingCapacity = carryCapacity - currentCarry;
-						let miningRate = creep.getActiveBodyparts(WORK) * HARVEST_POWER;
-						let ticksToFill = Math.ceil(remainingCapacity / miningRate);
-						
-						// Only mine if source is an energy source and has enough energy for efficient harvesting
-						if (nearbySource.energy !== undefined && (nearbySource.energy >= remainingCapacity || ticksToFill <= 5)) {
-							shouldMine = true;
-						}
-					}
-					
-					// Improved task priority for efficiency
-					if (shouldMine && currentCarry < carryCapacity * CARRY_CAPACITY_THRESHOLD) {
-						creep.memory.task = creep.memory.task || creep.getTask_Mine();
-					}
+					// Burrowers mine and deposit to containers/links near sources
+					// They have both WORK and CARRY parts
+					creep.memory.task = creep.memory.task || creep.getTask_Mine();
 					creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Source_Container();
 					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Source_Link();
-					creep.memory.task = creep.memory.task || creep.getTask_Wait(5); // Shorter wait for faster response
+					creep.memory.task = creep.memory.task || creep.getTask_Wait(5);
 
 				} else if (creep.memory.role == "miner" || creep.memory.role == "carrier") {
 					// PRIORITY 1: Mine if we have WORK parts (miners should mine, not scavenge)

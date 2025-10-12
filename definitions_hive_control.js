@@ -573,7 +573,10 @@
 			let result = Game.cpu.generatePixel();
 			
 			if (result === OK) {
-				// Track pixel generation statistics
+				// Initialize pixel tracking if needed
+				if (!Memory.hive.pixels) {
+					Memory.hive.pixels = {};
+				}
 				if (!Memory.hive.pixels.stats) {
 					Memory.hive.pixels.stats = {
 						total_generated: 0,
