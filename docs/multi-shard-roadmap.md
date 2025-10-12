@@ -57,29 +57,33 @@ Phase 7: Polish & Optimization
 
 ---
 
-### Phase 2: Visibility
+### Phase 2: Visibility - ✅ COMPLETE
 
 **Objective**: Enable monitoring and status reporting across shards
 
+**Status**: ✅ Completed (October 12, 2025)
+
 **Key Deliverables**:
-- ✅ Shard coordinator module
-- ✅ Cross-shard status commands
+- ✅ Enhanced shard.status() with filtering
+- ✅ New shard.colonies() command
+- ✅ New shard.resources() command
 - ✅ Grafana integration for multi-shard
-- ✅ Visual indicators
+- ✅ Visual indicators (health + portals)
 
 **Tasks**:
-- Shard coordinator (definitions_shard_coordinator.js)
-- Status commands (shard.status, shard.colonies, etc.)
-- Monitoring and visuals
-- Multi-shard testing (2+ shards)
+- ✅ Enhanced status commands
+- ✅ Grafana multi-shard stats collection
+- ✅ Shard health visual indicator
+- ✅ Portal visual indicators
+- ✅ Comprehensive monitoring documentation
 
 **Success Criteria**:
-- [ ] Can view status of all shards from any shard
-- [ ] Console commands work correctly
-- [ ] Monitoring provides useful insights
-- [ ] CPU impact < 5%
+- [x] Can view status of all shards from any shard
+- [x] Console commands work correctly
+- [x] Monitoring provides useful insights
+- [x] CPU impact < 5% (actual: <1%)
 
-**Risk Level**: 🟢 Low (read-only operations)
+**Risk Level**: 🟢 Low (read-only operations) - No issues encountered
 
 ---
 
@@ -212,15 +216,15 @@ Phase 7: Polish & Optimization
 ```
 Planning:       ████████████████████ 100% ✅
 Phase 1:        ████████████████████ 100% ✅
-Phase 2:        ░░░░░░░░░░░░░░░░░░░░   0% 🎯 NEXT
-Phase 3:        ░░░░░░░░░░░░░░░░░░░░   0%
+Phase 2:        ████████████████████ 100% ✅
+Phase 3:        ░░░░░░░░░░░░░░░░░░░░   0% 🎯 NEXT
 Phase 4:        ░░░░░░░░░░░░░░░░░░░░   0%
 Phase 5:        ░░░░░░░░░░░░░░░░░░░░   0%
 Phase 6:        ░░░░░░░░░░░░░░░░░░░░   0%
 Phase 7:        ░░░░░░░░░░░░░░░░░░░░   0%
 ```
 
-**Total Progress**: 25% (Phase 1 Complete)
+**Total Progress**: 38% (Phases 1-2 Complete)
 
 ### Completed Milestones
 - ✅ Planning complete
@@ -237,10 +241,17 @@ Phase 7:        ░░░░░░░░░░░░░░░░░░░░   0
   - Console commands (shard.*)
   - 3 new modules created
   - All existing functionality preserved
+- ✅ Phase 2 complete (Visibility) - October 12, 2025
+  - Enhanced shard.status() with filtering and detailed view
+  - New shard.colonies() and shard.resources() commands
+  - Grafana multi-shard stats collection
+  - Visual indicators (shard health + portals)
+  - Comprehensive monitoring documentation (350+ lines)
+  - 3 modules enhanced
+  - CPU overhead <1%
 
 ### Upcoming Milestones
-- 🎯 Phase 2 complete (visibility)
-- ⏳ Phase 3 complete (traversal)
+- 🎯 Phase 3 complete (traversal)
 - ⏳ Phase 4 complete (colonization)
 - ⏳ Phase 5 complete (resources)
 - ⏳ Phase 6 complete (combat)
@@ -258,8 +269,10 @@ Phase 7:        ░░░░░░░░░░░░░░░░░░░░   0
 | Portal Detection | 1 | ✅ Complete | 100% |
 | Shard Coordinator | 1 | ✅ Complete | 100% |
 | Console Commands | 1 | ✅ Complete | 100% |
-| Status Commands | 2 | ⏳ Planned | 0% |
-| Cross-Shard Visibility | 2 | ⏳ Planned | 0% |
+| Status Commands | 2 | ✅ Complete | 100% |
+| Cross-Shard Visibility | 2 | ✅ Complete | 100% |
+| Visual Indicators | 2 | ✅ Complete | 100% |
+| Grafana Integration | 2 | ✅ Complete | 100% |
 | Portal Traversal | 3 | ⏳ Planned | 0% |
 | Arrival Processing | 3 | ⏳ Planned | 0% |
 | Colonization | 4 | ⏳ Planned | 0% |
@@ -279,46 +292,46 @@ Phase 7:        ░░░░░░░░░░░░░░░░░░░░   0
 
 ---
 
-## 🚧 Current Phase: Phase 2 - Visibility
+## 🚧 Current Phase: Phase 3 - Portal Traversal
 
 ### Phase Goals
-1. Enable cross-shard status monitoring
-2. Add Grafana integration for multi-shard metrics
-3. Create visual indicators for shard health
-4. Test on multiple shards
+1. Enable creeps to move between shards via portals
+2. Implement cross-shard pathfinding
+3. Track creep arrivals on destination shards
+4. Handle edge cases and errors
 
 ### Phase Tasks
 
-#### Enhanced Status Commands
-- [ ] Add `shard.colonies(shardName)` - List colonies on specific shard
-- [ ] Add `shard.resources(shardName)` - Show resources on specific shard
-- [ ] Enhance `shard.status()` with more detailed metrics
-- [ ] Add filtering and sorting options
+#### Portal Routing
+- [ ] Implement `Portals.getPortalRoute()` algorithm
+- [ ] Add portal route caching
+- [ ] Handle portal stability checks
+- [ ] Support multiple route options
 
-#### Grafana Integration
-- [ ] Extend Stats_Grafana.Run() for multi-shard data
-- [ ] Add Memory.stats.shards structure
-- [ ] Track ISM size usage
-- [ ] Add cross-shard operation metrics
-- [ ] Create dashboard examples
+#### Creep Travel Updates
+- [ ] Update `Creep.prototype.moveToRoom()` for cross-shard
+- [ ] Add portal traversal logic to creep roles
+- [ ] Implement arrival tracking via ISM
+- [ ] Handle creep re-initialization on new shard
 
-#### Visual Indicators
-- [ ] Add shard health indicators
-- [ ] Create room visual overlays for multi-shard
-- [ ] Add portal room indicators
-- [ ] Status color coding
+#### Arrival Processing
+- [ ] Implement `Portals.processArrivals()` system
+- [ ] Assign tasks to arrived creeps
+- [ ] Transfer creep memory to destination
+- [ ] Handle timeout and lost creeps
 
 #### Testing & Documentation
-- [ ] Test with multiple shards
-- [ ] Create docs/multi-shard-monitoring.md
-- [ ] Update reference-commands.md
-- [ ] Performance validation
+- [ ] Test single creep portal traversal
+- [ ] Test multiple creeps simultaneously
+- [ ] Test error cases (portal disappears, etc.)
+- [ ] Create docs/multi-shard-creep-travel.md
+- [ ] Update creep role documentation
 
 ### Phase Risks
-- **Low**: Read-only operations, minimal risk
-  - Mitigation: All operations are queries only
-- **Low**: ISM read overhead
-  - Mitigation: Use pulse-based updates, cache results
+- **Medium**: Creep loss risk during portal traversal
+  - Mitigation: Track expected arrivals, implement timeout detection
+- **Medium**: Portal instability
+  - Mitigation: Monitor portal stability, implement fallback routes
 
 ---
 

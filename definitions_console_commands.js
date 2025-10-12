@@ -2120,23 +2120,153 @@
 	
 	global.shard = new Object();
 	
-		help_shard.push("shard.status()");
-		help_shard.push(" - Display status of all shards");
-		
-		shard.status = function() {
+	help_shard.push("shard.status(shardName, detailed)");
+	help_shard.push(" - Display status of all shards or specific shard");
+	help_shard.push(" - shardName: Optional, show specific shard only");
+	help_shard.push(" - detailed: Optional, show detailed metrics (default: false)");
+	
+	shard.status = function(shardName, detailed = false) {
+		if (shardName) {
+			// Show specific shard
+			let status = ShardCoordinator.getShardStatus(shardName);
+			if (!status) {
+				return `<font color=\"#FF0000\">[Shard]</font> Error: Shard ${shardName} not found`;
+			}
+			
+			// Display detailed status
+			let colonies = Object.keys(status.colonies || {}).length;
+			let energy = _.get(status, ["resources", "energy"], 0);
+			let cpu = _.get(status, ["cpu", "used"], 0);
+			let bucket = _.get(status, ["cpu", "bucket"], 0);
+			let tick = status.tick || 0;
+			let age = Game.time - tick;
+			
+			console.log(`<font color=\"#00FFFF\">[Shard]</font> === Shard: ${shardName} ===`);
+			console.log(`<font color=\"#00FFFF\">[Shard]</font> Tick: ${tick} (age: ${age} ticks)`);
+			console.log(`<font color=\"#00FFFF\">[Shard]</font> Colonies: ${colonies}`);
+			console.log(`<font color=\"#00FFFF\">[Shard]</font> Energy: ${energy.toLocaleString()}`);
+			console.log(`<font color=\"#00FFFF\">[Shard]</font> CPU: ${cpu.toFixed(1)} / Bucket: ${bucket}`);
+			
+			if (detailed) {
+				// Show detailed colony info
+				_.each(Object.keys(status.colonies || {}), colonyName => {
+					let colony = status.colonies[colonyName];
+					console.log(`<font color=\"#00FFFF\">[Shard]</font>   Colony ${colonyName}:`);
+					console.log(`<font color=\"#00FFFF\">[Shard]</font>     RCL: ${colony.rcl}, Energy: ${colony.energy.toLocaleString()}`);
+					console.log(`<font color=\"#00FFFF\">[Shard]</font>     Spawns: ${colony.spawns_available}/${colony.spawns_total}`);
+				});
+				
+				// Show minerals
+				let minerals = _.get(status, ["resources", "minerals"], {});
+				if (Object.keys(minerals).length > 0) {
+					console.log(`<font color=\"#00FFFF\">[Shard]</font> Minerals:`);
+					_.each(Object.keys(minerals), mineral => {
+						console.log(`<font color=\"#00FFFF\">[Shard]</font>   ${mineral}: ${minerals[mineral].toLocaleString()}`);
+					});
+				}
+			}
+			
+			return `<font color=\"#00FFFF\">[Shard]</font> Status for ${shardName} displayed`;
+		} else {
+			// Show all shards
 			ShardCoordinator.displayStatus();
 			return `<font color=\"#00FFFF\">[Shard]</font> Status displayed`;
-		};
+		}
+	};
 		
-		help_shard.push("shard.portals()");
-		help_shard.push(" - Display all known portals on current shard");
+	help_shard.push("shard.portals()");
+	help_shard.push(" - Display all known portals on current shard");
+	
+	shard.portals = function() {
+		Portals.display();
+		return `<font color=\"#00FFFF\">[Shard]</font> Portal list displayed`;
+	};
+	
+	help_shard.push("shard.colonies(shardName)");
+	help_shard.push(" - List all colonies on a specific shard");
+	help_shard.push(" - shardName: Optional, defaults to current shard");
+	
+	shard.colonies = function(shardName) {
+		if (!Game.shard && !shardName) {
+			return `<font color=\"#FF0000\">[Shard]</font> Error: Not on multi-shard server`;
+		}
 		
-		shard.portals = function() {
-			Portals.display();
-			return `<font color=\"#00FFFF\">[Shard]</font> Portal list displayed`;
-		};
+		let targetShard = shardName || (Game.shard ? Game.shard.name : null);
+		let status = ShardCoordinator.getShardStatus(targetShard);
 		
-		help_shard.push("shard.debug_ism()");
+		if (!status) {
+			return `<font color=\"#FF0000\">[Shard]</font> Error: Shard ${targetShard} not found`;
+		}
+		
+		console.log(`<font color=\"#00FFFF\">[Shard]</font> === Colonies on ${targetShard} ===`);
+		
+		let colonies = status.colonies || {};
+		if (Object.keys(colonies).length === 0) {
+			console.log(`<font color=\"#00FFFF\">[Shard]</font> No colonies found`);
+		} else {
+			_.each(Object.keys(colonies).sort(), roomName => {
+				let colony = colonies[roomName];
+				let portalIndicator = (colony.portal_rooms && colony.portal_rooms.length > 0) ? " 🌀" : "";
+				console.log(`<font color=\"#00FFFF\">[Shard]</font> ${roomName}${portalIndicator}:`);
+				console.log(`<font color=\"#00FFFF\">[Shard]</font>   RCL: ${colony.rcl}, Energy: ${colony.energy.toLocaleString()}`);
+				console.log(`<font color=\"#00FFFF\">[Shard]</font>   Spawns: ${colony.spawns_available}/${colony.spawns_total}${colony.can_assist ? " (assist available)" : ""}`);
+				if (colony.portal_rooms && colony.portal_rooms.length > 0) {
+					console.log(`<font color=\"#00FFFF\">[Shard]</font>   Portal rooms: ${colony.portal_rooms.join(", ")}`);
+				}
+			});
+		}
+		
+		return `<font color=\"#00FFFF\">[Shard]</font> Colonies for ${targetShard} displayed`;
+	};
+	
+	help_shard.push("shard.resources(shardName)");
+	help_shard.push(" - Show resource availability on a specific shard");
+	help_shard.push(" - shardName: Optional, defaults to current shard");
+	
+	shard.resources = function(shardName) {
+		if (!Game.shard && !shardName) {
+			return `<font color=\"#FF0000\">[Shard]</font> Error: Not on multi-shard server`;
+		}
+		
+		let targetShard = shardName || (Game.shard ? Game.shard.name : null);
+		let status = ShardCoordinator.getShardStatus(targetShard);
+		
+		if (!status) {
+			return `<font color=\"#FF0000\">[Shard]</font> Error: Shard ${targetShard} not found`;
+		}
+		
+		console.log(`<font color=\"#00FFFF\">[Shard]</font> === Resources on ${targetShard} ===`);
+		
+		let resources = status.resources || {};
+		
+		// Show energy
+		let energy = resources.energy || 0;
+		console.log(`<font color=\"#00FFFF\">[Shard]</font> Energy: ${energy.toLocaleString()}`);
+		
+		// Show minerals
+		let minerals = resources.minerals || {};
+		if (Object.keys(minerals).length > 0) {
+			console.log(`<font color=\"#00FFFF\">[Shard]</font> <b>Minerals:</b>`);
+			let mineralKeys = Object.keys(minerals).sort();
+			_.each(mineralKeys, mineral => {
+				console.log(`<font color=\"#00FFFF\">[Shard]</font>   ${mineral}: ${minerals[mineral].toLocaleString()}`);
+			});
+		}
+		
+		// Show commodities
+		let commodities = resources.commodities || {};
+		if (Object.keys(commodities).length > 0) {
+			console.log(`<font color=\"#00FFFF\">[Shard]</font> <b>Commodities:</b>`);
+			let commodityKeys = Object.keys(commodities).sort();
+			_.each(commodityKeys, commodity => {
+				console.log(`<font color=\"#00FFFF\">[Shard]</font>   ${commodity}: ${commodities[commodity].toLocaleString()}`);
+			});
+		}
+		
+		return `<font color=\"#00FFFF\">[Shard]</font> Resources for ${targetShard} displayed`;
+	};
+	
+	help_shard.push("shard.debug_ism()");
 		help_shard.push(" - Show InterShardMemory contents and size");
 		
 		shard.debug_ism = function() {
