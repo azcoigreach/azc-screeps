@@ -66,7 +66,12 @@
 					: _.filter(Game.rooms[rmColony].find(FIND_HOSTILE_CREEPS), c => { return c.isHostile(); });
 				_.set(Memory, ["rooms", rmColony, "defense", "hostiles"], hostiles);
 
-				let is_safe = visible && hostiles.length == 0;
+				// Only consider hostiles with attack capabilities as threats for safety assessment
+				let dangerous_hostiles = !visible ? new Array()
+					: _.filter(Game.rooms[rmColony].find(FIND_HOSTILE_CREEPS), c => { 
+						return c.isHostile() && (c.hasPart("attack") || c.hasPart("ranged_attack")); 
+					});
+				let is_safe = visible && dangerous_hostiles.length == 0;
 				_.set(Memory, ["rooms", rmColony, "defense", "is_safe"], is_safe);
 
 				let storage = _.get(Game, ["rooms", rmColony, "storage"]);
@@ -198,7 +203,7 @@
 				if (_.get(Game, ["rooms", rmColony, "controller", "safeMode"]) == null
 					&& ((_.get(popActual, "soldier", 0) < _.get(popTarget, ["soldier", "amount"], 0))
 						|| (_.get(popActual, "soldier", 0) < hostiles.length))) {
-					Memory["hive"]["spawn_requests"].push({
+					Memory["shard"]["spawn_requests"].push({
 						room: rmColony, listRooms: listSpawnRooms,
 						priority: (!is_safe ? 1 : 21),
 						level: _.get(popTarget, ["soldier", "level"], room_level),
@@ -209,7 +214,7 @@
 
 				if (_.get(Game, ["rooms", rmColony, "controller", "safeMode"]) == null
 					&& _.get(popActual, "healer", 0) < _.get(popTarget, ["healer", "amount"], 0)) {
-					Memory["hive"]["spawn_requests"].push({
+					Memory["shard"]["spawn_requests"].push({
 						room: rmColony, listRooms: listSpawnRooms,
 						priority: (!is_safe ? 2 : 22),
 						level: _.get(popTarget, ["healer", "level"], 1),
@@ -219,7 +224,7 @@
 				}
 
 				if (_.get(popActual, "worker", 0) < _.get(popTarget, ["worker", "amount"], 0)) {
-					Memory["hive"]["spawn_requests"].push({
+					Memory["shard"]["spawn_requests"].push({
 						room: rmColony, listRooms: listSpawnRooms,
 						priority: Math.lerpSpawnPriority(23, 25, _.get(popActual, "worker", 0), _.get(popTarget, ["worker", "amount"], 0)),
 						level: _.get(popTarget, ["worker", "level"], 1),
@@ -233,7 +238,7 @@
 				let forceSpawn = _.get(Memory, ["rooms", rmColony, "upgrader_force_spawn"]);
 				if (forceSpawn && forceSpawn.timestamp == Game.time) {
 					for (let i = 0; i < forceSpawn.amount; i++) {
-						Memory["hive"]["spawn_requests"].push({
+						Memory["shard"]["spawn_requests"].push({
 							room: rmColony, listRooms: listSpawnRooms,
 							priority: 1, // High priority for force spawn
 							level: room_level,
@@ -268,7 +273,7 @@
 					
 					// Check if we need upgraders
 					if (_.get(popActual, "upgrader", 0) < totalUpgraders) {
-						Memory["hive"]["spawn_requests"].push({
+						Memory["shard"]["spawn_requests"].push({
 							room: rmColony, listRooms: listSpawnRooms,
 							priority: Math.lerpSpawnPriority(20, 22, _.get(popActual, "upgrader", 0), totalUpgraders),
 							level: _.get(popTarget, ["upgrader", "level"], room_level),
@@ -289,6 +294,7 @@
 						case "worker": Creep_Roles.Worker(creep); break;
 						case "upgrader": Creep_Roles.Upgrader(creep, _.get(Memory, ["rooms", rmColony, "defense", "is_safe"], true)); break;
 						case "healer": Creep_Roles.Healer(creep, true); break;
+						case "portal_scout": Creep_Roles.Portal_Scout(creep); break;
 
 						case "soldier": case "paladin":
 							Creep_Roles.Soldier(creep, false, true);
@@ -642,7 +648,12 @@
 					}
 				}
 				
-				let is_safe = visible && hostiles.length == 0 && invaderCore == null;
+				// Only consider hostiles with attack capabilities as threats for safety assessment
+				let dangerous_hostiles = !visible ? new Array()
+					: _.filter(Game.rooms[rmHarvest].find(FIND_HOSTILE_CREEPS), c => { 
+						return c.isHostile() && (c.hasPart("attack") || c.hasPart("ranged_attack")); 
+					});
+				let is_safe = visible && dangerous_hostiles.length == 0 && invaderCore == null;
 				_.set(Memory, ["rooms", rmHarvest, "defense", "is_safe"], is_safe);
 				_.set(Memory, ["sites", "mining", rmHarvest, "defense", "is_safe"], is_safe);
 				_.set(Memory, ["sites", "mining", rmHarvest, "defense", "hostiles"], hostiles);
@@ -703,7 +714,7 @@
 					let lScout = _.filter(listCreeps, c => c.memory.role == "scout");
 
 					if (lScout.length < 1) {
-						Memory["hive"]["spawn_requests"].push({
+						Memory["shard"]["spawn_requests"].push({
 							room: rmColony, listRooms: listSpawnRooms, priority: 0, level: 1,
 							scale: false, body: "scout", name: null, args: { role: "scout", room: rmHarvest, colony: rmColony }
 						});
@@ -795,7 +806,7 @@
 				Stats_Grafana.populationTally(rmColony, popTarget, popActual);
 
 				if (_.get(popActual, "paladin", 0) < _.get(popTarget, ["paladin", "amount"], 0)) {
-					Memory["hive"]["spawn_requests"].push({
+					Memory["shard"]["spawn_requests"].push({
 						room: rmColony, listRooms: listSpawnRooms,
 						priority: 14,
 						level: popTarget["paladin"]["level"],
@@ -804,7 +815,7 @@
 					});
 				}
 				if (_.get(popActual, "ranger", 0) < _.get(popTarget, ["ranger", "amount"], 0)) {
-					Memory["hive"]["spawn_requests"].push({
+					Memory["shard"]["spawn_requests"].push({
 						room: rmColony, listRooms: listSpawnRooms,
 						priority: 14,
 						level: _.get(popTarget, ["ranger", "level"], room_level),
@@ -815,7 +826,7 @@
 
 				if ((!hasKeepers && !is_safe && hostiles.length > _.get(popActual, "soldier", 0))
 					|| (_.get(popActual, "soldier", 0) < _.get(popTarget, ["soldier", "amount"], 0))) {
-					Memory["hive"]["spawn_requests"].push({
+					Memory["shard"]["spawn_requests"].push({
 						room: rmColony, listRooms: listSpawnRooms,
 						priority: (!is_safe ? 3 : 14),
 						level: _.get(popTarget, ["soldier", "level"], room_level),
@@ -825,7 +836,7 @@
 				}
 
 				if (_.get(popActual, "healer", 0) < _.get(popTarget, ["healer", "amount"], 0)) {
-					Memory["hive"]["spawn_requests"].push({
+					Memory["shard"]["spawn_requests"].push({
 						room: rmColony, listRooms: listSpawnRooms,
 						priority: (!is_safe ? 4 : 15),
 						level: popTarget["healer"]["level"],
@@ -835,7 +846,7 @@
 				}
 
 				if (_.get(popActual, "multirole", 0) < _.get(popTarget, ["multirole", "amount"], 0)) {
-					Memory["hive"]["spawn_requests"].push({
+					Memory["shard"]["spawn_requests"].push({
 						room: rmColony, listRooms: listSpawnRooms,
 						priority: 19,
 						level: popTarget["multirole"]["level"],
@@ -852,7 +863,7 @@
 							|| Game.rooms[rmHarvest].controller.reservation.ticksToEnd < 2000)
 						&& (_.get(Memory, ["sites", "mining", rmHarvest, "survey", "reserve_access"], null) == null
 							|| _.get(popActual, "reserver", 0) < _.get(Memory, ["sites", "mining", rmHarvest, "survey", "reserve_access"], 0))) {
-						Memory["hive"]["spawn_requests"].push({
+						Memory["shard"]["spawn_requests"].push({
 							room: rmColony, listRooms: listSpawnRooms,
 							priority: 17,
 							level: _.get(popTarget, ["reserver", "level"], 1),
@@ -864,7 +875,7 @@
 
 					if (can_mine) {
 						if (_.get(popActual, "burrower", 0) < _.get(popTarget, ["burrower", "amount"], 0)) {
-							Memory["hive"]["spawn_requests"].push({
+							Memory["shard"]["spawn_requests"].push({
 								room: rmColony, listRooms: listSpawnRooms,
 								priority: (rmColony == rmHarvest ? 12 : 15),
 								level: _.get(popTarget, ["burrower", "level"], 1),
@@ -875,7 +886,7 @@
 						}
 
 						if (_.get(popActual, "carrier", 0) < _.get(popTarget, ["carrier", "amount"], 0)) {
-							Memory["hive"]["spawn_requests"].push({
+							Memory["shard"]["spawn_requests"].push({
 								room: rmColony, listRooms: listSpawnRooms,
 								priority: (rmColony == rmHarvest ? 13 : 16),
 								level: _.get(popTarget, ["carrier", "level"], 1),
@@ -888,7 +899,7 @@
 						if (_.get(popActual, "miner", 0) < 2 // Population stalling? Energy defecit? Replenish with miner group
 							&& (_.get(popActual, "burrower", 0) < _.get(popTarget, ["burrower", "amount"], 0)
 								&& _.get(popActual, "carrier", 0) < _.get(popTarget, ["carrier", "amount"], 0))) {
-							Memory["hive"]["spawn_requests"].push({
+							Memory["shard"]["spawn_requests"].push({
 								room: rmColony, listRooms: listSpawnRooms,
 								priority: (rmColony == rmHarvest ? 11 : 14),
 								level: Math.max(1, Game["rooms"][rmColony].getLevel_Available()),
@@ -898,7 +909,7 @@
 						}
 
 						if (_.get(popActual, "miner", 0) < _.get(popTarget, ["miner", "amount"], 0)) {
-							Memory["hive"]["spawn_requests"].push({
+							Memory["shard"]["spawn_requests"].push({
 								room: rmColony, listRooms: listSpawnRooms,
 								priority: (rmColony == rmHarvest ? 12 : 15),
 								level: _.get(popTarget, ["miner", "level"], 1),
@@ -909,7 +920,7 @@
 						}
 
 						if (_.get(popActual, "dredger", 0) < _.get(popTarget, ["dredger", "amount"], 0)) {
-							Memory["hive"]["spawn_requests"].push({
+							Memory["shard"]["spawn_requests"].push({
 								room: rmColony, listRooms: listSpawnRooms,
 								priority: 19,
 								level: _.get(popTarget, ["dredger", "level"], 1),
@@ -922,7 +933,7 @@
 						let pause_extraction = _.get(Memory, ["hive", "pause", "extracting"], false);
 						if (has_minerals && !pause_extraction
 							&& _.get(popActual, "extractor", 0) < _.get(popTarget, ["extractor", "amount"], 0)) {
-							Memory["hive"]["spawn_requests"].push({
+							Memory["shard"]["spawn_requests"].push({
 								room: rmColony, listRooms: listSpawnRooms,
 								priority: 18,
 								level: _.get(popTarget, ["extractor", "level"], 1),
@@ -952,11 +963,14 @@
 				_.each(listCreeps, creep => {
 					let role = creep.memory.role;
 					
-					switch (role) {
-						case "scout": 
-							Creep_Roles.Scout(creep); 
-							break;
-						case "extractor": 
+				switch (role) {
+					case "scout": 
+						Creep_Roles.Scout(creep); 
+						break;
+					case "portal_scout":
+						Creep_Roles.Portal_Scout(creep);
+						break;
+					case "extractor":
 							Creep_Roles.Extractor(creep, is_safe); 
 							break;
 						case "reserver": 
@@ -1100,7 +1114,7 @@
 
 				if (_.get(Game, ["rooms", rmColony, "terminal"])
 					&& _.get(popActual, "courier", 0) < _.get(popTarget, ["courier", "amount"], 0)) {
-					Memory["hive"]["spawn_requests"].push({
+					Memory["shard"]["spawn_requests"].push({
 						room: rmColony, listRooms: listSpawnRooms,
 						priority: Math.lerpSpawnPriority(14, 16, _.get(popActual, "courier"), _.get(popTarget, ["courier", "amount"])),
 						level: popTarget["courier"]["level"],
@@ -1113,7 +1127,7 @@
 				let factories = _.filter(Game.rooms[rmColony].find(FIND_MY_STRUCTURES), 
 					s => s.structureType == "factory");
 				if (factories.length > 0 && _.get(popActual, "factory_operator", 0) < 1) {
-					Memory["hive"]["spawn_requests"].push({
+					Memory["shard"]["spawn_requests"].push({
 						room: rmColony, listRooms: listSpawnRooms,
 						priority: 15,
 						level: 6,
@@ -2585,7 +2599,7 @@
 					_.sum(popActual));
 
 				if (_.get(popActual, "colonizer", 0) < _.get(popTarget, ["colonizer", "amount"], 0)) {
-					Memory["hive"]["spawn_requests"].push({
+					Memory["shard"]["spawn_requests"].push({
 						room: rmColony, listRooms: null,
 						priority: 21,
 						level: _.get(popTarget, ["colonizer", "level"], 6),
@@ -2683,7 +2697,7 @@
 				for (let role in listArmy) {
 					let listRole = _.filter(listCreeps, c => { return _.get(c, ["memory", "role"]) == role; });
 					if (listRole.length < _.get(listArmy, [role, "amount"])) {
-						Memory["hive"]["spawn_requests"].push({
+						Memory["shard"]["spawn_requests"].push({
 							room: rmColony,
 							listRooms: listSpawnRooms,
 							priority: 20,
@@ -3039,10 +3053,12 @@
 				let target_structures = _.get(tactic, "target_structures");
 				let target_list = _.get(tactic, "target_list");
 
-				_.each(listCreeps, creep => {
-					if (creep.memory.role == "scout") {
-						Creep_Roles.Scout(creep);
-					} else if (creep.memory.role == "soldier"
+			_.each(listCreeps, creep => {
+				if (creep.memory.role == "scout") {
+					Creep_Roles.Scout(creep);
+				} else if (creep.memory.role == "portal_scout") {
+					Creep_Roles.Portal_Scout(creep);
+				} else if (creep.memory.role == "soldier"
 						|| creep.memory.role == "brawler"
 						|| creep.memory.role == "paladin") {
 						Creep_Roles.Soldier(creep, target_structures, target_creeps, target_list);
@@ -3224,7 +3240,7 @@
 							highwayData.replacement_queued = true;
 							highwayData.last_replacement = Game.time;
 							console.log(`<font color=\"#FFA500\">[Highway]</font> Queuing replacement burrower for ${highway_id} (${replacementReason})`);
-							Memory["hive"]["spawn_requests"].push({
+							Memory["shard"]["spawn_requests"].push({
 								room: highwayData.colony, listRooms: listSpawnRooms,
 								priority: 15,
 								level: 8, body: "extractor",
@@ -3295,7 +3311,7 @@
 					let body = _.get(pop, "body", "worker");
 
 					for (let i = actual; i < amount; i++) {
-						Memory["hive"]["spawn_requests"].push({
+						Memory["shard"]["spawn_requests"].push({
 							room: colony, listRooms: listSpawnRooms,
 							priority: 15, // Highway mining priority
 							level: level, body: body,

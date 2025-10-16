@@ -28,6 +28,10 @@
  * : [sec09a] CPU Profiling
  * : [sec10a] Grafana Statistics
  *
+ * : [sec11a] InterShardMemory Manager
+ * : [sec12a] Portals
+ * : [sec13a] Shard Coordinator
+ * : [sec14a] Global Creeps (Cross-Shard)
  *
  * *********************************************************** */
 
@@ -52,6 +56,10 @@ require("definitions_flag_controller");
 require("definitions_visual_elements");
 require("definitions_cpu_profiling");
 require("definitions_grafana_statistics");
+require("definitions_intershard_memory");
+require("definitions_portals");
+require("definitions_shard_coordinator");
+require("definitions_global_creeps");
 
 /* ***********************************************************
  *	MAIN LOOP
@@ -70,6 +78,23 @@ module.exports.loop = function () {
 	Control.initMemory();
 	Control.initLabs();
         Control.initVisuals();
+
+	// Multi-shard coordination (publish status on mid pulse)
+	if (hasCPU() && isPulse_Mid()) {
+		ShardCoordinator.publishShardStatus();
+	}
+
+	// Process portal arrivals (check for incoming creeps)
+	if (hasCPU() && isPulse_Short()) {
+		Portals.processArrivals();
+	}
+
+	// Run all global creeps (independent of colonies)
+	// This allows creeps to function on shards without colonies
+	// Supports scouts, workers, miners, soldiers, etc.
+	if (hasCPU()) {
+		GlobalCreeps.run();
+	}
 
         FlagController.run();
         
@@ -93,6 +118,16 @@ module.exports.loop = function () {
 	// Run factory maintenance
 	if (hasCPU()) {
 		factories.maintenance();
+	}
+
+	// Scan for portals (long pulse)
+	if (hasCPU() && isPulse_Long()) {
+		Portals.scanPortals();
+	}
+
+	// Monitor cross-shard operations (mid pulse)
+	if (hasCPU() && isPulse_Mid()) {
+		ShardCoordinator.monitorOperations();
 	}
 
 	Control.endMemory();

@@ -48,6 +48,15 @@
 - **[Room Management](room-management.md)** – RCL progression, spawn logic, population levels, and recovery from disasters
 - **[Remote Mining](remote-mining.md)** – Planning and executing remote mining operations, including source keeper rooms
 
+### Multi-Shard (🚧 Phase 1 Complete - 25%)
+
+✅ **Phase 1 Foundation Complete** - Multi-shard awareness and coordination now active!
+
+- **[Multi-Shard Overview](multi-shard-overview.md)** – Introduction to multi-shard gameplay, features, and architecture
+- **[Multi-Shard Implementation Plan](multi-shard-implementation-plan.md)** – Detailed technical plan for multi-shard feature development (Phase 1 ✅)
+- **[Multi-Shard Migration Guide](multi-shard-migration-guide.md)** – Step-by-step guide for migrating to multi-shard architecture
+- **[Multi-Shard Roadmap](multi-shard-roadmap.md)** – Visual timeline, progress tracking, and sprint planning (25% complete)
+
 ### Economy & Combat
 
 - **[Economy and Market](economy-and-market.md)** – Factories, labs, market operations, energy thresholds, and credits
@@ -68,6 +77,8 @@
 ### Developer Resources
 
 - **[Development Guide](development.md)** – Developer documentation, MCP integration, project structure, coding patterns
+- **[Target Commitment System](target-commitment-system.md)** – Technical guide to the target commitment system that prevents creep bouncing
+- **[Documentation Changelog](changelog.md)** – History of documentation updates and changes
 
 ---
 

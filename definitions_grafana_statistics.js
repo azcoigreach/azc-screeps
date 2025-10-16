@@ -19,6 +19,16 @@
 		_.set(Memory, ["stats", "cpu", "tick"], Game.time);
 		_.set(Memory, ["stats", "cpu", "bucket"], Game.cpu.bucket);
 		_.set(Memory, ["stats", "cpu", "used"], Game.cpu.getUsed());
+		
+		// Multi-shard statistics
+		if (Game.shard) {
+			_.set(Memory, ["stats", "shard", "name"], Game.shard.name);
+			
+			// Collect multi-shard data every 50 ticks
+			if (Game.time % 50 == 0) {
+				this.collectShardStats();
+			}
+		}
 
 		if (Game.time % 5 == 0) {
 			_.set(Memory, ["stats", "gcl", "level"], Game.gcl.level);
@@ -107,5 +117,93 @@
 				_.get(Memory, ["stats", "colonies", room_name, "population", "actual", i], 0)
 				/ _.get(Memory, ["stats", "colonies", room_name, "population", "target", i], 1))
 		}
+	},
+	
+	/**
+	 * Collect multi-shard statistics
+	 * Aggregates data from all known shards for Grafana dashboards
+	 */
+	collectShardStats: function() {
+		if (!Game.shard) {
+			return;
+		}
+		
+		// Get all shard statuses from InterShardMemory
+		let allStatuses = ISM.getAllShardStatuses();
+		
+		// Track ISM size
+		let ismSize = ISM.getLocalSize();
+		_.set(Memory, ["stats", "shard", "ism_size"], ismSize);
+		_.set(Memory, ["stats", "shard", "ism_size_percent"], (ismSize / 102400) * 100);
+		
+		// Initialize shards stats structure
+		if (!_.get(Memory, ["stats", "shards"])) {
+			_.set(Memory, ["stats", "shards"], {});
+		}
+		
+		// Collect stats for each shard
+		_.each(Object.keys(allStatuses), shardName => {
+			let status = allStatuses[shardName];
+			let shardStats = {};
+			
+			// Basic info
+			shardStats.tick = status.tick || 0;
+			shardStats.tick_age = Game.time - (status.tick || Game.time);
+			
+			// Colony stats
+			shardStats.colonies_count = Object.keys(status.colonies || {}).length;
+			shardStats.colonies_total_rcl = 0;
+			shardStats.spawns_total = 0;
+			shardStats.spawns_available = 0;
+			
+			_.each(status.colonies || {}, colony => {
+				shardStats.colonies_total_rcl += (colony.rcl || 0);
+				shardStats.spawns_total += (colony.spawns_total || 0);
+				shardStats.spawns_available += (colony.spawns_available || 0);
+			});
+			
+			// Resource stats
+			shardStats.energy = _.get(status, ["resources", "energy"], 0);
+			shardStats.minerals_count = Object.keys(_.get(status, ["resources", "minerals"], {})).length;
+			shardStats.commodities_count = Object.keys(_.get(status, ["resources", "commodities"], {})).length;
+			
+			// CPU stats
+			shardStats.cpu_used = _.get(status, ["cpu", "used"], 0);
+			shardStats.cpu_bucket = _.get(status, ["cpu", "bucket"], 0);
+			shardStats.cpu_limit = _.get(status, ["cpu", "limit"], 0);
+			
+			// Portal stats
+			shardStats.portal_rooms = 0;
+			_.each(status.colonies || {}, colony => {
+				if (colony.portal_rooms && colony.portal_rooms.length > 0) {
+					shardStats.portal_rooms += colony.portal_rooms.length;
+				}
+			});
+			
+			// Store in Memory.stats.shards
+			_.set(Memory, ["stats", "shards", shardName], shardStats);
+		});
+		
+		// Operation stats
+		let colonizations = _.get(Memory, ["shard", "operations", "colonizations"], []);
+		let transfers = _.get(Memory, ["shard", "operations", "creep_transfers"], []);
+		
+		_.set(Memory, ["stats", "shard", "operations", "colonizations"], colonizations.length);
+		_.set(Memory, ["stats", "shard", "operations", "creep_transfers"], transfers.length);
+		
+		// Portal stats for current shard
+		let portals = Portals.getAll();
+		_.set(Memory, ["stats", "shard", "portals", "total"], portals.length);
+		
+		// Group portals by destination shard
+		let portalsByShard = {};
+		_.each(portals, portal => {
+			let destShard = portal.destination.shard;
+			if (!portalsByShard[destShard]) {
+				portalsByShard[destShard] = 0;
+			}
+			portalsByShard[destShard]++;
+		});
+		_.set(Memory, ["stats", "shard", "portals", "by_destination"], portalsByShard);
 	}
 };

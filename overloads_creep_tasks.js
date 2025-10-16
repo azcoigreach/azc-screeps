@@ -99,48 +99,56 @@
 				}
 			}
 
-			// Regular harvest logic for energy sources
-			let result = this.harvest(obj);
-			if (result == OK) {
-				let interval = 3;
-				if (Game.time % interval == 0) {
-					// Burrower fill adjacent link if possible; also fill adjacent container
-					if (this.memory.role == "burrower" && this.carry["energy"] > 0) {
-
-						let link_id = _.get(this.memory, ["task", "dump_link"]);
-						if (link_id != "unavailable" || Game.time % (interval * 5) == 0) {
-							let link = Game.getObjectById(link_id);
-							if (link == null || this.pos.getRangeTo(link) > 1 || link.energy == link.energyCapacity)
-								link = _.head(this.pos.findInRange(FIND_STRUCTURES, 1, { filter: (s) => { return s.structureType == "link"; } }));
-							if (link != null) {
-								_.set(this.memory, ["task", "dump_link"], _.get(link, "id"));
-								this.transfer(link, "energy");
-								Stats_Visual.CreepSay(this, 'transfer');
-								return;
-							} else {
-								_.set(this.memory, ["task", "dump_link"], "unavailable");
-							}
-						}
-
-						let container_id = _.get(this.memory, ["task", "dump_container"]);
-						if (container_id != "unavailable" || Game.time % (interval * 5) == 0) {
-							let container = Game.getObjectById(container_id);
-							if (container == null || this.pos.getRangeTo(container) > 1 || _.sum(container.store) == container.storeCapacity)
-								container = _.head(this.pos.findInRange(FIND_STRUCTURES, 1, { filter: (s) => { return s.structureType == "container"; } }));
-							if (container != null) {
-								_.set(this.memory, ["task", "dump_container"], _.get(container, "id"));
-								this.transfer(container, "energy");
-								Stats_Visual.CreepSay(this, 'transfer');
-								return;
-							} else {
-								_.set(this.memory, ["task", "dump_container"], "unavailable");
-							}
-						}
-
-					}
-				}
+		// Regular harvest logic for energy sources
+		let result = this.harvest(obj);
+		if (result == OK) {
+			// Miners: stop mining when full to trigger state change to "delivering"
+			if (this.memory.role == "miner" && _.sum(this.carry) >= this.carryCapacity) {
+				delete this.memory.task;
 				return;
+			}
+			
+			let interval = 3;
+			if (Game.time % interval == 0) {
+				// Burrowers: dump to adjacent containers/links when carrying energy
+				// (Burrowers have no carry, so they dump continuously)
+				if (this.memory.role == "burrower" && this.carry["energy"] > 0) {
+
+					let link_id = _.get(this.memory, ["task", "dump_link"]);
+					if (link_id != "unavailable" || Game.time % (interval * 5) == 0) {
+						let link = Game.getObjectById(link_id);
+						if (link == null || this.pos.getRangeTo(link) > 1 || link.energy == link.energyCapacity)
+							link = _.head(this.pos.findInRange(FIND_STRUCTURES, 1, { filter: (s) => { return s.structureType == "link"; } }));
+						if (link != null) {
+							_.set(this.memory, ["task", "dump_link"], _.get(link, "id"));
+							this.transfer(link, "energy");
+							Stats_Visual.CreepSay(this, 'transfer');
+							return;
+						} else {
+							_.set(this.memory, ["task", "dump_link"], "unavailable");
+						}
+					}
+
+					let container_id = _.get(this.memory, ["task", "dump_container"]);
+					if (container_id != "unavailable" || Game.time % (interval * 5) == 0) {
+						let container = Game.getObjectById(container_id);
+						if (container == null || this.pos.getRangeTo(container) > 1 || _.sum(container.store) == container.storeCapacity)
+							container = _.head(this.pos.findInRange(FIND_STRUCTURES, 1, { filter: (s) => { return s.structureType == "container"; } }));
+						if (container != null) {
+							_.set(this.memory, ["task", "dump_container"], _.get(container, "id"));
+							this.transfer(container, "energy");
+							Stats_Visual.CreepSay(this, 'transfer');
+							return;
+						} else {
+							_.set(this.memory, ["task", "dump_container"], "unavailable");
+						}
+					}
+
+				}
+			}
+			return;
 			} else if (result == ERR_NOT_IN_RANGE) {
+				// Burrowers drop energy when moving to source (they have no carry capacity)
 				if (this.memory.role == "burrower" && this.carry["energy"] > 0)
 					this.drop("energy");
 				if (this.travelTask(obj) == ERR_NO_PATH)
@@ -195,21 +203,46 @@
 			} else { return; }
 		}
 
-		case "build": {
-			let structure = Game.getObjectById(this.memory.task["id"]);
-			let result = this.build(structure);
-			if (result == ERR_NOT_IN_RANGE) {
-				Stats_Visual.CreepSay(this, 'build');
-				this.travelTask(structure);
-				return;
-			} else if (result != OK) {
-				delete this.memory.task;
-				return;
-			} else { 
-				Stats_Visual.CreepSay(this, 'build');
-				return; 
+	case "build": {
+		let structure = Game.getObjectById(this.memory.task["id"]);
+		let result = this.build(structure);
+		if (result == ERR_NOT_IN_RANGE) {
+			Stats_Visual.CreepSay(this, 'build');
+			this.travelTask(structure);
+			return;
+		} else if (result != OK) {
+			// Construction site may have just completed - check if it's now a rampart that needs initial hits
+			// Ramparts decay at 1 hit per 300 ticks, so 5000 hits = 1.5M ticks (safe for repair cycle)
+			if (this.memory.task["structureType"] == STRUCTURE_RAMPART) {
+				let pos = this.memory.task["pos"];
+				if (pos != null) {
+					let roomObj = Game.rooms[pos.roomName];
+					if (roomObj != null) {
+						let structures = roomObj.lookForAt(LOOK_STRUCTURES, pos.x, pos.y);
+						let rampart = _.find(structures, s => s.structureType == STRUCTURE_RAMPART);
+						if (rampart != null && rampart.hits < 5000) {
+							// Switch to repairing the newly built rampart until it has safe hits
+							let repairResult = this.repair(rampart);
+							if (repairResult == ERR_NOT_IN_RANGE) {
+								Stats_Visual.CreepSay(this, 'fortify');
+								this.travelTask(rampart);
+								return;
+							} else if (repairResult == OK) {
+								Stats_Visual.CreepSay(this, 'fortify');
+								// Keep task alive until rampart has enough hits
+								return;
+							}
+						}
+					}
+				}
 			}
+			delete this.memory.task;
+			return;
+		} else { 
+			Stats_Visual.CreepSay(this, 'build');
+			return; 
 		}
+	}
 
 		case "attack": {
 			let target = Game.getObjectById(this.memory.task["target"] || this.memory.task["id"]);
@@ -521,9 +554,37 @@ Creep.prototype.getTask_Withdraw_Container = function getTask_Withdraw_Container
 			: Game.rooms[mining_colony].getLevel();
 		let carry_amount = this.carryCapacity / 5;
 
-		let cont = _.head(_.sortBy(_.filter(this.room.find(FIND_STRUCTURES),
-			s => { return s.structureType == STRUCTURE_CONTAINER && _.get(s, ["store", "energy"], 0) > carry_amount; }),
-			s => { return this.pos.getRangeTo(s.pos); }));
+		let cont = null;
+		
+		// TARGET COMMITMENT: Check if creep has a committed container that's still valid
+		let committedContainerId = _.get(this.memory, ["committed_target", "container"]);
+		let committedUntil = _.get(this.memory, ["committed_target", "until"], 0);
+		
+		if (committedContainerId && Game.time < committedUntil) {
+			// Try to use the committed container if it still has sufficient energy
+			let committedContainer = Game.getObjectById(committedContainerId);
+			if (committedContainer && _.get(committedContainer, ["store", "energy"], 0) > carry_amount) {
+				cont = committedContainer;
+			} else {
+				// Committed container is empty/invalid, clear the commitment
+				delete this.memory.committed_target;
+			}
+		}
+		
+		// If no valid commitment, find a new container
+		if (cont == null) {
+			cont = _.head(_.sortBy(_.filter(this.room.find(FIND_STRUCTURES),
+				s => { return s.structureType == STRUCTURE_CONTAINER && _.get(s, ["store", "energy"], 0) > carry_amount; }),
+				s => { return this.pos.getRangeTo(s.pos); }));
+
+			if (cont != null) {
+				// COMMIT to this container: stay committed for 40-60 ticks
+				let commitDuration = room_level <= 3 ? 40 : 60; // Shorter commitment for early game
+				
+				_.set(this.memory, ["committed_target", "container"], cont.id);
+				_.set(this.memory, ["committed_target", "until"], Game.time + commitDuration);
+			}
+		}
 
 		if (cont != null) {
 			return {
@@ -706,6 +767,31 @@ Creep.prototype.getTask_Pickup = function getTask_Pickup(resource) {
     let dropped = this.room.find(FIND_DROPPED_RESOURCES);
     let carryAmount = this.carryCapacity / 5;
     
+    // TARGET COMMITMENT: Check if creep has a committed pickup target that's still valid
+    let committedPickupId = _.get(this.memory, ["committed_target", "pickup"]);
+    let committedUntil = _.get(this.memory, ["committed_target", "until"], 0);
+    
+    if (committedPickupId && Game.time < committedUntil) {
+        // Try to use the committed pickup target if it still exists and has resources
+        let committedPile = Game.getObjectById(committedPickupId);
+        if (committedPile && committedPile.amount > 0) {
+            // Verify it matches the requested resource type if specified
+            if (!resource || committedPile.resourceType === resource) {
+                return {
+                    type: "pickup",
+                    resource: committedPile.resourceType,
+                    id: committedPile.id,
+                    timer: 30
+                };
+            }
+        }
+        // Committed pickup is gone/invalid, clear the commitment
+        delete this.memory.committed_target;
+    }
+    
+    // No valid commitment, find a new pickup target
+    let targetPile = null;
+    
     // If a specific resource type is requested, look for that
     if (resource) {
         let resourcePile = _.head(_.sortBy(_.filter(dropped, r => 
@@ -713,12 +799,7 @@ Creep.prototype.getTask_Pickup = function getTask_Pickup(resource) {
         ), r => -r.amount));
         
         if (resourcePile) {
-            return {
-                type: "pickup",
-                resource: resource,
-                id: resourcePile.id,
-                timer: 30
-            };
+            targetPile = resourcePile;
         }
     } else {
         // Look for any dropped resources, prioritizing commodities over energy
@@ -728,28 +809,31 @@ Creep.prototype.getTask_Pickup = function getTask_Pickup(resource) {
         
         if (commodityPiles.length > 0) {
             // Prioritize commodities (silicon, metal, etc.)
-            let commodityPile = _.head(_.sortBy(commodityPiles, r => -r.amount));
-            return {
-                type: "pickup",
-                resource: commodityPile.resourceType,
-                id: commodityPile.id,
-                timer: 30
-            };
+            targetPile = _.head(_.sortBy(commodityPiles, r => -r.amount));
+        } else {
+            // Fallback to energy if no commodities found
+            let energyPile = _.head(_.sortBy(_.filter(dropped, r => 
+                r.resourceType === "energy" && r.amount > carryAmount
+            ), r => -r.amount));
+            
+            if (energyPile) {
+                targetPile = energyPile;
+            }
         }
+    }
+    
+    // If we found a target pile, commit to it
+    if (targetPile) {
+        // COMMIT to this pickup target: stay committed for 20 ticks
+        _.set(this.memory, ["committed_target", "pickup"], targetPile.id);
+        _.set(this.memory, ["committed_target", "until"], Game.time + 20);
         
-        // Fallback to energy if no commodities found
-        let energyPile = _.head(_.sortBy(_.filter(dropped, r => 
-            r.resourceType === "energy" && r.amount > carryAmount
-        ), r => -r.amount));
-        
-        if (energyPile) {
-            return {
-                type: "pickup",
-                resource: "energy",
-                id: energyPile.id,
-                timer: 30
-            };
-        }
+        return {
+            type: "pickup",
+            resource: targetPile.resourceType,
+            id: targetPile.id,
+            timer: 30
+        };
     }
     
     // Optionally, if you want your creeps to withdraw energy from tombstones or ruins:
@@ -915,6 +999,8 @@ Creep.prototype.getTask_Build = function getTask_Build() {
 		return {
 			type: "build",
 			id: site.id,
+			pos: { x: site.pos.x, y: site.pos.y, roomName: site.pos.roomName },
+			structureType: site.structureType,
 			timer: 60
 		};
 };
@@ -927,6 +1013,8 @@ Creep.prototype.getTask_Mine = function getTask_Mine() {
 	 * Burrowers: 1 burrower per source, stick to source, stand on container, mine; when source is empty, move
 	 *   energy to nearby link (as new task).
 	 * Miners: Move to any source that's not avoided and that has energy, harvest, then get new task
+	 * 
+	 * Target Commitment: Creeps commit to a source for a duration to prevent bouncing between sources
 	 */
 
 	let source = null;
@@ -965,18 +1053,43 @@ Creep.prototype.getTask_Mine = function getTask_Mine() {
 			return;
 
 	} else {
-		// Find sources with energy, and that aren't marked as being avoided via path console functions
-		source = _.head(_.sortBy(this.room.findSources(true),
-		s => {
-			if (this.memory.role == "burrower")
-				return _.filter(s.pos.findInRange(FIND_MY_CREEPS, 1),
-					c => { return c.memory.role == "burrower"; }).length;
-			else // Sort by least crowded...
-				return s.pos.findInRange(FIND_MY_CREEPS, 1).length > s.pos.getOpenTile_Adjacent(true);
-		}));
+		// TARGET COMMITMENT: Check if creep has a committed source that's still valid
+		let committedSourceId = _.get(this.memory, ["committed_target", "source"]);
+		let committedUntil = _.get(this.memory, ["committed_target", "until"], 0);
+		
+		if (committedSourceId && Game.time < committedUntil) {
+			// Try to use the committed source if it still has energy
+			let committedSource = Game.getObjectById(committedSourceId);
+			if (committedSource && committedSource.energy > 0) {
+				source = committedSource;
+			} else {
+				// Committed source is empty/invalid, clear the commitment
+				delete this.memory.committed_target;
+			}
+		}
+		
+		// If no valid commitment, find a new source
+		if (source == null) {
+			// Find sources with energy, and that aren't marked as being avoided via path console functions
+			source = _.head(_.sortBy(this.room.findSources(true),
+			s => {
+				if (this.memory.role == "burrower")
+					return _.filter(s.pos.findInRange(FIND_MY_CREEPS, 1),
+						c => { return c.memory.role == "burrower"; }).length;
+				else // Sort by least crowded...
+					return s.pos.findInRange(FIND_MY_CREEPS, 1).length > s.pos.getOpenTile_Adjacent(true);
+			}));
 
-		if (source == null)
-			return;
+			if (source == null)
+				return;
+			
+			// COMMIT to this source: stay committed for 50 ticks (adjustable based on room level)
+			let roomLevel = _.get(this.room, ["controller", "level"], 1);
+			let commitDuration = roomLevel <= 3 ? 50 : 100; // Shorter commitment for early game
+			
+			_.set(this.memory, ["committed_target", "source"], source.id);
+			_.set(this.memory, ["committed_target", "until"], Game.time + commitDuration);
+		}
 	}
 
 	let container = _.get(Memory, ["rooms", this.room.name, "sources", source.id, "container"]);

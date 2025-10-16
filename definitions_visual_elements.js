@@ -9,6 +9,7 @@
 		statusBarStats: {},
 		sourceOverlays: {},
 		creepCounts: {},
+		shardHealthStats: {},
 		lastUpdate: 0,
 		cacheDuration: 5 // Cache for 5 ticks
 	},
@@ -34,12 +35,32 @@
 				this.Show_Status_Bar(room);
 				this.Show_Controller_Overlay(room);
 			});
+			
+			// Multi-shard visual indicators (use same update cycle)
+			if (Game.shard) {
+				if (_.get(Memory, ["hive", "visuals", "show_shard_health"], true) == true) {
+					this.Show_Shard_Health();
+				}
+				if (_.get(Memory, ["hive", "visuals", "show_portal_indicators"], true) == true) {
+					this.Show_Portal_Indicators();
+				}
+			}
 		} else {
 			// Use cached data for status bars
 			_.each(_.filter(Game.rooms, r => r.controller && r.controller.my), room => {
 				this.Show_Status_Bar_Cached(room);
 				this.Show_Controller_Overlay_Cached(room);
 			});
+			
+			// Use cached data for shard visuals
+			if (Game.shard) {
+				if (_.get(Memory, ["hive", "visuals", "show_shard_health"], true) == true) {
+					this.Show_Shard_Health_Cached();
+				}
+				if (_.get(Memory, ["hive", "visuals", "show_portal_indicators"], true) == true) {
+					this.Show_Portal_Indicators();
+				}
+			}
 		}
 
 		// Draw source overlays for all visible rooms (optimized)
@@ -57,13 +78,14 @@
 		// 	this.Show_Room_Defense();
 		// }
 
-		if (_.get(Memory, ["hive", "visuals", "show_room_construction"], false) == true) {
-			this.Show_Room_Construction();
-		}
+	if (_.get(Memory, ["hive", "visuals", "show_room_construction"], false) == true) {
+		this.Show_Room_Construction();
+	}
 
-		// Update cache timestamp
-		this._cache.lastUpdate = Game.time;
-	},
+
+	// Update cache timestamp
+	this._cache.lastUpdate = Game.time;
+},
 
 	_shouldUpdateVisuals: function() {
 		// Update visuals based on configurable interval to reduce CPU usage
@@ -401,9 +423,9 @@
 
 	Show_Status_Bar: function(room) {
 		const visual = new RoomVisual(room.name);
-		const barY = 0.3;
-		// Define custom cell widths for each stat to reclaim space and add space between labs and factory
-		const cellWidths = [3.2, 3.2, 3.2, 4.2, 3.2, 2.2, 2.2, 2.2, 3.2, 3.2, 2.2, 2.2, 5.5, 4.2];
+		const barY = 1.3;
+		// Define custom cell widths for each stat: RCL > Controller % > Spawns > Creeps > Stored Energy > Package > Sources > Labs > Factory > Defense
+		const cellWidths = [3.2, 3.2, 2.2, 2.2, 3.2, 2.2, 2.2, 2.2, 5.5, 4.2];
 		const cellH = 0.9;
 		let x = 0.5;
 		const font = 0.55;
@@ -433,9 +455,9 @@
 		}
 		
 		const visual = new RoomVisual(room.name);
-		const barY = 0.3;
-		// Define custom cell widths for each stat to reclaim space and add space between labs and factory
-		const cellWidths = [3.2, 3.2, 3.2, 4.2, 3.2, 2.2, 2.2, 2.2, 3.2, 3.2, 2.2, 2.2, 5.5, 4.2];
+		const barY = 1.3;
+		// Define custom cell widths for each stat: RCL > Controller % > Spawns > Creeps > Stored Energy > Package > Sources > Labs > Factory > Defense
+		const cellWidths = [3.2, 3.2, 2.2, 2.2, 3.2, 2.2, 2.2, 2.2, 5.5, 4.2];
 		const cellH = 0.9;
 		let x = 0.5;
 		const font = 0.55;
@@ -655,16 +677,94 @@
 		});
 	},
 
+	Show_Shard_Health_Cached: function() {
+	if (!Game.shard) {
+		return; // Not on multi-shard server
+	}
+	
+	// Use cached shard stats if available
+	const cacheKey = `shard_${Math.floor(Game.time / 5)}`;
+	let shardStats = this._cache.shardHealthStats;
+	
+	if (!shardStats || shardStats.tick !== Game.time) {
+		// Calculate fresh stats
+		let shardName = Game.shard.name;
+		let cpu = Game.cpu.getUsed();
+		let bucket = Game.cpu.bucket;
+		
+		// Determine health color
+		let healthColor = '#00FF00'; // Green
+		if (bucket < 5000) healthColor = '#FF0000'; // Red
+		else if (bucket < 8000) healthColor = '#FFAA00'; // Orange
+		
+		// Create stats array - Top bar: shard > room name > CPU usage > Bucket > game clock > portals
+		shardStats = {
+			tick: Game.time,
+			stats: [
+				{icon: '🌐', value: shardName, color: '#00FFFF', bg: '#222'}, // Shard name
+				{icon: '🏠', value: 'W51N51', color: '#FFFFFF', bg: '#222'}, // Room name (will be updated per room)
+				{icon: '🧠', value: cpu.toFixed(1), color: '#FFFFFF', bg: '#222'}, // CPU usage
+				{icon: '⚡', value: bucket.toString(), color: healthColor, bg: '#222'}, // Bucket
+				{icon: '🕐', value: Game.time.toString(), color: '#FFFFFF', bg: '#222'}, // Game clock
+				{icon: '🌀', value: '0', color: '#00FFFF', bg: '#222'} // Portal indicator
+			]
+		};
+		
+		// Check for portals nearby and update portal indicator
+		let totalPortals = 0;
+		_.each(_.filter(Game.rooms, r => r.controller && r.controller.my), room => {
+			let portals = Portals.getPortalsInRoom(room.name);
+			totalPortals += portals.length;
+		});
+		
+		// Also include portals discovered by scouts in other rooms
+		let allPortals = Portals.getAll();
+		shardStats.stats[5].value = allPortals.length.toString();
+		
+		// Cache the stats
+		this._cache.shardHealthStats = shardStats;
+	}
+	
+	// Draw using cached stats
+	_.each(_.filter(Game.rooms, r => r.controller && r.controller.my), room => {
+		let visual = new RoomVisual(room.name);
+		
+		// Update room name for this specific room
+		shardStats.stats[1].value = room.name;
+		
+		// Style to match room status bar
+		const barY = 0.3;
+		const cellWidths = [3.2, 4.2, 3.2, 3.2, 4.2, 2.2]; // Width for each stat: shard, room, cpu, bucket, clock, portals
+		const cellH = 0.9;
+		let x = 0.5;
+		const font = 0.55;
+		
+		// Draw background (same style as room status bar)
+		visual.rect(0.3, barY - 0.2, cellWidths.reduce((a, b) => a + b, 0) + 0.4, cellH + 0.4, {
+			fill: '#222', 
+			opacity: 0.45, 
+			stroke: undefined
+		});
+		
+		// Draw each stat (same style as room status bar)
+		for (let i = 0; i < shardStats.stats.length; i++) {
+			const stat = shardStats.stats[i];
+			visual.text(stat.icon + ' ' + stat.value, x + cellWidths[i]/2, barY + 0.65, {
+				font: font,
+				color: stat.color,
+				align: 'center',
+				stroke: '#000',
+				strokeWidth: 0.10
+			});
+			x += cellWidths[i];
+		}
+	});
+},
+
 	Show_Source_Overlays_Optimized: function(room) {
 		const visual = new RoomVisual(room.name);
 		const sources = room.find(FIND_SOURCES);
 		_.each(sources, source => {
-			const cachedCreepCounts = this._getCachedCreepCounts();
-			const roomCounts = cachedCreepCounts[room.name];
-			const sourceCounts = roomCounts && roomCounts.sources ? roomCounts.sources[source.id] : null;
-			const miners = sourceCounts ? sourceCounts.miners : 0;
-			const haulers = sourceCounts ? sourceCounts.haulers : 0;
-
 			const regen = source.ticksToRegeneration;
 			const energy = source.energy;
 			// Determine alignment and position
@@ -676,37 +776,20 @@
 				x = source.pos.x + 1.2;
 				align = 'left';
 			}
-			let y = source.pos.y - 0.7;
 			const lineH = 0.55;
-			// Draw background rectangle BEFORE any text
+			// Draw background rectangle BEFORE any text - slightly larger for better readability
 			const gutterY = 0.18;
-			const bgW = 3.2 * 0.75; // 70% of 3.2
-			const bgH = lineH * 4 + gutterY * 2;
+			const bgW = 3.2 * 0.85; // 85% of 3.2 (increased from 75%)
+			const bgH = lineH * 2 + gutterY * 2;
 			const bgX = align === 'left' ? x - 0.2 : x - bgW + 0.2;
-			const bgY = source.pos.y - 1.2 - gutterY;
+			const bgY = source.pos.y - 1.1 - gutterY; // Moved up more to fully contain the text
 			visual.rect(bgX, bgY, bgW, bgH, {fill: '#222', opacity: 0.45, stroke: undefined});
-			// Now draw the text
+			// Now draw the text - only energy and refresh time
 			let displayRegen = (typeof regen === 'number' && regen !== undefined) ? regen : '---';
 			let yText = source.pos.y - 0.7;
 			visual.text(`🔋 ${energy}`, x, yText, {
 				font: 0.5,
 				color: '#bfff00',
-				align: align,
-				stroke: '#000',
-				strokeWidth: 0.08
-			});
-			yText += lineH;
-			visual.text(`⛏️ ${miners}`, x, yText, {
-				font: 0.5,
-				color: '#ffbfbf',
-				align: align,
-				stroke: '#000',
-				strokeWidth: 0.08
-			});
-			yText += lineH;
-			visual.text(`🚚 ${haulers}`, x, yText, {
-				font: 0.5,
-				color: '#ffb300',
 				align: align,
 				stroke: '#000',
 				strokeWidth: 0.08
@@ -723,11 +806,7 @@
 	},
 
 	Get_Status_Bar_Stats: function(room) {
-		// Gather stats for the status bar, using icons and color coding
-		const cpu = _.get(Memory, ['stats', 'cpu', 'used'], Game.cpu.getUsed()).toFixed(1);
-		const bucket = Game.cpu.bucket;
-		const avg = (Game.cpu.getUsed() / Game.cpu.limit * 100).toFixed(1);
-		const tick = Game.time;
+		// Bottom bar: RCL > Controller % > Spawns > Creeps > Stored Energy > Package > Sources > Labs > Factory > Defense
 		const rcl = room.controller.level;
 		const rclProg = ((room.controller.progress / room.controller.progressTotal) * 100).toFixed(0);
 		const spawns = room.find(FIND_MY_SPAWNS).length;
@@ -736,7 +815,7 @@
 		const terminal = room.terminal ? room.terminal.store[RESOURCE_ENERGY] : 0;
 		const sources = room.find(FIND_SOURCES).length;
 		const labs = room.find(FIND_MY_STRUCTURES, {filter: s => s.structureType === STRUCTURE_LAB}).length;
-		const factory = room.find(FIND_MY_STRUCTURES, {filter: s => s.structureType === STRUCTURE_FACTORY}).length;
+		
 		// Calculate rampart/wall avg and setpoint
 		const wallsAndRamparts = room.find(FIND_STRUCTURES, {filter: s => s.structureType === STRUCTURE_RAMPART || s.structureType === STRUCTURE_WALL});
 		let avgHits = 0, setpoint = 0;
@@ -750,7 +829,8 @@
 		}
 		const hitsFormat = v => v >= 1000000 ? (v/1000000).toFixed(1) + 'M' : v >= 1000 ? (v/1000).toFixed(0) + 'k' : v;
 		const rampartStat = wallsAndRamparts.length > 0 ? `${hitsFormat(avgHits)}/${hitsFormat(setpoint)}` : '0/0';
-		// Factory assignment name or --- (use Memory.resources.factories.assignments)
+		
+		// Factory assignment name or ---
 		let factoryAssignment = '---';
 		const factories = room.find(FIND_MY_STRUCTURES, {filter: s => s.structureType === STRUCTURE_FACTORY});
 		if (factories.length > 0) {
@@ -760,23 +840,124 @@
 				factoryAssignment = assignment.commodity;
 			}
 		}
-		// Remove truncation for factory assignment name
-		const factoryAssignmentDisplay = factoryAssignment;
+		
 		return [
-			{icon: '⏱️', value: tick, color: '#fff', bg: '#222'},
-			{icon: '🧠', value: cpu, color: '#fff', bg: '#444'},
-			{icon: '🪣', value: bucket, color: bucket > 5000 ? '#0f0' : '#ff0', bg: '#333'},
-			{icon: '🏠', value: room.name, color: '#fff', bg: '#222'},
-			{icon: '🏅', value: `RCL${rcl}`, color: '#fff', bg: '#222'},
-			{icon: '⚡', value: `${rclProg}%`, color: '#0ff', bg: '#111'},
-			{icon: '🥚', value: spawns, color: '#fff', bg: '#333'}, // egg for spawns
-			{icon: '🤖', value: creeps, color: '#fff', bg: '#333'},
-			{icon: '🔋', value: storage, color: '#ff0', bg: '#222'},
-			{icon: '📦', value: terminal, color: '#0ff', bg: '#222'},
-			{icon: '💡', value: sources, color: '#0f0', bg: '#222'}, // light bulb for sources
-			{icon: '🧪', value: labs, color: '#fff', bg: '#222'},
-			{icon: '🏭', value: factoryAssignmentDisplay, color: '#fff', bg: '#222'},
-			{icon: '🛡️', value: rampartStat, color: '#fff', bg: '#222'},
+			{icon: '🏅', value: `RCL${rcl}`, color: '#fff', bg: '#222'}, // RCL
+			{icon: '🎮', value: `${rclProg}%`, color: '#0ff', bg: '#111'}, // Controller percentage
+			{icon: '🥚', value: spawns, color: '#fff', bg: '#333'}, // Spawns
+			{icon: '🤖', value: creeps, color: '#fff', bg: '#333'}, // Creeps
+			{icon: '🔋', value: storage, color: '#ff0', bg: '#222'}, // Stored energy
+			{icon: '📦', value: terminal, color: '#0ff', bg: '#222'}, // Package (terminal)
+			{icon: '💡', value: sources, color: '#0f0', bg: '#222'}, // Sources
+			{icon: '🧪', value: labs, color: '#fff', bg: '#222'}, // Labs
+			{icon: '🏭', value: factoryAssignment, color: '#fff', bg: '#222'}, // Factory status
+			{icon: '🛡️', value: rampartStat, color: '#fff', bg: '#222'}, // Defense hitpoints
 		];
 	},
+
+/**
+ * Show multi-shard indicators for portal rooms
+ * Displays visual indicators in rooms with portals
+ */
+Show_Portal_Indicators: function() {
+	if (!Game.shard) {
+		return; // Not on multi-shard server
+	}
+	
+	let portals = Portals.getAll();
+	
+	_.each(portals, portal => {
+		let room = Game.rooms[portal.pos.roomName];
+		if (!room) return;
+		
+		let visual = new RoomVisual(portal.pos.roomName);
+		
+		// Draw indicator above portal
+		let destShard = portal.destination.shard;
+		let color = portal.stable ? '#00FFFF' : '#FFAA00';
+		
+		visual.text(`🌀→${destShard}`, portal.pos.x, portal.pos.y - 1, {
+			color: color,
+			font: 0.6,
+			stroke: '#000',
+			strokeWidth: 0.1,
+			opacity: 0.8
+		});
+		
+		// Draw circle around portal
+		visual.circle(portal.pos.x, portal.pos.y, {
+			radius: 0.5,
+			fill: 'transparent',
+			stroke: color,
+			strokeWidth: 0.15,
+			opacity: 0.6
+		});
+	});
+},
+
+/**
+ * Show shard health indicator in top-right corner
+ * Displays overall shard status with color coding
+ */
+	Show_Shard_Health: function() {
+	if (!Game.shard) {
+		return; // Not on multi-shard server
+	}
+	
+	// Only show in owned rooms
+	_.each(_.filter(Game.rooms, r => r.controller && r.controller.my), room => {
+		let visual = new RoomVisual(room.name);
+		
+		// Get shard stats
+		let shardName = Game.shard.name;
+		let cpu = Game.cpu.getUsed();
+		let bucket = Game.cpu.bucket;
+		
+		// Determine health color
+		let healthColor = '#00FF00'; // Green
+		if (bucket < 5000) healthColor = '#FF0000'; // Red
+		else if (bucket < 8000) healthColor = '#FFAA00'; // Orange
+		
+		// Style to match room status bar
+		const barY = 0.3;
+		const cellWidths = [3.2, 4.2, 3.2, 3.2, 4.2, 2.2]; // Width for each stat: shard, room, cpu, bucket, clock, portals
+		const cellH = 0.9;
+		let x = 0.5;
+		const font = 0.55;
+		
+		// Create stats array - Top bar: shard > room name > CPU usage > Bucket > game clock > portals
+		const stats = [
+			{icon: '🌐', value: shardName, color: '#00FFFF', bg: '#222'}, // Shard name
+			{icon: '🏠', value: room.name, color: '#FFFFFF', bg: '#222'}, // Room name
+			{icon: '🧠', value: cpu.toFixed(1), color: '#FFFFFF', bg: '#222'}, // CPU usage
+			{icon: '⚡', value: bucket.toString(), color: healthColor, bg: '#222'}, // Bucket
+			{icon: '🕐', value: Game.time.toString(), color: '#FFFFFF', bg: '#222'}, // Game clock
+			{icon: '🌀', value: '0', color: '#00FFFF', bg: '#222'} // Portal indicator
+		];
+		
+		// Check for portals nearby and update portal indicator
+		let allPortals = Portals.getAll();
+		stats[5].value = allPortals.length.toString();
+		
+		// Draw background (same style as room status bar)
+		visual.rect(0.3, barY - 0.2, cellWidths.reduce((a, b) => a + b, 0) + 0.4, cellH + 0.4, {
+			fill: '#222', 
+			opacity: 0.45, 
+			stroke: undefined
+		});
+		
+		// Draw each stat (same style as room status bar)
+		for (let i = 0; i < stats.length; i++) {
+			const stat = stats[i];
+			visual.text(stat.icon + ' ' + stat.value, x + cellWidths[i]/2, barY + 0.65, {
+				font: font,
+				color: stat.color,
+				align: 'center',
+				stroke: '#000',
+				strokeWidth: 0.10
+			});
+			x += cellWidths[i];
+		}
+	});
+},
 };

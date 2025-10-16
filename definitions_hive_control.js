@@ -5,32 +5,32 @@
  global.Control = {
 
 	refillBucket: function () {
-		if (Game.cpu.bucket >= 10000 && _.get(Memory, ["hive", "pause", "bucket"], false)) {
-			_.set(Memory, ["hive", "pause", "bucket"], false);
+		if (Game.cpu.bucket >= 10000 && _.get(Memory, ["shard", "pause", "bucket"], false)) {
+			_.set(Memory, ["shard", "pause", "bucket"], false);
 			console.log(`<font color=\"#D3FFA3\">[Console]</font> Bucket full, resuming main.js.`);
 		}
 
-		return _.get(Memory, ["hive", "pause", "bucket"], false);
+		return _.get(Memory, ["shard", "pause", "bucket"], false) || _.get(Memory, ["hive", "global_pause"], false);
 	},
 
 	setPulse: function (key, minTicks, maxTicks) {
 		let range = maxTicks - minTicks;
-		let lastTick = _.get(Memory, ["hive", "pulses", key, "last_tick"]);
-		let manuallyActive = _.get(Memory, ["hive", "pulses", key, "active"], false);
+		let lastTick = _.get(Memory, ["shard", "pulses", key, "last_tick"]);
+		let manuallyActive = _.get(Memory, ["shard", "pulses", key, "active"], false);
 
 		if (manuallyActive) {
 			// If manually set to active, leave it active for this tick, then clear it
-			_.set(Memory, ["hive", "pulses", key, "active"], false);
+			_.set(Memory, ["shard", "pulses", key, "active"], false);
 			return;
 		}
 
 		if (lastTick == null
 			|| Game.time == lastTick
 			|| (Game.time - lastTick) >= (minTicks + Math.floor((1 - (Game.cpu.bucket / 10000)) * range))) {
-			_.set(Memory, ["hive", "pulses", key, "last_tick"], Game.time);
-			_.set(Memory, ["hive", "pulses", key, "active"], true);
+			_.set(Memory, ["shard", "pulses", key, "last_tick"], Game.time);
+			_.set(Memory, ["shard", "pulses", key, "active"], true);
 		} else {
-			_.set(Memory, ["hive", "pulses", key, "active"], false);
+			_.set(Memory, ["shard", "pulses", key, "active"], false);
 		}
 	},
 
@@ -88,6 +88,66 @@
 	initMemory: function () {
 		Stats_CPU.Start("Hive", "initMemory");
 
+		// Initialize Memory.hive (global settings across all shards)
+		if (!Memory.hive) {
+			Memory.hive = {};
+		}
+		
+		// Set shard name
+		let shardName = _.get(Game, ["shard", "name"], "sim");
+		if (!_.get(Memory, ["hive", "shard_name"])) {
+			_.set(Memory, ["hive", "shard_name"], shardName);
+		}
+		
+		// Set master shard (first shard to initialize becomes master)
+		if (!_.get(Memory, ["hive", "master_shard"])) {
+			_.set(Memory, ["hive", "master_shard"], shardName);
+		}
+		
+		// Initialize global allies list
+		if (_.get(Memory, ["hive", "allies"]) == null) {
+			_.set(Memory, ["hive", "allies"], new Array());
+		}
+		
+		// Initialize global pause flag
+		if (_.get(Memory, ["hive", "global_pause"]) == null) {
+			_.set(Memory, ["hive", "global_pause"], false);
+		}
+
+		// Initialize Memory.shard (shard-specific settings)
+		if (!Memory.shard) {
+			Memory.shard = {};
+		}
+		
+		// Initialize shard-specific data structures
+		if (_.get(Memory, ["shard", "pulses"]) == null) {
+			_.set(Memory, ["shard", "pulses"], new Object());
+		}
+		if (_.get(Memory, ["shard", "pause"]) == null) {
+			_.set(Memory, ["shard", "pause"], { bucket: false, manual: false });
+		}
+		if (_.get(Memory, ["shard", "spawn_queue"]) == null) {
+			_.set(Memory, ["shard", "spawn_queue"], new Array());
+		}
+		if (_.get(Memory, ["shard", "portals"]) == null) {
+			_.set(Memory, ["shard", "portals"], new Object());
+		}
+		if (_.get(Memory, ["shard", "operations"]) == null) {
+			_.set(Memory, ["shard", "operations"], {
+				colonizations: [],
+				creep_transfers: []
+			});
+		}
+		if (_.get(Memory, ["shard", "ism_last_update"]) == null) {
+			_.set(Memory, ["shard", "ism_last_update"], 0);
+		}
+
+		// Initialize existing structures
+		if (_.get(Memory, ["rooms"]) == null) _.set(Memory, ["rooms"], new Object());
+		if (_.get(Memory, ["sites", "mining"]) == null) _.set(Memory, ["sites", "mining"], new Object());
+		if (_.get(Memory, ["sites", "colonization"]) == null) _.set(Memory, ["sites", "colonization"], new Object());
+		if (_.get(Memory, ["sites", "combat"]) == null) _.set(Memory, ["sites", "combat"], new Object());
+
 		// Use odd intervals or odd numbers to prevent stacking multiple pulses on one tick
 		// Optimized intervals for reduced CPU usage
 		this.setPulse("defense", 8, 16);
@@ -99,16 +159,9 @@
 		this.setPulse("factory", 199, 400); // Factory assignments every 199-400 ticks
 		this.setPulse("blueprint", 19, 100); // Much faster blueprint for early game building
 
-		if (_.get(Memory, ["rooms"]) == null) _.set(Memory, ["rooms"], new Object());
-		if (_.get(Memory, ["hive", "allies"]) == null) _.set(Memory, ["hive", "allies"], new Array());
-		if (_.get(Memory, ["hive", "pulses"]) == null) _.set(Memory, ["hive", "pulses"], new Object());
-		if (_.get(Memory, ["sites", "mining"]) == null) _.set(Memory, ["sites", "mining"], new Object());
-		if (_.get(Memory, ["sites", "colonization"]) == null) _.set(Memory, ["sites", "colonization"], new Object());
-		if (_.get(Memory, ["sites", "combat"]) == null) _.set(Memory, ["sites", "combat"], new Object());
-
 		for (let r in Game["rooms"])
 			_.set(Memory, ["rooms", r, "population"], null);
-		_.set(Memory, ["hive", "spawn_requests"], new Array());
+		_.set(Memory, ["shard", "spawn_requests"], new Array());
 
 		Console.Init();
 
@@ -120,8 +173,8 @@
 	},
 
 	endMemory: function () {
-		if (_.has(Memory, ["hive", "pulses", "reset_links"]))
-			delete Memory["hive"]["pulses"]["reset_links"];
+		if (_.has(Memory, ["shard", "pulses", "reset_links"]))
+			delete Memory["shard"]["pulses"]["reset_links"];
 	},
 
 
@@ -194,7 +247,7 @@
 		Stats_CPU.Start("Hive", "processSpawnRequests");
 
 		// Cache spawn requests to avoid repeated memory lookups
-		let spawnRequests = _.get(Memory, ["hive", "spawn_requests"]);
+		let spawnRequests = _.get(Memory, ["shard", "spawn_requests"]);
 		if (!spawnRequests || spawnRequests.length == 0) {
 			Stats_CPU.End("Hive", "processSpawnRequests");
 			return;
@@ -520,7 +573,10 @@
 			let result = Game.cpu.generatePixel();
 			
 			if (result === OK) {
-				// Track pixel generation statistics
+				// Initialize pixel tracking if needed
+				if (!Memory.hive.pixels) {
+					Memory.hive.pixels = {};
+				}
 				if (!Memory.hive.pixels.stats) {
 					Memory.hive.pixels.stats = {
 						total_generated: 0,
