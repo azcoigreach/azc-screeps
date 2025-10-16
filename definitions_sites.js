@@ -66,7 +66,12 @@
 					: _.filter(Game.rooms[rmColony].find(FIND_HOSTILE_CREEPS), c => { return c.isHostile(); });
 				_.set(Memory, ["rooms", rmColony, "defense", "hostiles"], hostiles);
 
-				let is_safe = visible && hostiles.length == 0;
+				// Only consider hostiles with attack capabilities as threats for safety assessment
+				let dangerous_hostiles = !visible ? new Array()
+					: _.filter(Game.rooms[rmColony].find(FIND_HOSTILE_CREEPS), c => { 
+						return c.isHostile() && (c.hasPart("attack") || c.hasPart("ranged_attack")); 
+					});
+				let is_safe = visible && dangerous_hostiles.length == 0;
 				_.set(Memory, ["rooms", rmColony, "defense", "is_safe"], is_safe);
 
 				let storage = _.get(Game, ["rooms", rmColony, "storage"]);
@@ -289,6 +294,7 @@
 						case "worker": Creep_Roles.Worker(creep); break;
 						case "upgrader": Creep_Roles.Upgrader(creep, _.get(Memory, ["rooms", rmColony, "defense", "is_safe"], true)); break;
 						case "healer": Creep_Roles.Healer(creep, true); break;
+						case "portal_scout": Creep_Roles.Portal_Scout(creep); break;
 
 						case "soldier": case "paladin":
 							Creep_Roles.Soldier(creep, false, true);
@@ -642,7 +648,12 @@
 					}
 				}
 				
-				let is_safe = visible && hostiles.length == 0 && invaderCore == null;
+				// Only consider hostiles with attack capabilities as threats for safety assessment
+				let dangerous_hostiles = !visible ? new Array()
+					: _.filter(Game.rooms[rmHarvest].find(FIND_HOSTILE_CREEPS), c => { 
+						return c.isHostile() && (c.hasPart("attack") || c.hasPart("ranged_attack")); 
+					});
+				let is_safe = visible && dangerous_hostiles.length == 0 && invaderCore == null;
 				_.set(Memory, ["rooms", rmHarvest, "defense", "is_safe"], is_safe);
 				_.set(Memory, ["sites", "mining", rmHarvest, "defense", "is_safe"], is_safe);
 				_.set(Memory, ["sites", "mining", rmHarvest, "defense", "hostiles"], hostiles);
@@ -952,11 +963,14 @@
 				_.each(listCreeps, creep => {
 					let role = creep.memory.role;
 					
-					switch (role) {
-						case "scout": 
-							Creep_Roles.Scout(creep); 
-							break;
-						case "extractor": 
+				switch (role) {
+					case "scout": 
+						Creep_Roles.Scout(creep); 
+						break;
+					case "portal_scout":
+						Creep_Roles.Portal_Scout(creep);
+						break;
+					case "extractor":
 							Creep_Roles.Extractor(creep, is_safe); 
 							break;
 						case "reserver": 
@@ -3039,10 +3053,12 @@
 				let target_structures = _.get(tactic, "target_structures");
 				let target_list = _.get(tactic, "target_list");
 
-				_.each(listCreeps, creep => {
-					if (creep.memory.role == "scout") {
-						Creep_Roles.Scout(creep);
-					} else if (creep.memory.role == "soldier"
+			_.each(listCreeps, creep => {
+				if (creep.memory.role == "scout") {
+					Creep_Roles.Scout(creep);
+				} else if (creep.memory.role == "portal_scout") {
+					Creep_Roles.Portal_Scout(creep);
+				} else if (creep.memory.role == "soldier"
 						|| creep.memory.role == "brawler"
 						|| creep.memory.role == "paladin") {
 						Creep_Roles.Soldier(creep, target_structures, target_creeps, target_list);

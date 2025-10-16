@@ -9,6 +9,7 @@
 		let help_blueprint = new Array();
 		let help_empire = new Array();
 		let help_factories = new Array();
+		let help_global_creeps = new Array();
 		let help_labs = new Array();
 		let help_log = new Array();
 		let help_path = new Array();
@@ -26,6 +27,7 @@
 		help_main.push(`- "blueprint" \t Settings for automatic base building`);
 		help_main.push(`- "empire" \t Miscellaneous empire and colony management`);
 		help_main.push(`- "factories" \t Management of factory commodity production`);
+		help_main.push(`- "global_creeps" \t Cross-shard creep management (workers, miners, scouts)`);
 		help_main.push(`- "labs" \t Management of lab functions/reactions`);
 		help_main.push(`- "log" \t Logs for statistical output`);
 		help_main.push(`- "path" \t Utilities for enhancing creep pathfinding abilities`);
@@ -1123,12 +1125,48 @@
 				});
 			}
 
-			return `<font color=\"#D3FFA3\">[Console]</font> Market status displayed.`;
-		};
+		return `<font color=\"#D3FFA3\">[Console]</font> Market status displayed.`;
+	};
 
-		help_resources.push("resources.clear_emergency_orders()");
-		help_resources.push(" - Clears all emergency market orders created by the automatic system");
-		help_resources.push(" - Only affects orders marked as 'emergency', leaves manual orders intact");
+	help_resources.push("resources.check_dropped()");
+	help_resources.push(" - Scans all owned rooms for dropped resources on the ground");
+	help_resources.push(" - Shows location and amount of each dropped resource pile");
+	help_resources.push(" - Useful for finding hydrogen and other resources that creeps can't store");
+
+	resources.check_dropped = function () {
+		let colonies = _.filter(Game.rooms, r => r.controller && r.controller.my);
+		let totalDropped = {};
+		let detailOutput = "<font color=\"#D3FFA3\">[Dropped Resources]</font> <b>Scanning all owned rooms...</b><br>";
+		
+		_.each(colonies, room => {
+			let dropped = room.find(FIND_DROPPED_RESOURCES);
+			if (dropped.length > 0) {
+				detailOutput += `<font color=\"#FFD700\">${room.name}</font>:<br>`;
+				_.each(dropped, pile => {
+					detailOutput += `  - ${pile.resourceType}: ${pile.amount} at (${pile.pos.x}, ${pile.pos.y})<br>`;
+					totalDropped[pile.resourceType] = (totalDropped[pile.resourceType] || 0) + pile.amount;
+				});
+			}
+		});
+		
+		console.log(detailOutput);
+		
+		if (Object.keys(totalDropped).length > 0) {
+			let summaryOutput = "<font color=\"#D3FFA3\">[Dropped Resources]</font> <b>Summary:</b><br>";
+			_.each(Object.keys(totalDropped).sort(), resourceType => {
+				summaryOutput += `  ${resourceType}: ${totalDropped[resourceType]} total<br>`;
+			});
+			console.log(summaryOutput);
+		} else {
+			console.log("<font color=\"#D3FFA3\">[Dropped Resources]</font> <b>No dropped resources found.</b>");
+		}
+		
+		return `<font color=\"#D3FFA3\">[Console]</font> Dropped resource scan complete.`;
+	};
+
+	help_resources.push("resources.clear_emergency_orders()");
+	help_resources.push(" - Clears all emergency market orders created by the automatic system");
+	help_resources.push(" - Only affects orders marked as 'emergency', leaves manual orders intact");
 
 		resources.clear_emergency_orders = function () {
 			let cleared = 0;
@@ -2326,14 +2364,299 @@
 		help_shard.push("shard.clear_operations()");
 		help_shard.push(" - Clear all stuck operations");
 		
-		shard.clear_operations = function() {
-			_.set(Memory, ["shard", "operations", "colonizations"], []);
-			_.set(Memory, ["shard", "operations", "creep_transfers"], []);
-			return `<font color=\"#00FFFF\">[Shard]</font> All operations cleared`;
-		};
+	shard.clear_operations = function() {
+		_.set(Memory, ["shard", "operations", "colonizations"], []);
+		_.set(Memory, ["shard", "operations", "creep_transfers"], []);
+		return `<font color=\"#00FFFF\">[Shard]</font> All operations cleared`;
+	};
+
+	help_shard.push("shard.spawn_scout(targetRoom)");
+	help_shard.push(" - Spawn a scout to explore toward target room");
+	help_shard.push(" - targetRoom: Target room to explore (e.g., 'E10N10')");
+	
+	shard.spawn_scout = function(targetRoom) {
+		// Find an available spawn
+		let spawn = _.find(Game.spawns, s => !s.spawning);
+		if (!spawn) {
+			return `<font color=\"#FF0000\">[Shard]</font> No available spawns`;
+		}
+		
+		// Generate scout name using standard naming convention
+		let scoutName = "port:xxxx".replace(/[xy]/g, (c) => {
+			let r = Math.random() * 16 | 0, v = c == "x" ? r : (r & 0x3 | 0x8);
+			return v.toString(16);
+		});
+		
+		// Spawn scout (5x MOVE = 250 energy)
+		let result = spawn.spawnCreep(
+			[MOVE, MOVE, MOVE, MOVE, MOVE],
+			scoutName,
+			{
+				memory: {
+					role: "portal_scout",
+					room: spawn.room.name,
+					target_room: targetRoom,
+					explore_mode: true
+				}
+			}
+		);
+		
+		if (result === OK) {
+			return `<font color=\"#00FF00\">[Shard]</font> Spawning scout ${scoutName} to explore toward ${targetRoom}`;
+		} else {
+			return `<font color=\"#FF0000\">[Shard]</font> Failed to spawn scout: ${result}`;
+		}
+	};
+
+	help_shard.push("shard.test_portal(creepName, targetShard, targetRoom)");
+	help_shard.push(" - Test portal traversal with specific creep");
+	help_shard.push(" - creepName: Name of creep to send");
+	help_shard.push(" - targetShard: Destination shard (e.g., 'shard1')");
+	help_shard.push(" - targetRoom: Destination room (e.g., 'W21N11')");
+	
+	shard.fix_scout = function(creepName) {
+		let creep = Game.creeps[creepName];
+		if (!creep) {
+			return `<font color=\"#FF0000\">[Shard]</font> Creep ${creepName} not found`;
+		}
+		
+		if (creep.memory.role !== "portal_scout") {
+			return `<font color=\"#FF0000\">[Shard]</font> ${creepName} is not a portal scout`;
+		}
+		
+		// Fix missing room property
+		creep.memory.room = creep.room.name;
+		console.log(`<font color=\"#00FF00\">[Shard]</font> Fixed scout ${creepName} - set room to ${creep.room.name}`);
+		
+		return `<font color=\"#00FF00\">[Shard]</font> Fixed scout ${creepName} - set room to ${creep.room.name}`;
+	};
+	
+	help_shard.push("shard.fix_scout(creepName)");
+	help_shard.push(" - Fix scout creep memory (add missing room property)");
+	help_shard.push(" - creepName: Name of scout to fix");
+	
+	shard.force_scout = function(creepName) {
+		let creep = Game.creeps[creepName];
+		if (!creep) {
+			return `<font color=\"#FF0000\">[Shard]</font> Creep ${creepName} not found`;
+		}
+
+		if (creep.memory.role !== "portal_scout") {
+			return `<font color=\"#FF0000\">[Shard]</font> ${creepName} is not a portal scout`;
+		}
+
+		// Force fix the room property and execute the role immediately
+		creep.memory.room = creep.room.name;
+		console.log(`<font color=\"#00FF00\">[Shard]</font> Fixed and executing scout ${creepName}`);
+
+		// Execute the role directly
+		Creep_Roles.Portal_Scout(creep);
+
+		return `<font color=\"#00FF00\">[Shard]</font> Fixed and executed scout ${creepName}`;
+	};
+
+	shard.reset_scout = function(creepName) {
+		let creep = Game.creeps[creepName];
+		if (!creep) {
+			return `<font color=\"#FF0000\">[Shard]</font> Creep ${creepName} not found`;
+		}
+
+		if (creep.memory.role !== "portal_scout") {
+			return `<font color=\"#FF0000\">[Shard]</font> ${creepName} is not a portal scout`;
+		}
+
+		// Reset scout to exploration mode
+		creep.memory.test_mode = false;
+		creep.memory.portal_target_shard = undefined;
+		creep.memory.portal_target_room = undefined;
+		creep.memory.auto_test_attempted = false;
+		creep.memory.target_room = undefined;
+		creep.memory.explore_mode = true;
+		creep.memory.room = creep.room.name;
+
+		console.log(`<font color=\"#00FF00\">[Shard]</font> Reset scout ${creepName} to exploration mode`);
+
+		return `<font color=\"#00FF00\">[Shard]</font> Reset scout ${creepName} to exploration mode`;
+	};
+	
+	help_shard.push("shard.force_scout(creepName)");
+	help_shard.push(" - Fix scout memory AND execute role immediately");
+	help_shard.push(" - creepName: Name of scout to force execute");
+	
+	help_shard.push("shard.reset_scout(creepName)");
+	help_shard.push(" - Reset scout to exploration mode (clear test mode)");
+	help_shard.push(" - creepName: Name of scout to reset");
+	
+	
+	/* ========================================
+	 * GLOBAL CREEPS (Cross-Shard Operations)
+	 * ======================================== */
+	
+	help_global_creeps.push("=== Global Creeps - Cross-Shard Creep Management ===");
+	help_global_creeps.push("");
+	help_global_creeps.push("Manage creeps operating on shards without colonies.");
+	help_global_creeps.push("Enables exploration, mining, and operations across shards.");
+	help_global_creeps.push("");
+	
+	global.global_creeps = {};
+	
+	global_creeps.stats = function() {
+		let stats = GlobalCreeps.getStats();
+		console.log(`<font color="#00FFFF">[GlobalCreeps]</font> === Global Creep Statistics ===`);
+		console.log(`<font color="#00FFFF">[GlobalCreeps]</font> Total: ${stats.total} global creeps`);
+		
+		if (stats.total > 0) {
+			console.log(`<font color="#00FFFF">[GlobalCreeps]</font> By Role:`);
+			_.each(Object.keys(stats.byRole), role => {
+				console.log(`<font color="#00FFFF">[GlobalCreeps]</font>   ${role}: ${stats.byRole[role]}`);
+			});
+			
+			console.log(`<font color="#00FFFF">[GlobalCreeps]</font> Creeps:`);
+			_.each(stats.creeps, creep => {
+				console.log(`<font color="#00FFFF">[GlobalCreeps]</font>   ${creep.name} (${creep.role}) in ${creep.room} [assigned: ${creep.assignedRoom}]`);
+			});
+		}
+		
+		return `<font color="#00FF00">[GlobalCreeps]</font> ${stats.total} global creeps found`;
+	};
+	
+	help_global_creeps.push("global_creeps.stats()");
+	help_global_creeps.push(" - Show statistics for global creeps (creeps on shards without colonies)");
+	help_global_creeps.push("");
+	
+	global_creeps.assign_worker = function(creepName, targetRoom) {
+		let creep = Game.creeps[creepName];
+		if (!creep) {
+			return `<font color="#FF0000">[GlobalCreeps]</font> Creep ${creepName} not found`;
+		}
+		
+		creep.memory.remote_target = targetRoom;
+		return `<font color="#00FF00">[GlobalCreeps]</font> Assigned ${creepName} to remote mine in ${targetRoom}`;
+	};
+	
+	help_global_creeps.push("global_creeps.assign_worker(creepName, targetRoom)");
+	help_global_creeps.push(" - Assign a worker to remote mine in target room");
+	help_global_creeps.push(" - creepName: Name of worker creep");
+	help_global_creeps.push(" - targetRoom: Room to mine (e.g., 'W49N50')");
+	help_global_creeps.push("");
+	
+	global_creeps.assign_highway = function(creepName, targetRoom) {
+		let creep = Game.creeps[creepName];
+		if (!creep) {
+			return `<font color="#FF0000">[GlobalCreeps]</font> Creep ${creepName} not found`;
+		}
+		
+		creep.memory.highway_target = targetRoom;
+		return `<font color="#00FF00">[GlobalCreeps]</font> Assigned ${creepName} to highway mine in ${targetRoom}`;
+	};
+	
+	help_global_creeps.push("global_creeps.assign_highway(creepName, targetRoom)");
+	help_global_creeps.push(" - Assign a miner to highway mine (power banks/deposits) in target room");
+	help_global_creeps.push(" - creepName: Name of miner creep");
+	help_global_creeps.push(" - targetRoom: Highway room with power banks or deposits");
+	help_global_creeps.push("");
+	
+	global_creeps.spawn_resource_scout = function(targetRoom) {
+		let spawn = _.find(Game.spawns, s => !s.spawning);
+		if (!spawn) {
+			return `<font color="#FF0000">[GlobalCreeps]</font> No available spawns`;
+		}
+		
+		let scoutName = "rsct:" + Math.floor(Math.random() * 0xFFFF).toString(16).padStart(4, "0");
+		let body = [MOVE, MOVE, MOVE, MOVE, MOVE];  // Fast scout
+		
+		let result = spawn.spawnCreep(body, scoutName, {
+			memory: {
+				role: "resource_scout",
+				room: spawn.room.name,
+				scan_target: targetRoom,
+				explore_mode: true,
+				explored_rooms: []
+			}
+		});
+		
+		if (result === OK) {
+			return `<font color="#00FF00">[GlobalCreeps]</font> Spawning resource scout ${scoutName} to scan ${targetRoom}`;
+		} else {
+			return `<font color="#FF0000">[GlobalCreeps]</font> Failed to spawn: ${result}`;
+		}
+	};
+	
+	help_global_creeps.push("global_creeps.spawn_resource_scout(targetRoom)");
+	help_global_creeps.push(" - Spawn a scout to discover power banks, deposits, and minerals");
+	help_global_creeps.push(" - targetRoom: Initial room to scan (e.g., 'E10N10')");
+	help_global_creeps.push("");
+	
+	global_creeps.list_resources = function() {
+		let currentShard = Game.shard ? Game.shard.name : "sim";
+		let resources = _.get(Memory, ["global_resources", currentShard], {});
+		
+		if (Object.keys(resources).length === 0) {
+			return `<font color="#FFFF00">[Resources]</font> No resources discovered yet`;
+		}
+		
+		console.log(`<font color="#FFFF00">[Resources]</font> === Discovered Resources (${currentShard}) ===`);
+		
+		let byType = _.groupBy(Object.values(resources), r => r.type);
+		
+		_.each(Object.keys(byType), type => {
+			console.log(`<font color="#FFFF00">[Resources]</font> ${type}: ${byType[type].length}`);
+			_.each(byType[type], resource => {
+				let age = Game.time - resource.discovered;
+				let info = "";
+				
+				if (type === "power_bank") {
+					info = `${resource.power} power, ${resource.ticksToDecay} ticks`;
+				} else if (type === "deposit") {
+					info = `${resource.depositType}, ${resource.ticksToDecay} ticks`;
+				} else if (type === "mineral") {
+					info = `${resource.mineralType}, ${resource.mineralAmount} amount`;
+				}
+				
+				console.log(`<font color="#FFFF00">[Resources]</font>   ${resource.room} ${info} (${age} ticks ago)`);
+			});
+		});
+		
+		return `<font color="#00FF00">[Resources]</font> ${Object.keys(resources).length} resources found`;
+	};
+	
+	help_global_creeps.push("global_creeps.list_resources()");
+	help_global_creeps.push(" - List all discovered resources (power banks, deposits, minerals)");
+	help_global_creeps.push(" - Shows: power banks, deposits (silicon, metal, etc.), minerals, energy sources");
+	help_global_creeps.push("");
+	help_global_creeps.push("=== Related Commands ===");
+	help_global_creeps.push("For portal scouts, see: help('shard')");
+	
+	shard.test_portal = function(creepName, targetShard, targetRoom) {
+		let creep = Game.creeps[creepName];
+		if (!creep) {
+			return `<font color=\"#FF0000\">[Shard]</font> Creep ${creepName} not found`;
+		}
+		
+		// Check for portal route
+		let route = Portals.getPortalRoute(creep.room.name, targetShard, targetRoom);
+		if (!route) {
+			return `<font color=\"#FF0000\">[Shard]</font> No portal route from ${creep.room.name} to ${targetShard}`;
+		}
+		
+		// Display route info
+		console.log(`<font color=\"#00FFFF\">[Shard]</font> Portal route found:`);
+		console.log(`<font color=\"#00FFFF\">[Shard]</font>   Portal: ${route.portal.pos.roomName} (${route.portal.pos.x}, ${route.portal.pos.y})`);
+		console.log(`<font color=\"#00FFFF\">[Shard]</font>   Destination: ${route.destShard} / ${route.destRoom}`);
+		console.log(`<font color=\"#00FFFF\">[Shard]</font>   Distance: ${route.distance} rooms`);
+		console.log(`<font color=\"#00FFFF\">[Shard]</font>   ETA: ${route.estimatedTravelTime} ticks`);
+		console.log(`<font color=\"#00FFFF\">[Shard]</font>   Cached: ${route.cached}`);
+		
+		// Initiate travel
+		creep.memory.test_mode = true;
+		creep.memory.portal_target_shard = targetShard;
+		creep.memory.portal_target_room = targetRoom;
+		
+		return `<font color=\"#00FF00\">[Shard]</font> ${creepName} will travel to ${targetShard}/${targetRoom} via portal`;
+	};
 
 
-		help = function (submenu) {
+	help = function (submenu) {
 			let menu = new Array()
 			if (submenu == null)
 				menu = help_main;
@@ -2343,6 +2666,7 @@
 					case "blueprint": menu = help_blueprint; break;
 					case "empire": menu = help_empire; break;
 					case "factories": menu = help_factories; break;
+					case "global_creeps": menu = help_global_creeps; break;
 					case "labs": menu = help_labs; break;
 					case "log": menu = help_log; break;
 					case "path": menu = help_path; break;

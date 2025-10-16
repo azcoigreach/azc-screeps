@@ -31,6 +31,7 @@
  * : [sec11a] InterShardMemory Manager
  * : [sec12a] Portals
  * : [sec13a] Shard Coordinator
+ * : [sec14a] Global Creeps (Cross-Shard)
  *
  * *********************************************************** */
 
@@ -58,6 +59,7 @@ require("definitions_grafana_statistics");
 require("definitions_intershard_memory");
 require("definitions_portals");
 require("definitions_shard_coordinator");
+require("definitions_global_creeps");
 
 /* ***********************************************************
  *	MAIN LOOP
@@ -85,6 +87,13 @@ module.exports.loop = function () {
 	// Process portal arrivals (check for incoming creeps)
 	if (hasCPU() && isPulse_Short()) {
 		Portals.processArrivals();
+	}
+
+	// Run all global creeps (independent of colonies)
+	// This allows creeps to function on shards without colonies
+	// Supports scouts, workers, miners, soldiers, etc.
+	if (hasCPU()) {
+		GlobalCreeps.run();
 	}
 
         FlagController.run();

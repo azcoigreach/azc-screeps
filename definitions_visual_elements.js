@@ -702,7 +702,7 @@
 			tick: Game.time,
 			stats: [
 				{icon: '🌐', value: shardName, color: '#00FFFF', bg: '#222'}, // Shard name
-				{icon: '🏠', value: 'W51N51', color: '#FFFFFF', bg: '#222'}, // Room name (hardcoded for now)
+				{icon: '🏠', value: 'W51N51', color: '#FFFFFF', bg: '#222'}, // Room name (will be updated per room)
 				{icon: '🧠', value: cpu.toFixed(1), color: '#FFFFFF', bg: '#222'}, // CPU usage
 				{icon: '⚡', value: bucket.toString(), color: healthColor, bg: '#222'}, // Bucket
 				{icon: '🕐', value: Game.time.toString(), color: '#FFFFFF', bg: '#222'}, // Game clock
@@ -711,12 +711,15 @@
 		};
 		
 		// Check for portals nearby and update portal indicator
+		let totalPortals = 0;
 		_.each(_.filter(Game.rooms, r => r.controller && r.controller.my), room => {
 			let portals = Portals.getPortalsInRoom(room.name);
-			if (portals && portals.length > 0) {
-				shardStats.stats[5].value = portals.length.toString();
-			}
+			totalPortals += portals.length;
 		});
+		
+		// Also include portals discovered by scouts in other rooms
+		let allPortals = Portals.getAll();
+		shardStats.stats[5].value = allPortals.length.toString();
 		
 		// Cache the stats
 		this._cache.shardHealthStats = shardStats;
@@ -725,6 +728,9 @@
 	// Draw using cached stats
 	_.each(_.filter(Game.rooms, r => r.controller && r.controller.my), room => {
 		let visual = new RoomVisual(room.name);
+		
+		// Update room name for this specific room
+		shardStats.stats[1].value = room.name;
 		
 		// Style to match room status bar
 		const barY = 0.3;
@@ -922,7 +928,7 @@ Show_Portal_Indicators: function() {
 		// Create stats array - Top bar: shard > room name > CPU usage > Bucket > game clock > portals
 		const stats = [
 			{icon: '🌐', value: shardName, color: '#00FFFF', bg: '#222'}, // Shard name
-			{icon: '🏠', value: 'W51N51', color: '#FFFFFF', bg: '#222'}, // Room name (hardcoded for now)
+			{icon: '🏠', value: room.name, color: '#FFFFFF', bg: '#222'}, // Room name
 			{icon: '🧠', value: cpu.toFixed(1), color: '#FFFFFF', bg: '#222'}, // CPU usage
 			{icon: '⚡', value: bucket.toString(), color: healthColor, bg: '#222'}, // Bucket
 			{icon: '🕐', value: Game.time.toString(), color: '#FFFFFF', bg: '#222'}, // Game clock
@@ -930,10 +936,8 @@ Show_Portal_Indicators: function() {
 		];
 		
 		// Check for portals nearby and update portal indicator
-		let portals = Portals.getPortalsInRoom(room.name);
-		if (portals && portals.length > 0) {
-			stats[5].value = portals.length.toString();
-		}
+		let allPortals = Portals.getAll();
+		stats[5].value = allPortals.length.toString();
 		
 		// Draw background (same style as room status bar)
 		visual.rect(0.3, barY - 0.2, cellWidths.reduce((a, b) => a + b, 0) + 0.4, cellH + 0.4, {

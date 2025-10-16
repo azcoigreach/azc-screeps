@@ -203,21 +203,46 @@
 			} else { return; }
 		}
 
-		case "build": {
-			let structure = Game.getObjectById(this.memory.task["id"]);
-			let result = this.build(structure);
-			if (result == ERR_NOT_IN_RANGE) {
-				Stats_Visual.CreepSay(this, 'build');
-				this.travelTask(structure);
-				return;
-			} else if (result != OK) {
-				delete this.memory.task;
-				return;
-			} else { 
-				Stats_Visual.CreepSay(this, 'build');
-				return; 
+	case "build": {
+		let structure = Game.getObjectById(this.memory.task["id"]);
+		let result = this.build(structure);
+		if (result == ERR_NOT_IN_RANGE) {
+			Stats_Visual.CreepSay(this, 'build');
+			this.travelTask(structure);
+			return;
+		} else if (result != OK) {
+			// Construction site may have just completed - check if it's now a rampart that needs initial hits
+			// Ramparts decay at 1 hit per 300 ticks, so 5000 hits = 1.5M ticks (safe for repair cycle)
+			if (this.memory.task["structureType"] == STRUCTURE_RAMPART) {
+				let pos = this.memory.task["pos"];
+				if (pos != null) {
+					let roomObj = Game.rooms[pos.roomName];
+					if (roomObj != null) {
+						let structures = roomObj.lookForAt(LOOK_STRUCTURES, pos.x, pos.y);
+						let rampart = _.find(structures, s => s.structureType == STRUCTURE_RAMPART);
+						if (rampart != null && rampart.hits < 5000) {
+							// Switch to repairing the newly built rampart until it has safe hits
+							let repairResult = this.repair(rampart);
+							if (repairResult == ERR_NOT_IN_RANGE) {
+								Stats_Visual.CreepSay(this, 'fortify');
+								this.travelTask(rampart);
+								return;
+							} else if (repairResult == OK) {
+								Stats_Visual.CreepSay(this, 'fortify');
+								// Keep task alive until rampart has enough hits
+								return;
+							}
+						}
+					}
+				}
 			}
+			delete this.memory.task;
+			return;
+		} else { 
+			Stats_Visual.CreepSay(this, 'build');
+			return; 
 		}
+	}
 
 		case "attack": {
 			let target = Game.getObjectById(this.memory.task["target"] || this.memory.task["id"]);
@@ -974,6 +999,8 @@ Creep.prototype.getTask_Build = function getTask_Build() {
 		return {
 			type: "build",
 			id: site.id,
+			pos: { x: site.pos.x, y: site.pos.y, roomName: site.pos.roomName },
+			structureType: site.structureType,
 			timer: 60
 		};
 };
