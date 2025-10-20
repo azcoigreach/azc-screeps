@@ -424,6 +424,11 @@ Creep.prototype.travelToShard = function(targetShard, targetRoom) {
 			console.log(`<font color="#FF0000">[Creep]</font> ${this.name}: No portal route to ${targetShard}`);
 			return ERR_NO_PATH;
 		}
+		
+		if (!route.portal) {
+			console.log(`<font color="#FF0000">[Creep]</font> ${this.name}: Existing transfer route missing portal data:`, JSON.stringify(route));
+			return ERR_NO_PATH;
+		}
 
 		return this.travelToPortal(route);
 	}
@@ -433,6 +438,11 @@ Creep.prototype.travelToShard = function(targetShard, targetRoom) {
 	
 	if (!route) {
 		console.log(`<font color="#FF0000">[Creep]</font> ${this.name}: No portal route found to ${targetShard}`);
+		return ERR_NO_PATH;
+	}
+	
+	if (!route.portal) {
+		console.log(`<font color="#FF0000">[Creep]</font> ${this.name}: Portal route missing portal data:`, JSON.stringify(route));
 		return ERR_NO_PATH;
 	}
 
@@ -491,6 +501,15 @@ Creep.prototype.travelToPortal = function(route) {
 		}
 	} else {
 		// Travel to portal room
+		// For cross-shard assist workers, use their list_route if available
+		if (this.memory.cross_shard_assist && this.memory.list_route && this.memory.list_route.length > 0) {
+			// Find the next room in the route that leads to the portal room
+			let currentIndex = this.memory.list_route.indexOf(this.room.name);
+			if (currentIndex >= 0 && currentIndex < this.memory.list_route.length - 1) {
+				let nextRoom = this.memory.list_route[currentIndex + 1];
+				return this.travelToRoom(nextRoom, true);
+			}
+		}
 		return this.travelToRoom(portal.pos.roomName);
 	}
 };

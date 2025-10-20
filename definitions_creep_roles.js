@@ -2,6 +2,7 @@
  *	[sec03b] DEFINITIONS: CREEP ROLES
  * *********************************************************** */
 
+
  global.Creep_Roles = {
 
 	moveToDestination: function (creep) {
@@ -14,6 +15,51 @@
 
 	goToRoom: function (creep, room_name, is_refueling) {
 		if (creep.room.name != room_name) {
+			// Check if this is a cross-shard spawn assist creep (worker, upgrader, etc.)
+			if (creep.memory.cross_shard_assist && creep.memory.colony && creep.memory.room === room_name) {
+				// Use the destination shard directly from creep memory
+				let destShard = creep.memory.dest_shard;
+				
+				if (destShard && Game.shard && Game.shard.name !== destShard) {
+					console.log(`<font color="#00FF00">[${creep.memory.role}]</font> ${creep.name}: Cross-shard travel to ${destShard}/${room_name}`);
+					creep.travelToShard(destShard, room_name);
+					return true;
+				} else {
+					// Already on correct shard, check if we have a list_route to follow
+					if (creep.memory.list_route && creep.memory.list_route.length > 0) {
+						// Save the list_route before travel (in case travel system clears it)
+						creep.memory._saved_list_route = creep.memory.list_route;
+						
+						// Find current position in route and go to next room
+						let currentIndex = creep.memory.list_route.indexOf(creep.room.name);
+						
+						if (currentIndex >= 0 && currentIndex < creep.memory.list_route.length - 1) {
+							let nextRoom = creep.memory.list_route[currentIndex + 1];
+							// Move toward the exit to the next room using simple range-based movement
+							let exit = creep.room.findExitTo(nextRoom);
+							if (exit == ERR_NO_PATH || exit == ERR_INVALID_ARGS) {
+								console.log(`<font color="#FF0000">[${creep.memory.role.charAt(0).toUpperCase() + creep.memory.role.slice(1)}]</font> ${creep.name}: No exit found to ${nextRoom}`);
+								return false;
+							}
+							// Find closest exit by range (not path) to avoid recalculation
+							let exitPos = creep.pos.findClosestByRange(exit);
+							if (exitPos) {
+								creep.moveTo(exitPos, {reusePath: 20, visualizePathStyle: {stroke: '#ffffff'}});
+							}
+							return true;
+						} else if (currentIndex === creep.memory.list_route.length - 1) {
+							// We're at the end of the route, should be at destination
+							console.log(`<font color="#FFA500">[${creep.memory.role.charAt(0).toUpperCase() + creep.memory.role.slice(1)}]</font> ${creep.name}: At end of list_route, but not in target room ${room_name}`);
+						} else if (currentIndex === -1) {
+							// Current room not found in route - this shouldn't happen but might cause issues
+							console.log(`<font color="#FF0000">[${creep.memory.role.charAt(0).toUpperCase() + creep.memory.role.slice(1)}]</font> ${creep.name}: Current room ${creep.room.name} not found in route ${JSON.stringify(creep.memory.list_route)}`);
+						}
+					}
+					console.log(`<font color="#FFA500">[${creep.memory.role.charAt(0).toUpperCase() + creep.memory.role.slice(1)}]</font> ${creep.name}: No list_route found, using regular travel to ${room_name}`);
+				}
+			}
+			
+			// Regular same-shard travel
 			creep.travelToRoom(room_name, is_refueling);
 			return true;
 		}
@@ -233,6 +279,97 @@
 	},
 
 	Worker: function (creep, isSafe) {
+		// Restore saved list_route if it was cleared by travel system
+		if (creep.memory._saved_list_route && (!creep.memory.list_route || creep.memory.list_route.length === 0)) {
+			creep.memory.list_route = creep.memory._saved_list_route;
+		}
+		
+		// Check if this is a cross-shard spawn assist worker that needs to travel to another shard first
+		if (creep.memory.cross_shard_assist && creep.memory.colony && creep.memory.room) {
+			// Ensure dest_shard is set - try to get it from colonization operations if missing
+			if (!creep.memory.dest_shard && creep.memory.room) {
+				let colonizations = _.get(Memory, ["shard", "operations", "colonizations"], []);
+				let operation = _.find(colonizations, op => op.dest_room === creep.memory.room);
+				if (operation) {
+					creep.memory.dest_shard = operation.dest_shard;
+					console.log(`<font color="#00FF00">[Worker]</font> ${creep.name}: Set missing dest_shard to ${operation.dest_shard}`);
+				}
+			}
+			
+			// Continue with cross-shard travel if we have all required fields
+			if (creep.memory.dest_shard) {
+				// Check if we have an active transfer or need to start one
+				let transfers = _.get(Memory, ["shard", "operations", "creep_transfers"], []);
+				let activeTransfer = _.find(transfers, t => t.creep_name === creep.name && t.status === "traveling");
+				
+				// Check if we're on the correct shard first
+				if (Game.shard && Game.shard.name === creep.memory.dest_shard) {
+					// We're on the correct shard, ensure we have the destination list_route
+					// Do ISM lookup if we don't have a valid route
+					let needsRouteLookup = !creep.memory.list_route || !Array.isArray(creep.memory.list_route) || creep.memory.list_route.length === 0;
+					
+					if (needsRouteLookup && creep.memory.room) {
+						// Look up the colonization operation to get the dest_list_route
+						let colonizations = _.get(Memory, ["shard", "operations", "colonizations"], []);
+						let operation = _.find(colonizations, op => op.dest_room === creep.memory.room);
+						
+						// If not found locally, try to get it from ALL shards via ISM
+						if (!operation) {
+							// Try to find the colonization operation from ALL known shards via ISM
+							let knownShards = ["shard0", "shard1", "shard2", "shard3"];
+							for (let shardName of knownShards) {
+								if (shardName !== Game.shard.name) {
+									let shardData = ISM.getShardStatus(shardName);
+									if (shardData && shardData.operations && shardData.operations.colonizations) {
+										operation = _.find(shardData.operations.colonizations, op => op.dest_room === creep.memory.room);
+										if (operation) {
+											break;
+										}
+									}
+								}
+							}
+							if (!operation) {
+								console.log(`<font color="#FF0000">[Worker]</font> ${creep.name}: Failed to find colonization operation via ISM for ${creep.memory.room} on any shard`);
+							}
+						}
+						
+						if (operation && operation.dest_list_route && operation.dest_list_route.length > 0) {
+							creep.memory.list_route = operation.dest_list_route;
+							console.log(`<font color="#00FF00">[Worker]</font> ${creep.name}: Set missing dest list_route from operation: ${JSON.stringify(operation.dest_list_route)}`);
+						} else {
+							// NO FALLBACK - the colonization operation MUST have dest_list_route configured
+							// to avoid hostile rooms. Falling back to direct pathfinding would send workers
+							// through occupied rooms where they will die.
+							console.log(`<font color="#FF0000">[Worker]</font> ${creep.name}: MISSING dest_list_route in colonization operation for ${creep.memory.room} - this will cause workers to die in hostile rooms!`);
+						}
+					}
+					
+					// Use goToRoom which will handle list_route navigation
+					if (creep.room.name !== creep.memory.room) {
+						this.goToRoom(creep, creep.memory.room, false);
+						return;
+					}
+				} else if (creep.room.name !== creep.memory.room || activeTransfer) {
+					// We need to cross shards or we're still traveling
+					if (activeTransfer) {
+						// Continue existing transfer - use travelToShard once per tick max
+						let result = creep.travelToShard(creep.memory.dest_shard, creep.memory.room);
+						if (result !== OK && result !== ERR_BUSY && result !== ERR_INVALID_TARGET) {
+							console.log(`<font color="#FFA500">[Worker]</font> ${creep.name}: travelToShard error ${result}`);
+						}
+					} else {
+						console.log(`<font color="#00FF00">[Worker]</font> ${creep.name}: Starting cross-shard travel to ${creep.memory.dest_shard}/${creep.memory.room}`);
+						// Use travelToShard directly for cross-shard workers instead of goToRoom
+						let result = creep.travelToShard(creep.memory.dest_shard, creep.memory.room);
+						if (result !== OK && result !== ERR_BUSY && result !== ERR_INVALID_TARGET && result !== ERR_NO_PATH) {
+							console.log(`<font color="#FFA500">[Worker]</font> ${creep.name}: travelToShard error ${result}`);
+						}
+					}
+					return;
+				}
+			}
+		}
+
 		// Only pick up dropped commodities if storage is available and we have free carry capacity
 		// Exclude base resources (H, O, U, L, K, Z, X) and boosts that are typically used in labs
 		const excludedResources = ["energy", "H", "O", "U", "L", "K", "Z", "X"];
@@ -427,27 +564,36 @@
 					if (creep.hasPart("work") > 0)
 						creep.memory.task = creep.memory.task || creep.getTask_Mine();
 					
-					// PRIORITY 2: Pick up dropped energy nearby (free energy on ground)
-					creep.memory.task = creep.memory.task || creep.getTask_Pickup("energy");
-					
-					// PRIORITY 3: Withdraw from link (efficient transfer point)
+					// PRIORITY 2: Withdraw from link (efficient transfer point)
 					creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Link(15);
 
-					// PRIORITY 4: Withdraw from containers/storage (only if can't mine)
-					let energy_level = _.get(Memory, ["rooms", creep.room.name, "survey", "energy_level"]);
-					if (energy_level == CRITICAL || energy_level == LOW
-						|| _.get(Memory, ["sites", "mining", creep.memory.room, "store_percent"], 0) > 0.25) {
+					// PRIORITY 3: For CARRIERS, prioritize containers before pickup to get full loads
+					if (creep.memory.role == "carrier") {
+						// Check source containers first for carriers - they need full loads
+						creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Source_Container();
 						creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Container("energy", true);
 						creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage("energy", true);
+						// Only pick up dropped energy if no containers have enough for a reasonable load
+						creep.memory.task = creep.memory.task || creep.getTask_Pickup_Energy_Smart();
 					} else {
-						creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage("energy", true);
-						creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Container("energy", true);
+						// Miners follow original priority: containers/storage first
+						let energy_level = _.get(Memory, ["rooms", creep.room.name, "survey", "energy_level"]);
+						if (energy_level == CRITICAL || energy_level == LOW
+							|| _.get(Memory, ["sites", "mining", creep.memory.room, "store_percent"], 0) > 0.25) {
+							creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Container("energy", true);
+							creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage("energy", true);
+						} else {
+							creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage("energy", true);
+							creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Container("energy", true);
+						}
+						// Miners can pick up energy more liberally
+						creep.memory.task = creep.memory.task || creep.getTask_Pickup("energy");
 					}
 
-					// PRIORITY 5: Pick up minerals if available
+					// PRIORITY 4: Pick up minerals if available
 					creep.memory.task = creep.memory.task || creep.getTask_Pickup("mineral");
 					
-					// PRIORITY 6: Wait as last resort
+					// PRIORITY 5: Wait as last resort
 					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 				}
 
@@ -1112,6 +1258,95 @@
 	},
 
 	Upgrader: function (creep, isSafe) {
+		// Restore saved list_route if it was cleared by travel system
+		if (creep.memory._saved_list_route && (!creep.memory.list_route || creep.memory.list_route.length === 0)) {
+			creep.memory.list_route = creep.memory._saved_list_route;
+		}
+		
+		// Check if this is a cross-shard spawn assist upgrader that needs to travel to another shard first
+		if (creep.memory.cross_shard_assist && creep.memory.colony && creep.memory.room) {
+			// Ensure dest_shard is set - try to get it from colonization operations if missing
+			if (!creep.memory.dest_shard && creep.memory.room) {
+				let colonizations = _.get(Memory, ["shard", "operations", "colonizations"], []);
+				let operation = _.find(colonizations, op => op.dest_room === creep.memory.room);
+				if (operation) {
+					creep.memory.dest_shard = operation.dest_shard;
+					console.log(`<font color="#00FF00">[Upgrader]</font> ${creep.name}: Set missing dest_shard to ${operation.dest_shard}`);
+				}
+			}
+			
+			// Continue with cross-shard travel if we have all required fields
+			if (creep.memory.dest_shard) {
+				// Check if we have an active transfer or need to start one
+				let transfers = _.get(Memory, ["shard", "operations", "creep_transfers"], []);
+				let activeTransfer = _.find(transfers, t => t.creep_name === creep.name && t.status === "traveling");
+				
+				// Check if we're on the correct shard first
+				if (Game.shard && Game.shard.name === creep.memory.dest_shard) {
+					// We're on the correct shard, ensure we have the destination list_route
+					// Do ISM lookup if we don't have a valid route
+					let needsRouteLookup = !creep.memory.list_route || !Array.isArray(creep.memory.list_route) || creep.memory.list_route.length === 0;
+					
+					if (needsRouteLookup && creep.memory.room) {
+						// Look up the colonization operation to get the dest_list_route
+						let colonizations = _.get(Memory, ["shard", "operations", "colonizations"], []);
+						let operation = _.find(colonizations, op => op.dest_room === creep.memory.room);
+						
+						// If not found locally, try to get it from ALL shards via ISM
+						if (!operation) {
+							// Try to find the colonization operation from ALL known shards via ISM
+							let knownShards = ["shard0", "shard1", "shard2", "shard3"];
+							for (let shardName of knownShards) {
+								if (shardName !== Game.shard.name) {
+									let shardData = ISM.getShardStatus(shardName);
+									if (shardData && shardData.operations && shardData.operations.colonizations) {
+										operation = _.find(shardData.operations.colonizations, op => op.dest_room === creep.memory.room);
+										if (operation) {
+											console.log(`<font color="#00FF00">[Upgrader]</font> ${creep.name}: Found colonization operation for ${creep.memory.room} in source shard ${shardName}`);
+											break;
+										}
+									}
+								}
+							}
+						}
+						
+						if (operation && operation.dest_list_route && operation.dest_list_route.length > 0) {
+							creep.memory.list_route = operation.dest_list_route;
+							console.log(`<font color="#00FF00">[Upgrader]</font> ${creep.name}: Set missing dest list_route from operation: ${JSON.stringify(operation.dest_list_route)}`);
+						} else {
+							// NO FALLBACK - the colonization operation MUST have dest_list_route configured
+							// to avoid hostile rooms. Falling back to direct pathfinding would send workers
+							// through occupied rooms where they will die.
+							console.log(`<font color="#FF0000">[Upgrader]</font> ${creep.name}: MISSING dest_list_route in colonization operation for ${creep.memory.room} - this will cause workers to die in hostile rooms!`);
+						}
+					}
+					
+					// Use goToRoom which will handle list_route navigation
+					if (creep.room.name !== creep.memory.room) {
+						this.goToRoom(creep, creep.memory.room, false);
+						return;
+					}
+				} else if (creep.room.name !== creep.memory.room || activeTransfer) {
+					// We need to cross shards or we're still traveling
+					if (activeTransfer) {
+						// Continue existing transfer - use travelToShard once per tick max
+						let result = creep.travelToShard(creep.memory.dest_shard, creep.memory.room);
+						if (result !== OK && result !== ERR_BUSY && result !== ERR_INVALID_TARGET) {
+							console.log(`<font color="#FFA500">[Upgrader]</font> ${creep.name}: travelToShard error ${result}`);
+						}
+					} else {
+						console.log(`<font color="#00FF00">[Upgrader]</font> ${creep.name}: Starting cross-shard travel to ${creep.memory.dest_shard}/${creep.memory.room}`);
+						// Use travelToShard directly for cross-shard upgraders instead of goToRoom
+						let result = creep.travelToShard(creep.memory.dest_shard, creep.memory.room);
+						if (result !== OK && result !== ERR_BUSY && result !== ERR_INVALID_TARGET && result !== ERR_NO_PATH) {
+							console.log(`<font color="#FFA500">[Upgrader]</font> ${creep.name}: travelToShard error ${result}`);
+						}
+					}
+					return;
+				}
+			}
+		}
+
 		let hostile = isSafe ? null
 			: _.head(creep.pos.findInRange(FIND_HOSTILE_CREEPS, 5, {
 				filter:

@@ -238,13 +238,19 @@ global.Portals = {
 		let preservedMemory = memory || {};
 		if (Game.creeps[creepName]) {
 			let creep = Game.creeps[creepName];
+			// Start with passed memory or create from scratch
 			preservedMemory = {
+				...preservedMemory,
 				role: creep.memory.role,
 				room: destRoom,
 				origin: destRoom,
 				level: creep.memory.level,
 				site: creep.memory.site,
-				// Don't preserve task, path, or other temporary data
+				// Always preserve cross-shard assist data if present
+				cross_shard_assist: creep.memory.cross_shard_assist,
+				dest_shard: creep.memory.dest_shard,
+				colony: creep.memory.colony,
+				list_route: creep.memory.list_route
 			};
 		}
 
@@ -276,6 +282,7 @@ global.Portals = {
 		}
 
 		let restored = 0;
+		let currentShard = Game.shard.name;
 
 		// Find creeps with empty or minimal memory (likely just arrived)
 		_.each(Game.creeps, creep => {
@@ -311,6 +318,62 @@ global.Portals = {
 					creep.memory.role = role;
 					creep.memory.room = roomName;
 					creep.memory.origin = roomName;
+
+					// Try to find transfer data for cross-shard assist creeps
+					let allStatuses = ISM.getAllShardStatuses();
+					let foundTransfer = false;
+					
+					_.each(Object.keys(allStatuses), otherShard => {
+						if (otherShard === currentShard || foundTransfer) return;
+						
+						let status = allStatuses[otherShard];
+						let transfers = _.get(status, ["operations", "creep_transfers"], []);
+						
+						let transfer = _.find(transfers, t => 
+							t.creep_name === creep.name && 
+							t.dest_shard === currentShard && 
+							t.status === "traveling"
+						);
+						
+						if (transfer && transfer.memory) {
+							console.log(`<font color="#00FF00">[Portals]</font> Found transfer data for ${creep.name}, restoring cross-shard assist memory`);
+							// Restore cross-shard assist memory
+							if (transfer.memory.cross_shard_assist) {
+								creep.memory.cross_shard_assist = transfer.memory.cross_shard_assist;
+								creep.memory.dest_shard = transfer.memory.dest_shard;
+								creep.memory.colony = transfer.memory.colony;
+								// Do NOT restore list_route - it contains the source shard route which is invalid on destination shard
+								creep.memory.room = transfer.memory.room || creep.memory.room;
+								
+								// Set up destination list_route for cross-shard assist creeps
+								if (creep.memory.room) {
+									// Look up the colonization operation to get the dest_list_route
+									// Check both local memory and try to find the source shard from transfer
+									let colonizations = _.get(Memory, ["shard", "operations", "colonizations"], []);
+									let operation = _.find(colonizations, op => op.dest_room === creep.memory.room);
+									
+									// If not found locally, try to get it from source shard via ISM
+									if (!operation && transfer.source_shard && transfer.source_shard !== currentShard) {
+										let sourceShardData = ISM.getShardStatus(transfer.source_shard);
+										if (sourceShardData && sourceShardData.operations && sourceShardData.operations.colonizations) {
+											operation = _.find(sourceShardData.operations.colonizations, op => op.dest_room === creep.memory.room);
+											console.log(`<font color="#00FF00">[Portals]</font> Found colonization operation for ${creep.memory.room} in source shard ${transfer.source_shard} during restore`);
+										}
+									}
+									
+									if (operation && operation.dest_list_route && operation.dest_list_route.length > 0) {
+										creep.memory.list_route = operation.dest_list_route;
+										console.log(`<font color="#00FF00">[Portals]</font> Set dest list_route for ${creep.name} in restore: ${JSON.stringify(operation.dest_list_route)}`);
+									} else {
+										console.log(`<font color="#FFA500">[Portals]</font> Could not find colonization operation with dest_list_route for ${creep.memory.room} during restore`);
+									}
+								}
+								
+								console.log(`<font color="#00FF00">[Portals]</font> Restored cross-shard assist memory`);
+							}
+							foundTransfer = true;
+						}
+					});
 
 					// Role-specific memory restoration
 					if (role === "portal_scout") {
@@ -366,9 +429,13 @@ global.Portals = {
 						// Creep has arrived!
 						console.log(`<font color="#00FF00">[Portals]</font> Creep ${transfer.creep_name} arrived from ${otherShard} to ${transfer.dest_room}`);
 						
-						// Restore preserved memory
+						// Restore preserved memory (excluding list_route for cross-shard assists)
 						if (transfer.memory) {
 							_.each(Object.keys(transfer.memory), key => {
+								// Skip list_route for cross-shard assist creeps as it contains source shard route
+								if (key === "list_route" && transfer.memory.cross_shard_assist) {
+									return;
+								}
 								creep.memory[key] = transfer.memory[key];
 							});
 						}
@@ -381,7 +448,29 @@ global.Portals = {
 						
 						// Clear any travel state from portal traversal
 						delete creep.memory.path;
-						delete creep.memory.list_route;
+						
+						// Set up destination list_route for cross-shard assist creeps
+						if (creep.memory.cross_shard_assist && creep.memory.room) {
+							// Look up the colonization operation to get the dest_list_route
+							// Need to check both local memory and source shard memory via ISM
+							let colonizations = _.get(Memory, ["shard", "operations", "colonizations"], []);
+							let operation = _.find(colonizations, op => op.dest_room === creep.memory.room);
+							
+							// If not found locally, try to get it from source shard via ISM
+							if (!operation && transfer.source_shard && transfer.source_shard !== currentShard) {
+								let sourceShardData = ISM.getShardStatus(transfer.source_shard);
+								if (sourceShardData && sourceShardData.operations && sourceShardData.operations.colonizations) {
+									operation = _.find(sourceShardData.operations.colonizations, op => op.dest_room === creep.memory.room);
+								}
+							}
+							
+							if (operation && operation.dest_list_route && operation.dest_list_route.length > 0) {
+								creep.memory.list_route = operation.dest_list_route;
+								console.log(`<font color="#00FF00">[Portals]</font> Set dest list_route for ${creep.name} to ${creep.memory.room}`);
+							} else {
+								console.log(`<font color="#FF0000">[Portals]</font> ❌ Could not find colonization operation with dest_list_route for ${creep.memory.room}`);
+							}
+						}
 						
 						// Auto-reset scouts to exploration mode when they arrive on a new shard
 						if (creep.memory.role === "portal_scout") {
@@ -433,14 +522,12 @@ global.Portals = {
 		
 		let cleanedCount = beforeCount - Memory.shard.operations.creep_transfers.length;
 
-		// Log summary if any activity
-		if (arrivalsProcessed > 0 || timeoutsDetected > 0 || cleanedCount > 0 || restoredCreeps > 0) {
-			let parts = [];
-			if (arrivalsProcessed > 0) parts.push(`${arrivalsProcessed} arrivals`);
-			if (restoredCreeps > 0) parts.push(`${restoredCreeps} restored`);
-			if (timeoutsDetected > 0) parts.push(`${timeoutsDetected} timeouts`);
-			if (cleanedCount > 0) parts.push(`${cleanedCount} cleaned`);
-			console.log(`<font color="#00FFFF">[Portals]</font> Arrival processing: ${parts.join(", ")}`);
+		// Log summary if any significant activity
+		if (arrivalsProcessed > 0) {
+			console.log(`<font color="#00FFFF">[Portals]</font> Processed ${arrivalsProcessed} arrivals`);
+		}
+		if (timeoutsDetected > 0) {
+			console.log(`<font color="#FFA500">[Portals]</font> ${timeoutsDetected} timed-out transfers detected`);
 		}
 
 		Stats_CPU.End("Portals", "processArrivals");

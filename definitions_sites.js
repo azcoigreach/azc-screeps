@@ -223,16 +223,32 @@
 					});
 				}
 
-				if (_.get(popActual, "worker", 0) < _.get(popTarget, ["worker", "amount"], 0)) {
+			// Count pending worker requests to avoid duplication
+			let pendingWorkerRequests = _.filter(Memory["shard"]["spawn_requests"], r => 
+				r.room === rmColony && 
+				r.args && 
+				r.args.role === "worker" && 
+				r.args.room === rmColony &&
+				!r.args.cross_shard_assist // Don't count cross-shard requests
+			).length;
+			
+			let workerAmount = _.get(popTarget, ["worker", "amount"], 0);
+			let workerActual = _.get(popActual, "worker", 0);
+			let workerTotalInProgress = workerActual + pendingWorkerRequests;
+			
+			if (workerTotalInProgress < workerAmount) {
+				// Only create requests for the difference
+				for (let i = workerTotalInProgress; i < workerAmount; i++) {
 					Memory["shard"]["spawn_requests"].push({
 						room: rmColony, listRooms: listSpawnRooms,
-						priority: Math.lerpSpawnPriority(23, 25, _.get(popActual, "worker", 0), _.get(popTarget, ["worker", "amount"], 0)),
+						priority: Math.lerpSpawnPriority(23, 25, workerActual, workerAmount),
 						level: _.get(popTarget, ["worker", "level"], 1),
 						scale: _.get(popTarget, ["worker", "scale"], true),
 						body: _.get(popTarget, ["worker", "body"], "worker"),
 						name: null, args: { role: "worker", room: rmColony }
 					});
 				}
+			}
 
 				// Check for force spawn request
 				let forceSpawn = _.get(Memory, ["rooms", rmColony, "upgrader_force_spawn"]);
@@ -250,32 +266,46 @@
 					delete Memory.rooms[rmColony].upgrader_force_spawn;
 				}
 
-				// Check if room has reached RCL 5+ and should spawn upgraders
-				let roomLevel = Game.rooms[rmColony].controller.level;
-				if (roomLevel >= 5) {
-					// Calculate upgrader amount based on remote mining sources
-					let remoteMiningSources = 0;
-					let remote_mining = _.get(Memory, ["sites", "mining"]);
-					if (remote_mining) {
-						let remote_list = _.filter(Object.keys(remote_mining), rem => { 
-							return rem != rmColony && _.get(remote_mining[rem], "colony") == rmColony; 
-						});
-						_.each(remote_list, rem => { 
-							remoteMiningSources += _.get(Memory, ["sites", "mining", rem, "survey", "source_amount"], 0); 
-						});
-					}
-					
-					// Base upgrader amount: 1 for every room level 5+
-					// Additional upgrader for every 2 remote mining sources
-					let baseUpgraders = 1;
-					let additionalUpgraders = Math.floor(remoteMiningSources / 2);
-					let totalUpgraders = baseUpgraders + additionalUpgraders;
-					
-					// Check if we need upgraders
-					if (_.get(popActual, "upgrader", 0) < totalUpgraders) {
+			// Check if room has reached RCL 5+ and should spawn upgraders
+			let roomLevel = Game.rooms[rmColony].controller.level;
+			if (roomLevel >= 5) {
+				// Calculate upgrader amount based on remote mining sources
+				let remoteMiningSources = 0;
+				let remote_mining = _.get(Memory, ["sites", "mining"]);
+				if (remote_mining) {
+					let remote_list = _.filter(Object.keys(remote_mining), rem => { 
+						return rem != rmColony && _.get(remote_mining[rem], "colony") == rmColony; 
+					});
+					_.each(remote_list, rem => { 
+						remoteMiningSources += _.get(Memory, ["sites", "mining", rem, "survey", "source_amount"], 0); 
+					});
+				}
+				
+				// Base upgrader amount: 1 for every room level 5+
+				// Additional upgrader for every 2 remote mining sources
+				let baseUpgraders = 1;
+				let additionalUpgraders = Math.floor(remoteMiningSources / 2);
+				let totalUpgraders = baseUpgraders + additionalUpgraders;
+				
+				// Count pending upgrader requests to avoid duplication
+				let pendingUpgraderRequests = _.filter(Memory["shard"]["spawn_requests"], r => 
+					r.room === rmColony && 
+					r.args && 
+					r.args.role === "upgrader" && 
+					r.args.room === rmColony &&
+					!r.args.cross_shard_assist // Don't count cross-shard requests
+				).length;
+				
+				let upgraderActual = _.get(popActual, "upgrader", 0);
+				let upgraderTotalInProgress = upgraderActual + pendingUpgraderRequests;
+				
+				// Check if we need upgraders
+				if (upgraderTotalInProgress < totalUpgraders) {
+					// Only create requests for the difference
+					for (let i = upgraderTotalInProgress; i < totalUpgraders; i++) {
 						Memory["shard"]["spawn_requests"].push({
 							room: rmColony, listRooms: listSpawnRooms,
-							priority: Math.lerpSpawnPriority(20, 22, _.get(popActual, "upgrader", 0), totalUpgraders),
+							priority: Math.lerpSpawnPriority(20, 22, upgraderActual, totalUpgraders),
 							level: _.get(popTarget, ["upgrader", "level"], room_level),
 							scale: _.get(popTarget, ["upgrader", "scale"], true),
 							body: _.get(popTarget, ["upgrader", "body"], "upgrader"),
@@ -283,6 +313,7 @@
 						});
 					}
 				}
+			}
 			},
 
 

@@ -70,6 +70,11 @@ global.GlobalCreeps = {
 				this.runGlobalWorker(creep);
 				break;
 				
+			case "upgrader":
+				// Global upgraders for cross-shard upgrading operations
+				Creep_Roles.Upgrader(creep, true);
+				break;
+				
 			case "miner":
 			case "remote_miner":
 				// Global miners for highway mining across shards
@@ -174,6 +179,12 @@ global.GlobalCreeps = {
 	runGlobalWorker: function(creep) {
 		// If worker has a specific task, use standard worker behavior
 		if (creep.memory.task) {
+			Creep_Roles.Worker(creep, true);
+			return;
+		}
+		
+		// If this is a cross-shard assist worker, use standard worker behavior
+		if (creep.memory.cross_shard_assist) {
 			Creep_Roles.Worker(creep, true);
 			return;
 		}

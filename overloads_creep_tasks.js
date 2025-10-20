@@ -556,9 +556,9 @@ Creep.prototype.getTask_Withdraw_Container = function getTask_Withdraw_Container
 
 		let cont = null;
 		
-		// TARGET COMMITMENT: Check if creep has a committed container that's still valid
-		let committedContainerId = _.get(this.memory, ["committed_target", "container"]);
-		let committedUntil = _.get(this.memory, ["committed_target", "until"], 0);
+		// TARGET COMMITMENT: Check if creep has a committed general container that's still valid
+		let committedContainerId = _.get(this.memory, ["committed_target", "general_container"]);
+		let committedUntil = _.get(this.memory, ["committed_target", "general_container_until"], 0);
 		
 		if (committedContainerId && Game.time < committedUntil) {
 			// Try to use the committed container if it still has sufficient energy
@@ -567,22 +567,48 @@ Creep.prototype.getTask_Withdraw_Container = function getTask_Withdraw_Container
 				cont = committedContainer;
 			} else {
 				// Committed container is empty/invalid, clear the commitment
-				delete this.memory.committed_target;
+				delete this.memory.committed_target.general_container;
+				delete this.memory.committed_target.general_container_until;
 			}
 		}
 		
 		// If no valid commitment, find a new container
 		if (cont == null) {
-			cont = _.head(_.sortBy(_.filter(this.room.find(FIND_STRUCTURES),
-				s => { return s.structureType == STRUCTURE_CONTAINER && _.get(s, ["store", "energy"], 0) > carry_amount; }),
+			// For carriers, ignore source containers here as they're handled by getTask_Withdraw_Source_Container
+			let containerFilter;
+			if (this.memory.role == "carrier") {
+				// For carriers, exclude source containers from general container search
+				let sourceContainers = [];
+				let sources = this.room.findSources(false);
+				for (let source of sources) {
+					let sourceContainer = _.head(source.pos.findInRange(FIND_STRUCTURES, 1, {
+						filter: s => s.structureType == "container"
+					}));
+					if (sourceContainer) {
+						sourceContainers.push(sourceContainer.id);
+					}
+				}
+				
+				containerFilter = s => {
+					return s.structureType == STRUCTURE_CONTAINER 
+						&& _.get(s, ["store", "energy"], 0) > carry_amount
+						&& !sourceContainers.includes(s.id);
+				};
+			} else {
+				containerFilter = s => {
+					return s.structureType == STRUCTURE_CONTAINER && _.get(s, ["store", "energy"], 0) > carry_amount;
+				};
+			}
+			
+			cont = _.head(_.sortBy(_.filter(this.room.find(FIND_STRUCTURES), containerFilter),
 				s => { return this.pos.getRangeTo(s.pos); }));
 
 			if (cont != null) {
 				// COMMIT to this container: stay committed for 40-60 ticks
 				let commitDuration = room_level <= 3 ? 40 : 60; // Shorter commitment for early game
 				
-				_.set(this.memory, ["committed_target", "container"], cont.id);
-				_.set(this.memory, ["committed_target", "until"], Game.time + commitDuration);
+				_.set(this.memory, ["committed_target", "general_container"], cont.id);
+				_.set(this.memory, ["committed_target", "general_container_until"], Game.time + commitDuration);
 			}
 		}
 
@@ -617,6 +643,73 @@ Creep.prototype.getTask_Withdraw_Source_Container = function getTask_Withdraw_So
 				type: "withdraw",
 				resource: "energy",
 				id: container.id,
+				timer: 60
+			};
+		}
+	} else if (this.memory.role == "carrier") {
+		// For carriers, prioritize source containers with commitment system
+		let carry_amount = this.carryCapacity / 5;
+		let min_energy_for_commitment = this.carryCapacity * 0.7; // Need at least 70% capacity worth of energy
+		
+		// TARGET COMMITMENT: Check if creep has a committed source container
+		let committedContainerId = _.get(this.memory, ["committed_target", "source_container"]);
+		let committedUntil = _.get(this.memory, ["committed_target", "source_container_until"], 0);
+		
+		if (committedContainerId && Game.time < committedUntil) {
+			let committedContainer = Game.getObjectById(committedContainerId);
+			if (committedContainer && _.get(committedContainer, ["store", "energy"], 0) > carry_amount) {
+				return {
+					type: "withdraw",
+					resource: "energy",
+					id: committedContainer.id,
+					timer: 60
+				};
+			} else {
+				// Committed container is empty/invalid, clear the commitment
+				delete this.memory.committed_target.source_container;
+				delete this.memory.committed_target.source_container_until;
+			}
+		}
+		
+		// Find source containers with sufficient energy and commit to the best one
+		let sourceContainers = [];
+		let sources = this.room.findSources(false);
+		
+		for (let source of sources) {
+			let container = _.head(source.pos.findInRange(FIND_STRUCTURES, 1, {
+				filter: s => s.structureType == "container" && _.get(s, ["store", "energy"], 0) > carry_amount
+			}));
+			
+			if (container) {
+				sourceContainers.push({
+					container: container,
+					source: source,
+					energy: container.store.energy,
+					distance: this.pos.getRangeTo(container.pos)
+				});
+			}
+		}
+		
+		if (sourceContainers.length > 0) {
+			// Sort by energy amount (descending) then by distance (ascending)
+			sourceContainers.sort((a, b) => {
+				if (a.energy !== b.energy) return b.energy - a.energy;
+				return a.distance - b.distance;
+			});
+			
+			let bestContainer = sourceContainers[0].container;
+			
+			// Only commit if it has enough energy for a meaningful load
+			if (bestContainer.store.energy >= min_energy_for_commitment) {
+				let commitDuration = 100; // Longer commitment for source containers since they're reliable
+				_.set(this.memory, ["committed_target", "source_container"], bestContainer.id);
+				_.set(this.memory, ["committed_target", "source_container_until"], Game.time + commitDuration);
+			}
+			
+			return {
+				type: "withdraw",
+				resource: "energy",
+				id: bestContainer.id,
 				timer: 60
 			};
 		}
@@ -769,7 +862,12 @@ Creep.prototype.getTask_Pickup = function getTask_Pickup(resource) {
     
     // TARGET COMMITMENT: Check if creep has a committed pickup target that's still valid
     let committedPickupId = _.get(this.memory, ["committed_target", "pickup"]);
-    let committedUntil = _.get(this.memory, ["committed_target", "until"], 0);
+    let committedUntil = _.get(this.memory, ["committed_target", "pickup_until"], 0);
+    
+    // Fallback to old timing if new timing doesn't exist (for backward compatibility)
+    if (committedUntil === 0) {
+        committedUntil = _.get(this.memory, ["committed_target", "until"], 0);
+    }
     
     if (committedPickupId && Game.time < committedUntil) {
         // Try to use the committed pickup target if it still exists and has resources
@@ -786,7 +884,8 @@ Creep.prototype.getTask_Pickup = function getTask_Pickup(resource) {
             }
         }
         // Committed pickup is gone/invalid, clear the commitment
-        delete this.memory.committed_target;
+        delete this.memory.committed_target.pickup;
+        delete this.memory.committed_target.pickup_until;
     }
     
     // No valid commitment, find a new pickup target
@@ -826,7 +925,7 @@ Creep.prototype.getTask_Pickup = function getTask_Pickup(resource) {
     if (targetPile) {
         // COMMIT to this pickup target: stay committed for 20 ticks
         _.set(this.memory, ["committed_target", "pickup"], targetPile.id);
-        _.set(this.memory, ["committed_target", "until"], Game.time + 20);
+        _.set(this.memory, ["committed_target", "pickup_until"], Game.time + 20);
         
         return {
             type: "pickup",
@@ -866,6 +965,84 @@ Creep.prototype.getTask_Pickup = function getTask_Pickup(resource) {
     return null;
 };
 
+Creep.prototype.getTask_Pickup_Energy_Smart = function getTask_Pickup_Energy_Smart() {
+    // Smart pickup for carriers - only pick up energy if it's worth it and no better alternatives exist
+    if (!_.get(Memory, ["rooms", this.room.name, "defense", "is_safe"])) {
+        return;
+    }
+    
+    // Only for carriers, and only if they need significant energy
+    if (this.memory.role !== "carrier") {
+        return this.getTask_Pickup("energy");
+    }
+    
+    let freeCapacity = this.carryCapacity - _.sum(this.carry);
+    let minWorthwhileAmount = Math.max(this.carryCapacity * 0.3, 100); // At least 30% capacity or 100 energy
+    
+    // Check if there are source containers with good amounts of energy first
+    let hasGoodContainers = false;
+    let sources = this.room.findSources(false);
+    
+    for (let source of sources) {
+        let container = _.head(source.pos.findInRange(FIND_STRUCTURES, 1, {
+            filter: s => s.structureType == "container" && _.get(s, ["store", "energy"], 0) > minWorthwhileAmount
+        }));
+        
+        if (container) {
+            hasGoodContainers = true;
+            break;
+        }
+    }
+    
+    // Don't pick up dropped energy if there are good containers available
+    if (hasGoodContainers) {
+        return null;
+    }
+    
+    let dropped = this.room.find(FIND_DROPPED_RESOURCES);
+    let energyPiles = _.filter(dropped, r => r.resourceType === "energy" && r.amount >= minWorthwhileAmount);
+    
+    if (energyPiles.length === 0) {
+        return null;
+    }
+    
+    // TARGET COMMITMENT: Check if creep has a committed pickup target
+    let committedPickupId = _.get(this.memory, ["committed_target", "pickup"]);
+    let committedUntil = _.get(this.memory, ["committed_target", "pickup_until"], 0);
+    
+    if (committedPickupId && Game.time < committedUntil) {
+        let committedPile = Game.getObjectById(committedPickupId);
+        if (committedPile && committedPile.amount >= minWorthwhileAmount && committedPile.resourceType === "energy") {
+            return {
+                type: "pickup",
+                resource: committedPile.resourceType,
+                id: committedPile.id,
+                timer: 30
+            };
+        } else {
+            delete this.memory.committed_target.pickup;
+            delete this.memory.committed_target.pickup_until;
+        }
+    }
+    
+    // Find the best energy pile to pick up
+    let bestPile = _.head(_.sortBy(energyPiles, r => -r.amount));
+    
+    if (bestPile) {
+        // Commit to this pickup target for carriers to prevent bouncing
+        _.set(this.memory, ["committed_target", "pickup"], bestPile.id);
+        _.set(this.memory, ["committed_target", "pickup_until"], Game.time + 30); // Shorter commitment for dropped energy
+        
+        return {
+            type: "pickup",
+            resource: bestPile.resourceType,
+            id: bestPile.id,
+            timer: 30
+        };
+    }
+    
+    return null;
+};
 
 Creep.prototype.getTask_Upgrade = function getTask_Upgrade(only_critical) {
 	if (!_.get(this.room, ["controller", "my"], false))
