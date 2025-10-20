@@ -321,7 +321,7 @@
 		};
 
 		factories.renew_assignments = function () {
-			console.log(`<font color=\"#FFA500\">[Factory]</font> Renewing factory assignments...`);
+			// console.log(`<font color=\"#FFA500\">[Factory]</font> Renewing factory assignments...`);
 			// Safely clear existing assignments to force fresh assignment
 			if (Memory["resources"] && Memory["resources"]["factories"]) {
 				delete Memory["resources"]["factories"]["assignments"];
@@ -359,7 +359,7 @@
 			
 			// Check if it's time for cleanup
 			if (currentTick - Memory.factories.lastCleanup >= Memory.factories.cleanupInterval) {
-				console.log(`<font color=\"#FFA500\">[Factory]</font> Running scheduled factory cleanup...`);
+				// console.log(`<font color=\"#FFA500\">[Factory]</font> Running scheduled factory cleanup...`);
 				this.cleanup(1); // High priority cleanup
 				Memory.factories.lastCleanup = currentTick;
 				maintenanceActions.push("cleanup");
@@ -367,7 +367,7 @@
 			
 			// Check if it's time for assignment renewal
 			if (currentTick - Memory.factories.lastAssignmentCheck >= Memory.factories.assignmentCheckInterval) {
-				console.log(`<font color=\"#FFA500\">[Factory]</font> Running scheduled assignment check...`);
+				// console.log(`<font color=\"#FFA500\">[Factory]</font> Running scheduled assignment check...`);
 				this.renew_assignments();
 				Memory.factories.lastAssignmentCheck = currentTick;
 				maintenanceActions.push("assignment renewal");
@@ -563,7 +563,7 @@
 				});
 				
 				cleanupTable += "</table>";
-				console.log(`<font color=\"#FFA500\">[Factory]</font> <b>Cleanup Summary (Priority ${priority}):</b><br>${cleanupTable}`);
+				// console.log(`<font color=\"#FFA500\">[Factory]</font> <b>Cleanup Summary (Priority ${priority}):</b><br>${cleanupTable}`);
 			}
 			
 			if (roomsProcessed === 0) {
@@ -2312,22 +2312,44 @@
 			return `<font color=\"#00FFFF\">[Shard]</font> ISM debug info displayed`;
 		};
 		
-		help_shard.push("shard.colonize(targetShard, targetRoom, options)");
+		help_shard.push("shard.colonize(targetShard, targetRoom, layout, focusDefense, [listRoute], [sourceRoom])");
 		help_shard.push(" - Plan colonization on another shard");
-		help_shard.push(" - targetShard: Destination shard name (e.g., 'shard1')");
+		help_shard.push(" - targetShard: Destination shard name (e.g., 'shard2')");
 		help_shard.push(" - targetRoom: Destination room name (e.g., 'W1N1')");
-		help_shard.push(" - options: { sourceRoom: 'W5N5', layout: 'def_hor' }");
+		help_shard.push(" - layout: {origin: {x: baseX, y: baseY}, name: 'layoutName'}");
+		help_shard.push(" - focusDefense: Boolean, prioritize defensive structures");
+		help_shard.push(" - listRoute: Optional array of rooms for pathfinding");
+		help_shard.push(" - sourceRoom: Optional source room name (defaults to first available)");
+		help_shard.push(" - Example: shard.colonize('shard2', 'W1N1', {origin: {x: 25, y: 25}, name: 'def_hor_w'}, false, null, 'E52S21')");
 		
-		shard.colonize = function(targetShard, targetRoom, options = {}) {
-			if (!targetShard || !targetRoom) {
-				return `<font color=\"#FF0000\">[Shard]</font> Error: targetShard and targetRoom required`;
+		shard.colonize = function(targetShard, targetRoom, layout, focusDefense, listRoute, sourceRoom) {
+			if (!targetShard || !targetRoom || !layout) {
+				return `<font color=\"#FF0000\">[Shard]</font> Error: targetShard, targetRoom, and layout required`;
 			}
+			
+			// Validate layout format
+			if (!layout.origin || !layout.origin.x || !layout.origin.y || !layout.name) {
+				return `<font color=\"#FF0000\">[Shard]</font> Error: layout must be {origin: {x: number, y: number}, name: string}`;
+			}
+			
+			// Check if trying to colonize current shard
+			if (Game.shard && Game.shard.name === targetShard) {
+				return `<font color=\"#FFA500\">[Shard]</font> Already on ${targetShard}. Use regular empire.colonize() for same-shard colonization, or target a different shard.`;
+			}
+			
+			// Create options object compatible with existing system
+			let options = {
+				layout: layout,
+				focus_defense: focusDefense || false,
+				list_route: listRoute || null,
+				sourceRoom: sourceRoom || null
+			};
 			
 			let opId = ShardCoordinator.planColonization(targetShard, targetRoom, options);
 			if (opId) {
-				return `<font color=\"#00FF00\">[Shard]</font> Colonization operation ${opId} created`;
+				return `<font color=\"#00FF00\">[Shard]</font> Colonization operation ${opId} created for ${targetShard}/${targetRoom}`;
 			} else {
-				return `<font color=\"#FF0000\">[Shard]</font> Failed to create colonization operation`;
+				return `<font color=\"#FF0000\">[Shard]</font> Failed to create colonization operation. Check if portal route exists to ${targetShard}.`;
 			}
 		};
 		

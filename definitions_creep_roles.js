@@ -233,11 +233,14 @@
 	},
 
 	Worker: function (creep, isSafe) {
-		// Always prioritize picking up dropped commodities if there is free carry capacity
+		// Only pick up dropped commodities if storage is available and we have free carry capacity
 		// Exclude base resources (H, O, U, L, K, Z, X) and boosts that are typically used in labs
 		const excludedResources = ["energy", "H", "O", "U", "L", "K", "Z", "X"];
 		
-		if (_.sum(creep.carry) < creep.carryCapacity) {
+		// Check if storage exists before picking up non-energy resources
+		let hasStorage = creep.room.storage && creep.room.controller && creep.room.controller.my;
+		
+		if (hasStorage && _.sum(creep.carry) < creep.carryCapacity) {
 			let dropped = creep.room.find(FIND_DROPPED_RESOURCES, {
 				filter: r => !excludedResources.includes(r.resourceType) && r.amount > 50
 			});
@@ -258,7 +261,7 @@
 		let hostile = isSafe ? null
 			: _.head(creep.pos.findInRange(FIND_HOSTILE_CREEPS, 5, {
 				filter:
-					c => { return c.isHostile(); }
+					c => { return c.isHostile() && (c.hasPart("attack") || c.hasPart("ranged_attack")); }
 			}));
 
 		if (hostile == null) {
@@ -279,7 +282,11 @@
 					_.get(Memory, ["rooms", creep.room.name, "survey", "downgrade_critical"], false));
 				creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Container("energy",
 					_.get(Memory, ["rooms", creep.room.name, "survey", "downgrade_critical"], false));
-				creep.memory.task = creep.memory.task || creep.getTask_Pickup(); // Pick up any dropped resources (prioritizes commodities)
+				
+				// Only pick up non-energy resources if storage exists
+				if (hasStorage) {
+					creep.memory.task = creep.memory.task || creep.getTask_Pickup(); // Pick up any dropped resources (prioritizes commodities)
+				}
 				creep.memory.task = creep.memory.task || creep.getTask_Pickup("energy");
 				creep.memory.task = creep.memory.task || creep.getTask_Mine();
 				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
@@ -288,6 +295,24 @@
 				return;
 
 			} else if (creep.memory.state == "working") {
+				// Check if we have non-energy resources to deposit first
+				let hasNonEnergyResources = false;
+				for (let resourceType in creep.carry) {
+					if (resourceType !== "energy" && creep.carry[resourceType] > 0) {
+						hasNonEnergyResources = true;
+						break;
+					}
+				}
+				
+				if (hasNonEnergyResources && hasStorage) {
+					// Deposit non-energy resources to storage if available
+					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral");
+					if (creep.memory.task) {
+						creep.runTask(creep);
+						return;
+					}
+				}
+				
 				if (creep.carry["energy"] == 0) {
 					creep.memory.state = "refueling";
 					delete creep.memory.task;
@@ -326,15 +351,28 @@
 					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 				} else {
 					// Mid/late game: Standard priority order
-					// Only upgrade if room is below RCL 6, or if critical downgrade and no upgraders available
-					let shouldUpgrade = roomLevel < 6 || (isCriticalDowngrade && !hasUpgraders);
-
-					if (shouldUpgrade) {
-						creep.memory.task = creep.memory.task || creep.getTask_Upgrade(true);
-						creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
+					// Check for sign task first - it has high priority for room branding
+					let signTask = creep.getTask_Sign();
+					if (signTask && (!creep.memory.task || creep.memory.task.type === "upgrade")) {
+						// Sign task should override upgrade tasks when signs need updating
+						creep.memory.task = signTask;
 					}
 
-					creep.memory.task = creep.memory.task || creep.getTask_Sign();
+					// Only upgrade if no upgraders are available and either room is below RCL 6 or critical downgrade
+					let shouldUpgrade = !hasUpgraders && (roomLevel < 6 || isCriticalDowngrade);
+
+					if (shouldUpgrade && !creep.memory.task) {
+						creep.memory.task = creep.getTask_Upgrade(true);
+					}
+					if (shouldUpgrade && !creep.memory.task) {
+						creep.memory.task = creep.getTask_Upgrade(false);
+					}
+
+					// Fallback sign task check if no task assigned yet
+					if (!creep.memory.task) {
+						creep.memory.task = creep.getTask_Sign();
+					}
+					
 					creep.memory.task = creep.memory.task || creep.getTask_Repair(true);
 					creep.memory.task = creep.memory.task || creep.getTask_Build();
 					creep.memory.task = creep.memory.task || creep.getTask_Repair(false);
@@ -359,7 +397,7 @@
 		let hostile = isSafe ? null
 			: _.head(creep.pos.findInRange(FIND_HOSTILE_CREEPS, 6, {
 				filter:
-					c => { return c.isHostile(); }
+					c => { return c.isHostile() && (c.hasPart("attack") || c.hasPart("ranged_attack")); }
 			}));
 
 		if (hostile == null && canMine) {
@@ -448,9 +486,11 @@
 				// PRIORITY 5: Deposit to storage (if available)
 				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("energy");
 				
-				// PRIORITY 6: If nowhere to deposit energy, upgrade controller
-				// This accelerates RCL progression when energy backs up
-				if (creep.carry["energy"] > 0 && creep.hasPart("work") > 0)
+				// PRIORITY 6: If nowhere to deposit energy, upgrade controller (only if no upgraders)
+				// This accelerates RCL progression when energy backs up but only when no dedicated upgraders exist
+				let hasUpgraders = _.filter(Game.creeps, c => 
+					c.memory.role == "upgrader" && c.memory.room == creep.room.name).length > 0;
+				if (creep.carry["energy"] > 0 && creep.hasPart("work") > 0 && !hasUpgraders)
 					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
 				
 				// PRIORITY 7: Wait as last resort
@@ -583,7 +623,7 @@
 		let hostile = isSafe ? null
 			: _.head(creep.pos.findInRange(FIND_HOSTILE_CREEPS, 6, {
 				filter:
-					c => { return c.isHostile(); }
+					c => { return c.isHostile() && (c.hasPart("attack") || c.hasPart("ranged_attack")); }
 			}));
 
 		if (hostile == null) {
@@ -673,6 +713,18 @@
 	},
 
 	Colonizer: function (creep) {
+		// Check if this is a cross-shard colonization
+		if (creep.memory.shard_operation) {
+			this.CrossShardColonizer(creep);
+			return;
+		}
+		
+		// Debug: Check if this should be cross-shard but missing shard_operation
+		if (creep.name.includes('colonizer_shard1_E29S14')) {
+			console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name}: Running regular colonizer, shard_operation=${creep.memory.shard_operation}, memory:`, JSON.stringify(creep.memory));
+		}
+
+		// Regular same-shard colonization
 		if (this.moveToDestination(creep))
 			return;
 
@@ -694,6 +746,174 @@
 				creep.memory = {};
 			} else if (result != OK) {
 				console.log(`<font color=\"#F0FF00\">[Colonization]</font> ${creep.name} unable to colonize ${_.get(request, ["target"])}; error ${result}`);
+			}
+			return;
+		}
+	},
+
+	/**
+	 * Handle cross-shard colonization
+	 * @param {Creep} creep - The colonizer creep
+	 */
+	CrossShardColonizer: function (creep) {
+		// Debug logging for cross-shard colonizer activity
+		if (Game.time % 50 === 0) {
+			console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name}: Current shard=${Game.shard ? Game.shard.name : 'unknown'}, target=${creep.memory.dest_shard}, room=${creep.room.name}`);
+		}
+		
+		// First, travel to the target shard using the specific portal route
+		if (creep.memory.dest_shard && Game.shard && Game.shard.name !== creep.memory.dest_shard) {
+			// Use the specific portal route that was set during spawn
+			if (creep.memory.portal_route && creep.memory.portal_route.portal) {
+				let portal = creep.memory.portal_route.portal;
+				let portalRoom = portal.pos.roomName;
+				
+				if (creep.room.name === portalRoom) {
+					// We're in the portal room, find and use the portal
+					let portalStructure = creep.pos.findClosestByRange(FIND_STRUCTURES, {
+						filter: s => s.structureType === STRUCTURE_PORTAL &&
+						             s.pos.x === portal.pos.x &&
+						             s.pos.y === portal.pos.y
+					});
+					
+					if (portalStructure) {
+						if (creep.pos.isNearTo(portalStructure)) {
+							let result = creep.moveTo(portalStructure);
+							if (result === OK) {
+								console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name} entering portal to ${creep.memory.dest_shard}`);
+							}
+							return;
+						} else {
+							return creep.travel(portalStructure.pos);
+						}
+					}
+				} else {
+					// Travel to the portal room first using the provided list_route
+					return creep.travelToRoom(portalRoom, true);
+				}
+			} else {
+				// Fallback to generic travelToShard if no specific route
+				creep.travelToShard(creep.memory.dest_shard, creep.memory.room);
+				return;
+			}
+			return;
+		}
+
+		// We're on the correct shard, proceed with colonization
+		if (Game.time % 50 === 0) {
+			console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name}: On correct shard, current room=${creep.room.name}, target room=${creep.memory.room}`);
+			console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name}: Body parts: ${creep.body.map(p => p.type).join(',')}, CLAIM count: ${creep.getActiveBodyparts(CLAIM)}`);
+		}
+
+		// Ensure we have a target room set (fix for undefined memory issue)
+		if (!creep.memory.room) {
+			console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name}: Missing room memory, shard_operation=${creep.memory.shard_operation}`);
+			
+			if (creep.memory.shard_operation) {
+				// Try to recover from operation memory
+				let operations = _.get(Memory, ["shard", "operations", "colonizations"], []);
+				console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name}: Found ${operations.length} operations, looking for ${creep.memory.shard_operation}`);
+				
+				let operation = _.find(operations, op => op.id === creep.memory.shard_operation);
+				if (operation && operation.dest_room) {
+					creep.memory.room = operation.dest_room;
+					console.log(`<font color="#00FF00">[Colonizer]</font> ${creep.name}: Fixed missing room memory to ${creep.memory.room}`);
+				} else {
+					console.log(`<font color="#FF0000">[Colonizer]</font> ${creep.name}: Operation not found or missing dest_room`);
+				}
+			} else {
+				// Fallback: infer from creep name
+				let nameParts = creep.name.split('_');
+				if (nameParts.length >= 3) {
+					let inferredRoom = nameParts[2]; // Should be "E29S14" from "colonizer_shard1_E29S14_71062457"
+					creep.memory.room = inferredRoom;
+					console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name}: Inferred room from name: ${creep.memory.room}`);
+				}
+			}
+		}
+		
+		// Set up the route if we don't have one but have destination route information
+		if (!creep.memory.list_route && creep.memory.dest_list_route && Array.isArray(creep.memory.dest_list_route) && creep.memory.dest_list_route.length > 0) {
+			creep.memory.list_route = creep.memory.dest_list_route;
+			console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name}: Using provided destination route: ${creep.memory.list_route.join(' -> ')}`);
+		}
+		
+		// If we're in the portal destination room but need to go to a different target room, set up the route
+		if (creep.memory.portal_dest_room && 
+		    creep.room.name === creep.memory.portal_dest_room && 
+		    creep.memory.room !== creep.memory.portal_dest_room &&
+		    !creep.memory.list_route) {
+			
+			// Use provided destination route if available
+			if (creep.memory.dest_list_route && Array.isArray(creep.memory.dest_list_route) && creep.memory.dest_list_route.length > 0) {
+				creep.memory.list_route = creep.memory.dest_list_route;
+				console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name}: Using provided destination route: ${creep.memory.list_route.join(' -> ')}`);
+			} else {
+				// Fallback to auto-planning if no route provided
+				console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name}: Planning route from ${creep.memory.portal_dest_room} to ${creep.memory.room}`);
+				let destRoute = Game.map.findRoute(creep.memory.portal_dest_room, creep.memory.room);
+				if (destRoute !== ERR_NO_PATH && destRoute.length > 0) {
+					creep.memory.list_route = destRoute.map(segment => segment.room);
+					console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name}: Auto-planned route: ${creep.memory.list_route.join(' -> ')}`);
+				} else {
+					console.log(`<font color="#FF0000">[Colonizer]</font> ${creep.name}: No route found from ${creep.memory.portal_dest_room} to ${creep.memory.room}`);
+				}
+			}
+		}
+		
+		// Check if we need to move to the target room first
+		if (creep.memory.room && creep.room.name !== creep.memory.room) {
+			if (Game.time % 50 === 0) {
+				console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name}: Need to move from ${creep.room.name} to ${creep.memory.room}`);
+			}
+			
+			if (this.moveToDestination(creep)) {
+				return;
+			}
+		}
+
+		if (this.moveToDestination(creep)) {
+			if (Game.time % 50 === 0) {
+				console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name}: Moving to destination room`);
+			}
+			return;
+		}
+
+		// Check if we have a valid controller to claim
+		if (!creep.room.controller) {
+			console.log(`<font color="#FF0000">[CrossShardColonization]</font> ${creep.name}: No controller in room ${creep.room.name}`);
+			return;
+		}
+
+		let result = creep.claimController(creep.room.controller);
+		if (result == ERR_NOT_IN_RANGE) {
+			creep.moveTo(creep.room.controller)
+			return;
+		} else if (result == ERR_NO_BODYPART) {
+			console.log(`<font color="#FF0000">[CrossShardColonization]</font> ${creep.name}: No CLAIM body parts! Body: ${creep.body.map(p => p.type).join(',')}, CLAIM count: ${creep.getActiveBodyparts(CLAIM)}`);
+			return;		// Reservers and colonizers with no "claim" parts prevent null body spawn locking
+		} else {
+			// Successfully claimed controller
+			if (creep.room.controller.my) {
+				// Set up the new colony
+				_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "rooms"], [creep.memory.colony]);
+				_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "list_route"], creep.memory.list_route);
+				_.set(Memory, ["rooms", creep.room.name, "layout"], creep.memory.layout);
+				_.set(Memory, ["rooms", creep.room.name, "focus_defense"], creep.memory.focus_defense);
+				_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
+
+				// Update the cross-shard operation status
+				let operations = _.get(Memory, ["shard", "operations", "colonizations"], []);
+				let operation = _.find(operations, op => op.id === creep.memory.shard_operation);
+				if (operation) {
+					operation.status = "establishing";
+					console.log(`<font color="#00FF00">[ShardCoordinator]</font> Colonization ${operation.id}: Controller claimed, establishing colony`);
+				}
+
+				// Clear creep memory (colonization complete)
+				creep.memory = {};
+			} else if (result != OK) {
+				console.log(`<font color=\"#F0FF00\">[CrossShardColonization]</font> ${creep.name} unable to colonize ${creep.memory.room || creep.room.name}; error ${result}, controller owner: ${creep.room.controller.owner ? creep.room.controller.owner.username : 'neutral'}`);
 			}
 			return;
 		}
@@ -895,7 +1115,7 @@
 		let hostile = isSafe ? null
 			: _.head(creep.pos.findInRange(FIND_HOSTILE_CREEPS, 5, {
 				filter:
-					c => { return c.isHostile(); }
+					c => { return c.isHostile() && (c.hasPart("attack") || c.hasPart("ranged_attack")); }
 			}));
 
 		if (hostile == null) {

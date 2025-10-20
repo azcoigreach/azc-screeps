@@ -49,6 +49,17 @@ global.GlobalCreeps = {
 	runCreep: function(creep) {
 		let role = creep.memory.role;
 		
+		// Debug colonizer creeps specifically
+		if (creep.name.includes('colonizer_') && (!role)) {
+			console.log(`<font color="#FF0000">[GlobalCreeps]</font> Colonizer ${creep.name} has undefined role, memory:`, JSON.stringify(creep.memory));
+			// Try to infer role from name for colonizers
+			if (creep.name.includes('colonizer_')) {
+				creep.memory.role = 'colonizer';
+				role = 'colonizer';
+				console.log(`<font color="#00FF00">[GlobalCreeps]</font> Fixed colonizer ${creep.name} role to 'colonizer'`);
+			}
+		}
+		
 		switch (role) {
 			case "portal_scout":
 				Creep_Roles.Portal_Scout(creep);
@@ -87,10 +98,70 @@ global.GlobalCreeps = {
 				this.runResourceScout(creep);
 				break;
 				
+			case "colonizer":
+				// Global colonizers for cross-shard colonization
+				
+				// Check if this is a cross-shard colonizer missing shard_operation
+				if (creep.name.includes('colonizer_shard1_E29S14') && !creep.memory.shard_operation) {
+					console.log(`<font color="#FFA500">[GlobalCreeps]</font> Colonizer ${creep.name} missing shard_operation, attempting to restore`);
+					
+					// Parse the creep name to extract information
+					// Format: colonizer_shard1_E29S14_71062457
+					let nameParts = creep.name.split('_');
+					if (nameParts.length >= 3) {
+						let destShard = nameParts[1]; // "shard1"
+						let destRoom = nameParts[2];   // "E29S14"
+						
+						// Try to find the operation first
+						let operations = _.get(Memory, ["shard", "operations", "colonizations"], []);
+						let operation = _.find(operations, op => op.dest_room === destRoom && op.dest_shard === destShard);
+						
+						if (operation) {
+							// Restore from operation if available
+							creep.memory.shard_operation = operation.id;
+							creep.memory.room = operation.dest_room;
+							creep.memory.dest_shard = operation.dest_shard;
+							creep.memory.colony = operation.source_room;
+							creep.memory.layout = operation.layout;
+							creep.memory.focus_defense = operation.focus_defense;
+							creep.memory.list_route = operation.list_route;
+							creep.memory.portal_route = operation.portal_route;
+							creep.memory.portal_dest_room = operation.portal_dest_room;
+							creep.memory.dest_list_route = operation.dest_list_route;
+							
+							console.log(`<font color="#00FF00">[GlobalCreeps]</font> Restored shard_operation=${operation.id} for ${creep.name}`);
+						} else {
+							// Fallback: infer basic information from creep name
+							creep.memory.room = destRoom;
+							creep.memory.dest_shard = destShard;
+							creep.memory.shard_operation = `inferred_${Game.time}`; // Generate a unique ID
+							
+							// Set default values for other properties
+							creep.memory.colony = "E52S21"; // Default source room
+							creep.memory.layout = { origin: { x: 3, y: 20 }, name: 'def_hor_w' };
+							creep.memory.focus_defense = false;
+							
+							// Set the destination route based on the known route from operation data
+							// From E30S10 (portal dest) to E29S14 (target room)
+							if (destRoom === "E29S14" && destShard === "shard1") {
+								creep.memory.portal_dest_room = "E30S10";
+								creep.memory.dest_list_route = ["E30S10", "E30S11", "E30S12", "E30S13", "E30S14", "E29S14"];
+								console.log(`<font color="#FFA500">[GlobalCreeps]</font> Set dest_list_route for ${creep.name}: ${creep.memory.dest_list_route.join(' -> ')}`);
+							}
+							
+							console.log(`<font color="#FFA500">[GlobalCreeps]</font> Inferred memory for ${creep.name}: room=${destRoom}, shard=${destShard}`);
+						}
+					}
+				}
+				
+				console.log(`<font color="#00FFFF">[GlobalCreeps]</font> Running colonizer ${creep.name} on ${Game.shard.name}`);
+				Creep_Roles.Colonizer(creep);
+				break;
+				
 			default:
-				// Unknown role - log warning
+				// Unknown role - log warning with more detail
 				if (Game.time % 100 === 0) {
-					console.log(`<font color="#FFA500">[GlobalCreeps]</font> Unknown role for global creep ${creep.name}: ${role}`);
+					console.log(`<font color="#FFA500">[GlobalCreeps]</font> Unknown role for global creep ${creep.name}: ${role}, memory:`, JSON.stringify(creep.memory));
 				}
 				break;
 		}

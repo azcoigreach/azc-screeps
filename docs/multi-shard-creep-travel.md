@@ -749,20 +749,22 @@ if (creep.memory.room !== creep.room.name ||
 
 - [Multi-Shard Overview](multi-shard-overview.md) - Introduction to multi-shard
 - [Multi-Shard Monitoring](multi-shard-monitoring.md) - Status and monitoring
-- [Phase 3 Completion Summary](phase3-completion-summary.md) - Implementation details
+- [Multi-Shard Phase 4: Cross-Shard Colonization](multi-shard-phase4-colonization.md) - Colonization implementation
 - [Multi-Shard Roadmap](multi-shard-roadmap.md) - Overall project plan
 
 ---
 
 ## Next Phase
 
-**Phase 4: Colonization** will build on portal traversal to enable:
-- Automated colony establishment on other shards
-- Cross-shard spawn coordination
-- Resource supply lines
-- Bootstrap sequences
+**Phase 4: Colonization** is now complete! See [Multi-Shard Phase 4: Cross-Shard Colonization](multi-shard-phase4-colonization.md) for comprehensive documentation.
 
-See [Multi-Shard Roadmap](multi-shard-roadmap.md) for Phase 4 details.
+**Phase 5: Resources** will build on colonization to enable:
+- Automated resource trading between shards
+- Resource supply line management for cross-shard colonies
+- Factory and lab coordination across shards
+- Resource demand/supply balancing
+
+See [Multi-Shard Roadmap](multi-shard-roadmap.md) for Phase 5 details.
 
 ---
 

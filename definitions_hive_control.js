@@ -129,6 +129,9 @@
 		if (_.get(Memory, ["shard", "spawn_queue"]) == null) {
 			_.set(Memory, ["shard", "spawn_queue"], new Array());
 		}
+		if (_.get(Memory, ["shard", "spawn_requests"]) == null) {
+			_.set(Memory, ["shard", "spawn_requests"], new Array());
+		}
 		if (_.get(Memory, ["shard", "portals"]) == null) {
 			_.set(Memory, ["shard", "portals"], new Object());
 		}
@@ -161,7 +164,6 @@
 
 		for (let r in Game["rooms"])
 			_.set(Memory, ["rooms", r, "population"], null);
-		_.set(Memory, ["shard", "spawn_requests"], new Array());
 
 		Console.Init();
 
@@ -190,6 +192,9 @@
 			}
 		});
 
+		// Handle cross-shard bootstrap: spawn assist for rooms on other shards
+		this.runCrossShardBootstrap();
+
 		let mining = _.get(Memory, ["sites", "mining"]);
 		_.each(Object.keys(mining), req => {
 			if (_.get(mining, [req, "colony"]) != null)
@@ -197,9 +202,140 @@
 		});
 	},
 
+	// Handle cross-shard bootstrap - spawn creeps for rooms on other shards
+	runCrossShardBootstrap: function () {
+		// Only run during spawn pulse
+		if (!isPulse_Spawn()) return;
+
+		let currentShard = Game.shard ? Game.shard.name : null;
+		if (!currentShard) return; // Not on multi-shard server
+
+		// Check all memory rooms for cross-shard spawn assist
+		_.each(_.get(Memory, ["rooms"], {}), (roomMemory, roomName) => {
+			// Skip if room exists on this shard (handled by normal runColonies)
+			if (Game.rooms[roomName]) return;
+
+			// Check if this room has spawn assist configured and is for a different shard
+			let spawnAssistRooms = _.get(roomMemory, ["spawn_assist", "rooms"]);
+			if (!spawnAssistRooms || !Array.isArray(spawnAssistRooms)) return;
+
+			// Find the source room for spawn assist that's on this shard
+			let sourceRoom = _.find(spawnAssistRooms, sourceRoomName => {
+				return Game.rooms[sourceRoomName] && _.get(Game.rooms[sourceRoomName], ["controller", "my"]);
+			});
+
+			if (!sourceRoom) return; // No valid source room on this shard
+
+			// This is a cross-shard room that needs bootstrap from this shard
+			// Run population for this room but spawn creeps in the source room
+			this.runCrossShardPopulation(roomName, sourceRoom, roomMemory);
+		});
+	},
+
+	// Run population system for cross-shard room with spawn assist
+	runCrossShardPopulation: function (targetRoom, sourceRoom, roomMemory) {
+		// Get the spawn assist configuration
+		let spawnAssistRooms = _.get(roomMemory, ["spawn_assist", "rooms"], [sourceRoom]);
+		let spawnAssistRoute = _.get(roomMemory, ["spawn_assist", "list_route"]);
+
+		// Find creeps that serve this cross-shard room
+		let listCreeps = _.filter(Game.creeps, c => c.memory.room == targetRoom);
+
+		// Use the same population system as regular colonies but with cross-shard spawn assist
+		if (Game.rooms[sourceRoom] && Game.rooms[sourceRoom].controller && Game.rooms[sourceRoom].controller.my) {
+			// Call the population system with cross-shard spawn assist parameters
+			this.runPopulationForCrossShardRoom(targetRoom, sourceRoom, listCreeps, spawnAssistRooms, spawnAssistRoute);
+		}
+	},
+
+	// Modified population logic for cross-shard rooms
+	runPopulationForCrossShardRoom: function (rmColony, sourceRoom, listCreeps, listSpawnRooms, listSpawnRoute) {
+		let room_level = 1; // Default level for new cross-shard colonies
+		let is_safe = true; // Assume safe for new colonies
+		let hostiles = [];
+		let threat_level = 0; // NONE
+		let energy_level = 1; // NORMAL
+
+		let popActual = new Object();
+		_.each(listCreeps, c => {
+			let role = _.get(c, ["memory", "role"]);
+			if (role) {
+				popActual[role] = _.get(popActual, role, 0) + 1;
+			}
+		});
+
+		// Use assisted population for cross-shard colonies
+		let popTarget = _.cloneDeep(Population_Colony["Assisted"][room_level]);
+
+		// Spawn requests for cross-shard room - spawn in source room but serve target room
+		if (_.get(popActual, "worker", 0) < _.get(popTarget, ["worker", "amount"], 0)) {
+			let amount = _.get(popTarget, ["worker", "amount"], 0);
+			let actual = _.get(popActual, "worker", 0);
+			
+			for (let i = actual; i < amount; i++) {
+				Memory["shard"]["spawn_requests"].push({
+					room: sourceRoom, // Spawn in source room
+					listRooms: listSpawnRooms,
+					priority: 22, // Colony critical priority
+					level: _.get(popTarget, ["worker", "level"], 3),
+					scale: _.get(popTarget, ["worker", "scale"], true),
+					body: _.get(popTarget, ["worker", "body"], "worker"),
+					name: null,
+					args: { 
+						role: "worker", 
+						room: rmColony, // Serve the cross-shard room
+						colony: sourceRoom,
+						list_route: listSpawnRoute // Cross-shard travel route
+					}
+				});
+			}
+		}
+
+		// Add upgrader for RCL 5+ rooms
+		if (room_level >= 5 && _.get(popActual, "upgrader", 0) < _.get(popTarget, ["upgrader", "amount"], 0)) {
+			let amount = _.get(popTarget, ["upgrader", "amount"], 0);
+			let actual = _.get(popActual, "upgrader", 0);
+			
+			for (let i = actual; i < amount; i++) {
+				Memory["shard"]["spawn_requests"].push({
+					room: sourceRoom, // Spawn in source room
+					listRooms: listSpawnRooms,
+					priority: 22,
+					level: _.get(popTarget, ["upgrader", "level"], 5),
+					scale: _.get(popTarget, ["upgrader", "scale"], true),
+					body: _.get(popTarget, ["upgrader", "body"], "upgrader"),
+					name: null,
+					args: { 
+						role: "upgrader", 
+						room: rmColony, // Serve the cross-shard room
+						colony: sourceRoom,
+						list_route: listSpawnRoute // Cross-shard travel route
+					}
+				});
+			}
+		}
+
+		console.log(`<font color="#00FF00">[CrossShardBootstrap]</font> Population requests created for ${rmColony} from ${sourceRoom}`);
+	},
+
 	runColonizations: function () {
-		_.each(_.get(Memory, ["sites", "colonization"]), req => {
-			Sites.Colonization(_.get(req, "from"), _.get(req, "target"));
+		let colonizations = _.get(Memory, ["sites", "colonization"]);
+		_.each(Object.keys(colonizations), targetRoomName => {
+			let req = colonizations[targetRoomName];
+			let fromRoom = _.get(req, "from");
+			let targetRoom = _.get(req, "target");
+			
+			// Handle cases where target might be an object or string
+			let actualTargetRoom = targetRoom;
+			if (typeof targetRoom === "object" && targetRoom !== null) {
+				// If target is an object, use the room name from the key
+				actualTargetRoom = targetRoomName;
+			}
+			
+			// Only process if we have valid parameters
+			if (fromRoom && actualTargetRoom) {
+				Sites.Colonization(fromRoom, actualTargetRoom);
+			}
 		});
 	},
 
@@ -248,9 +384,38 @@
 
 		// Cache spawn requests to avoid repeated memory lookups
 		let spawnRequests = _.get(Memory, ["shard", "spawn_requests"]);
+		
+		// Debug: Always log spawn request status for cross-shard debugging
+		console.log(`<font color="#FF00FF">[Spawns]</font> processSpawnRequests: ${spawnRequests ? spawnRequests.length : 0} requests found`);
+		
 		if (!spawnRequests || spawnRequests.length == 0) {
+			console.log(`<font color="#FF00FF">[Spawns]</font> No spawn requests to process`);
 			Stats_CPU.End("Hive", "processSpawnRequests");
 			return;
+		}
+
+		// Debug: List all requests to see what's being processed
+		console.log(`<font color="#FF00FF">[Spawns]</font> Processing ${spawnRequests.length} total requests:`);
+		_.each(spawnRequests, (req, i) => {
+			let isCrossShard = req.args && req.args.shard_operation;
+			console.log(`<font color="#FF00FF">[Spawns]</font> ${i}: ${req.name} (${req.room}) priority:${req.priority} cross-shard:${isCrossShard}`);
+			if (isCrossShard) {
+				console.log(`<font color="#FF00FF">[Spawns]</font>   -> Operation: ${req.args.shard_operation}`);
+				console.log(`<font color="#FF00FF">[Spawns]</font>   -> Full args: ${JSON.stringify(req.args)}`);
+			}
+		});
+
+		// Additional debug: Check if there are any cross-shard requests in the raw data
+		let anyCrossShard = _.some(spawnRequests, req => req.args && req.args.shard_operation);
+		console.log(`<font color="#FF00FF">[Spawns]</font> Has any cross-shard requests: ${anyCrossShard}`);
+
+		// Debug: Check for cross-shard requests at the start
+		let crossShardRequests = _.filter(spawnRequests, req => req.args && req.args.shard_operation);
+		if (crossShardRequests.length > 0) {
+			console.log(`<font color="#FF00FF">[Spawns]</font> Found ${crossShardRequests.length} cross-shard requests at start of processing`);
+			_.each(crossShardRequests, req => {
+				console.log(`<font color="#FF00FF">[Spawns]</font> - ${req.name} for room ${req.room}, priority ${req.priority}`);
+			});
 		}
 
 		// Cache available spawns once
@@ -291,6 +456,12 @@
 			let request = roomRequests[0];
 			if (!request) continue;
 
+			// Debug cross-shard requests
+			if (request.args && request.args.shard_operation) {
+				console.log(`<font color="#FFA500">[Spawns]</font> Processing cross-shard request for room ${room}: ${request.name}, priority ${request.priority}`);
+				console.log(`<font color="#FFA500">[Spawns]</font> SpawnsByRoom[${room}]: ${spawnsByRoom[room] ? spawnsByRoom[room].length : 0} spawns available`);
+			}
+
 			// Find best spawn for this request
 			let bestSpawn = null;
 			let bestSpawnName = null;
@@ -313,7 +484,23 @@
 				}
 			}
 
-			if (!bestSpawn) continue;
+			if (!bestSpawn) {
+				// Debug why no spawn was found
+				if (request.args && request.args.shard_operation) {
+					console.log(`<font color="#FF0000">[Spawns]</font> Cross-shard request ${request.name}: No spawn found for room ${room}. SpawnsByRoom[${room}]: ${spawnsByRoom[room] ? spawnsByRoom[room].length : 0}, listRooms: ${request.listRooms}`);
+				} else {
+					// For regular requests to rooms that don't exist on this shard (like E29S14 when we're on shard0),
+					// remove the request to prevent infinite accumulation
+					if (!Game.rooms[room]) {
+						console.log(`<font color="#FFA500">[Spawns]</font> Removing spawn request for ${room} - room not visible on this shard`);
+						let requestIndex = spawnRequests.indexOf(request);
+						if (requestIndex > -1) {
+							spawnRequests.splice(requestIndex, 1);
+						}
+					}
+				}
+				continue;
+			}
 
 			// Calculate population ratio once
 			let populationActual = _.get(Memory, ["rooms", room, "population", "actual"], 0);
@@ -360,9 +547,41 @@
 				}).sort(s => { return s.pos.getRangeTo(bestSpawn.room.storage); });
 			}
 
+			// Debug cross-shard spawn attempts
+			if (request.args && request.args.shard_operation) {
+				console.log(`<font color="#FFA500">[Spawns]</font> Attempting cross-shard spawn: ${name} for operation ${request.args.shard_operation}`);
+				console.log(`<font color="#FFA500">[Spawns]</font> Body: ${body.length} parts (${Creep_Body.getBodyCost(body)} energy), Available: ${bestSpawn.room.energyAvailable}`);
+			}
+
 			let result = energies == null
 				? bestSpawn.spawnCreep(body, name, { memory: request.args })
 				: bestSpawn.spawnCreep(body, name, { memory: request.args, energyStructures: energies });
+
+			// Remove request based on spawn result
+			if (request.args && request.args.shard_operation) {
+				console.log(`<font color="#FF0000">[Spawns]</font> Cross-shard request ${request.name}: spawn result=${result}`);
+			}
+			
+			let requestIndex = spawnRequests.indexOf(request);
+			if (requestIndex > -1) {
+				if (request.args && request.args.shard_operation) {
+					// For cross-shard requests, only remove on success or permanent failure
+					if (result == OK) {
+						spawnRequests.splice(requestIndex, 1);
+						console.log(`<font color="#00FF00">[Spawns]</font> Cross-shard spawn succeeded, removing request`);
+					} else if (result == ERR_NOT_ENOUGH_ENERGY) {
+						// Keep the request for retry when energy becomes available
+						console.log(`<font color="#FF0000">[Spawns]</font> Cross-shard spawn failed: not enough energy (${bestSpawn.room.energyAvailable}/${Creep_Body.getBodyCost(body)}), keeping for retry`);
+					} else {
+						// For other errors (name exists, invalid args, etc.), remove the request
+						console.log(`<font color="#FFA500">[Spawns]</font> Cross-shard spawn failed with error ${result}, removing request`);
+						spawnRequests.splice(requestIndex, 1);
+					}
+				} else {
+					// Regular requests: always remove after attempt
+					spawnRequests.splice(requestIndex, 1);
+				}
+			}
 
 			if (result == OK) {
 				console.log(`<font color=\"#19C800\">[Spawns]</font> Spawning `
@@ -384,6 +603,22 @@
 					if (roomIndex > -1) {
 						roomSpawns.splice(roomIndex, 1);
 					}
+				}
+			} else {
+				// Log spawn failure with detailed error information
+				let errorMsg = "";
+				if (result == ERR_NOT_ENOUGH_ENERGY) errorMsg = "not enough energy";
+				else if (result == ERR_NAME_EXISTS) errorMsg = "name already exists";
+				else if (result == ERR_BUSY) errorMsg = "spawn busy";
+				else if (result == ERR_INVALID_ARGS) errorMsg = "invalid arguments";
+				else errorMsg = `error code ${result}`;
+
+				console.log(`<font color=\"#FF0000\">[Spawns]</font> Failed to spawn ${name} in ${bestSpawn.room.name} (${errorMsg}): `
+					+ `${level} / ${request.level} ${request.args["role"]} (${request.body})`);
+
+				// For cross-shard requests, also log additional context
+				if (request.args && request.args.shard_operation) {
+					console.log(`<font color=\"#FFA500\">[Spawns]</font> Cross-shard spawn failure for operation ${request.args.shard_operation}`);
 				}
 			}
 		}

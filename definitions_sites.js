@@ -2563,6 +2563,22 @@
 		let Colonization = {
 
 			Run: function (rmColony, rmTarget) {
+				// Validate parameters first
+				if (!rmColony || !rmTarget || rmColony === undefined || rmTarget === undefined) {
+					console.log(`<font color="#FF0000">[Colonization]</font> Invalid parameters: rmColony=${rmColony}, rmTarget=${rmTarget}`);
+					return;
+				}
+
+				// Safety check: prevent a room from trying to colonize itself
+				if (rmColony === rmTarget) {
+					console.log(`<font color="#FF0000">[Colonization]</font> Preventing self-colonization: ${rmColony} trying to colonize itself`);
+					// Clean up the invalid colonization site
+					if (_.get(Memory, ["sites", "colonization", rmTarget])) {
+						delete Memory.sites.colonization[rmTarget];
+						console.log(`<font color="#FFA500">[Colonization]</font> Removed invalid colonization site for ${rmTarget}`);
+					}
+					return;
+				}
 
 				controller = _.get(Game, ["rooms", rmColony, "controller"]);
 				if (controller == null || !_.get(controller, "my") || _.get(controller, "level") < 3)

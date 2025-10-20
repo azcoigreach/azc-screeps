@@ -836,9 +836,19 @@
 
 	getBody_Upgrader: function (level) {
 		switch (level) {
-			case 1: case 2: case 3: case 4: case 5:
+			case 1: case 2: case 3:
 				return [ // Prevent spawn locking with null body
 					MOVE];
+			case 4:
+				return [ // 450 energy, 2x WORK, 2x CARRY, 3x MOVE
+					WORK, WORK,
+					CARRY, CARRY,
+					MOVE, MOVE, MOVE];
+			case 5:
+				return [ // 550 energy, 3x WORK, 2x CARRY, 3x MOVE
+					WORK, WORK, WORK,
+					CARRY, CARRY,
+					MOVE, MOVE, MOVE];
 			case 6:
 				return [ // 650 energy, 4x WORK, 1x CARRY, 2x MOVE
 					WORK, WORK, WORK, WORK,

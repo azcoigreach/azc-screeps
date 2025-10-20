@@ -117,7 +117,11 @@ module.exports.loop = function () {
 
 	// Run factory maintenance
 	if (hasCPU()) {
-		factories.maintenance();
+		let maintenanceResult = factories.maintenance();
+		// Uncomment the following lines if factory maintenance debug messages are needed
+		// if (maintenanceResult && maintenanceResult.length > 0) {
+		// 	console.log(maintenanceResult);
+		// }
 	}
 
 	// Scan for portals (long pulse)
@@ -128,6 +132,18 @@ module.exports.loop = function () {
 	// Monitor cross-shard operations (mid pulse)
 	if (hasCPU() && isPulse_Mid()) {
 		ShardCoordinator.monitorOperations();
+	}
+	
+	// Monitor colonization spawning more frequently when active operations exist (short pulse = more frequent than mid pulse)
+	if (hasCPU() && isPulse_Short()) {
+		let activeColonizations = Memory.shard && Memory.shard.operations && Memory.shard.operations.colonizations ? 
+			Memory.shard.operations.colonizations.filter(op => op.status === "spawning") : [];
+		if (activeColonizations.length > 0) {
+			// Process spawning for active colonization operations
+			activeColonizations.forEach(op => {
+				ShardCoordinator.processColonizationSpawning(op);
+			});
+		}
 	}
 
 	Control.endMemory();
