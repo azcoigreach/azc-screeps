@@ -865,10 +865,6 @@
 			return;
 		}
 		
-		// Debug: Check if this should be cross-shard but missing shard_operation
-		if (creep.name.includes('colonizer_shard1_E29S14')) {
-			console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name}: Running regular colonizer, shard_operation=${creep.memory.shard_operation}, memory:`, JSON.stringify(creep.memory));
-		}
 
 		// Regular same-shard colonization
 		if (this.moveToDestination(creep))
@@ -946,26 +942,15 @@
 		}
 
 		// We're on the correct shard, proceed with colonization
-		if (Game.time % 50 === 0) {
-			console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name}: On correct shard, current room=${creep.room.name}, target room=${creep.memory.room}`);
-			console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name}: Body parts: ${creep.body.map(p => p.type).join(',')}, CLAIM count: ${creep.getActiveBodyparts(CLAIM)}`);
-		}
 
 		// Ensure we have a target room set (fix for undefined memory issue)
 		if (!creep.memory.room) {
-			console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name}: Missing room memory, shard_operation=${creep.memory.shard_operation}`);
-			
 			if (creep.memory.shard_operation) {
 				// Try to recover from operation memory
 				let operations = _.get(Memory, ["shard", "operations", "colonizations"], []);
-				console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name}: Found ${operations.length} operations, looking for ${creep.memory.shard_operation}`);
-				
 				let operation = _.find(operations, op => op.id === creep.memory.shard_operation);
 				if (operation && operation.dest_room) {
 					creep.memory.room = operation.dest_room;
-					console.log(`<font color="#00FF00">[Colonizer]</font> ${creep.name}: Fixed missing room memory to ${creep.memory.room}`);
-				} else {
-					console.log(`<font color="#FF0000">[Colonizer]</font> ${creep.name}: Operation not found or missing dest_room`);
 				}
 			} else {
 				// Fallback: infer from creep name
@@ -973,7 +958,6 @@
 				if (nameParts.length >= 3) {
 					let inferredRoom = nameParts[2]; // Should be "E29S14" from "colonizer_shard1_E29S14_71062457"
 					creep.memory.room = inferredRoom;
-					console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name}: Inferred room from name: ${creep.memory.room}`);
 				}
 			}
 		}
@@ -981,7 +965,6 @@
 		// Set up the route if we don't have one but have destination route information
 		if (!creep.memory.list_route && creep.memory.dest_list_route && Array.isArray(creep.memory.dest_list_route) && creep.memory.dest_list_route.length > 0) {
 			creep.memory.list_route = creep.memory.dest_list_route;
-			console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name}: Using provided destination route: ${creep.memory.list_route.join(' -> ')}`);
 		}
 		
 		// If we're in the portal destination room but need to go to a different target room, set up the route
@@ -993,35 +976,23 @@
 			// Use provided destination route if available
 			if (creep.memory.dest_list_route && Array.isArray(creep.memory.dest_list_route) && creep.memory.dest_list_route.length > 0) {
 				creep.memory.list_route = creep.memory.dest_list_route;
-				console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name}: Using provided destination route: ${creep.memory.list_route.join(' -> ')}`);
 			} else {
 				// Fallback to auto-planning if no route provided
-				console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name}: Planning route from ${creep.memory.portal_dest_room} to ${creep.memory.room}`);
 				let destRoute = Game.map.findRoute(creep.memory.portal_dest_room, creep.memory.room);
 				if (destRoute !== ERR_NO_PATH && destRoute.length > 0) {
 					creep.memory.list_route = destRoute.map(segment => segment.room);
-					console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name}: Auto-planned route: ${creep.memory.list_route.join(' -> ')}`);
-				} else {
-					console.log(`<font color="#FF0000">[Colonizer]</font> ${creep.name}: No route found from ${creep.memory.portal_dest_room} to ${creep.memory.room}`);
 				}
 			}
 		}
 		
 		// Check if we need to move to the target room first
 		if (creep.memory.room && creep.room.name !== creep.memory.room) {
-			if (Game.time % 50 === 0) {
-				console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name}: Need to move from ${creep.room.name} to ${creep.memory.room}`);
-			}
-			
 			if (this.moveToDestination(creep)) {
 				return;
 			}
 		}
 
 		if (this.moveToDestination(creep)) {
-			if (Game.time % 50 === 0) {
-				console.log(`<font color="#00FFFF">[Colonizer]</font> ${creep.name}: Moving to destination room`);
-			}
 			return;
 		}
 

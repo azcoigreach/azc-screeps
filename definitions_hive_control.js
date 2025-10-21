@@ -468,49 +468,9 @@
 		// Cache spawn requests to avoid repeated memory lookups
 		let spawnRequests = _.get(Memory, ["shard", "spawn_requests"]);
 		
-		// Debug: Always log spawn request status for cross-shard debugging
-		console.log(`<font color="#FF00FF">[Spawns]</font> processSpawnRequests: ${spawnRequests ? spawnRequests.length : 0} requests found`);
-		
 		if (!spawnRequests || spawnRequests.length == 0) {
-			console.log(`<font color="#FF00FF">[Spawns]</font> No spawn requests to process`);
 			Stats_CPU.End("Hive", "processSpawnRequests");
 			return;
-		}
-
-		// Debug: List all requests to see what's being processed
-		console.log(`<font color="#FF00FF">[Spawns]</font> Processing ${spawnRequests.length} total requests:`);
-		_.each(spawnRequests, (req, i) => {
-			let isCrossShard = req.args && (req.args.shard_operation || req.args.cross_shard_assist);
-			let requestType = req.args && req.args.shard_operation ? "colonization" : 
-			                  req.args && req.args.cross_shard_assist ? "spawn_assist" : "normal";
-			// Show creep role/type instead of null name
-			let creepId = req.name || (req.args && req.args.role) || "unknown";
-			console.log(`<font color="#FF00FF">[Spawns]</font> ${i}: ${creepId} (${req.room}) priority:${req.priority} cross-shard:${isCrossShard} type:${requestType}`);
-			if (isCrossShard) {
-				if (req.args.shard_operation) {
-					console.log(`<font color="#FF00FF">[Spawns]</font>   -> Operation: ${req.args.shard_operation}`);
-				}
-				if (req.args.cross_shard_assist) {
-					console.log(`<font color="#FF00FF">[Spawns]</font>   -> Target room: ${req.args.room} from ${req.room}`);
-				}
-				console.log(`<font color="#FF00FF">[Spawns]</font>   -> Full args: ${JSON.stringify(req.args)}`);
-			}
-		});
-
-		// Additional debug: Check if there are any cross-shard requests in the raw data
-		let anyCrossShard = _.some(spawnRequests, req => req.args && (req.args.shard_operation || req.args.cross_shard_assist));
-		console.log(`<font color="#FF00FF">[Spawns]</font> Has any cross-shard requests: ${anyCrossShard}`);
-
-		// Debug: Check for cross-shard requests at the start
-		let crossShardRequests = _.filter(spawnRequests, req => req.args && (req.args.shard_operation || req.args.cross_shard_assist));
-		if (crossShardRequests.length > 0) {
-			console.log(`<font color="#FF00FF">[Spawns]</font> Found ${crossShardRequests.length} cross-shard requests at start of processing`);
-			_.each(crossShardRequests, req => {
-				let requestType = req.args.shard_operation ? "colonization" : "spawn_assist";
-				// Show creep role/type instead of null name
-				let creepId = req.name || (req.args && req.args.role) || "unknown";
-				console.log(`<font color="#FF00FF">[Spawns]</font> - ${creepId} for room ${req.room}, priority ${req.priority}, type: ${requestType}`);
-			});
 		}
 
 		// Cache available spawns once
@@ -551,17 +511,6 @@
 			let request = roomRequests[0];
 			if (!request) continue;
 
-			// Debug cross-shard requests
-			if (request.args && (request.args.shard_operation || request.args.cross_shard_assist)) {
-				let requestType = request.args.shard_operation ? "colonization" : "spawn_assist";
-				// Show creep role/type instead of null name
-				let creepId = request.name || (request.args && request.args.role) || "unknown";
-				console.log(`<font color="#FFA500">[Spawns]</font> Processing cross-shard ${requestType} request for room ${room}: ${creepId}, priority ${request.priority}`);
-				console.log(`<font color="#FFA500">[Spawns]</font> SpawnsByRoom[${room}]: ${spawnsByRoom[room] ? spawnsByRoom[room].length : 0} spawns available`);
-				if (request.args.cross_shard_assist) {
-					console.log(`<font color="#FFA500">[Spawns]</font> Cross-shard assist: spawning in ${room} for target ${request.args.room}`);
-				}
-			}
 
 			// Find best spawn for this request
 			let bestSpawn = null;
@@ -586,17 +535,10 @@
 			}
 
 			if (!bestSpawn) {
-				// Debug why no spawn was found
-				if (request.args && (request.args.shard_operation || request.args.cross_shard_assist)) {
-					let requestType = request.args.shard_operation ? "colonization" : "spawn_assist";
-					// Show creep role/type instead of null name
-					let creepId = request.name || (request.args && request.args.role) || "unknown";
-					console.log(`<font color="#FF0000">[Spawns]</font> Cross-shard ${requestType} request ${creepId}: No spawn found for room ${room}. SpawnsByRoom[${room}]: ${spawnsByRoom[room] ? spawnsByRoom[room].length : 0}, listRooms: ${request.listRooms}`);
-				} else {
-					// For regular requests to rooms that don't exist on this shard (like E29S14 when we're on shard0),
-					// remove the request to prevent infinite accumulation
+				// For regular requests to rooms that don't exist on this shard (like E29S14 when we're on shard0),
+				// remove the request to prevent infinite accumulation
+				if (!request.args || (!request.args.shard_operation && !request.args.cross_shard_assist)) {
 					if (!Game.rooms[room]) {
-						console.log(`<font color="#FFA500">[Spawns]</font> Removing spawn request for ${room} - room not visible on this shard`);
 						let requestIndex = spawnRequests.indexOf(request);
 						if (requestIndex > -1) {
 							spawnRequests.splice(requestIndex, 1);
@@ -651,27 +593,12 @@
 				}).sort(s => { return s.pos.getRangeTo(bestSpawn.room.storage); });
 			}
 
-			// Debug cross-shard spawn attempts
-			if (request.args && (request.args.shard_operation || request.args.cross_shard_assist)) {
-				if (request.args.shard_operation) {
-					console.log(`<font color="#FFA500">[Spawns]</font> Attempting cross-shard colonization spawn: ${name} for operation ${request.args.shard_operation}`);
-				} else if (request.args.cross_shard_assist) {
-					console.log(`<font color="#FFA500">[Spawns]</font> Attempting cross-shard assist spawn: ${name} for target ${request.args.room}`);
-				}
-				console.log(`<font color="#FFA500">[Spawns]</font> Body: ${body.length} parts (${Creep_Body.getBodyCost(body)} energy), Available: ${bestSpawn.room.energyAvailable}`);
-			}
 
 			let result = energies == null
 				? bestSpawn.spawnCreep(body, name, { memory: request.args })
 				: bestSpawn.spawnCreep(body, name, { memory: request.args, energyStructures: energies });
 
 			// Remove request based on spawn result
-			if (request.args && (request.args.shard_operation || request.args.cross_shard_assist)) {
-				let requestType = request.args.shard_operation ? "colonization" : "spawn_assist";
-				// Show creep role/type instead of null name
-				let creepId = request.name || (request.args && request.args.role) || "unknown";
-				console.log(`<font color="#FF0000">[Spawns]</font> Cross-shard ${requestType} request ${creepId}: spawn result=${result}`);
-			}
 			
 			let requestIndex = spawnRequests.indexOf(request);
 			if (requestIndex > -1) {
@@ -679,15 +606,8 @@
 					// For cross-shard requests, only remove on success or permanent failure
 					if (result == OK) {
 						spawnRequests.splice(requestIndex, 1);
-						let requestType = request.args.shard_operation ? "colonization" : "spawn_assist";
-						console.log(`<font color="#00FF00">[Spawns]</font> Cross-shard ${requestType} spawn succeeded, removing request`);
-					} else if (result == ERR_NOT_ENOUGH_ENERGY) {
-						// Keep the request for retry when energy becomes available
-						console.log(`<font color="#FF0000">[Spawns]</font> Cross-shard spawn failed: not enough energy (${bestSpawn.room.energyAvailable}/${Creep_Body.getBodyCost(body)}), keeping for retry`);
-					} else {
-						// For other errors (name exists, invalid args, etc.), remove the request
-						let requestType = request.args.shard_operation ? "colonization" : "spawn_assist";
-						console.log(`<font color="#FFA500">[Spawns]</font> Cross-shard ${requestType} spawn failed with error ${result}, removing request`);
+					} else if (result != ERR_NOT_ENOUGH_ENERGY) {
+						// For errors other than insufficient energy, remove the request
 						spawnRequests.splice(requestIndex, 1);
 					}
 				} else {

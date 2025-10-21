@@ -295,10 +295,6 @@ global.ShardCoordinator = {
 			}
 		});
 
-		// Debug: Verify the request was actually added to memory
-		let verifyRequests = Memory.shard.spawn_requests || [];
-		let verifyCrossShard = _.filter(verifyRequests, req => req.args && req.args.shard_operation);
-		console.log(`<font color="#00FF00">[ShardCoordinator]</font> Verified: ${verifyRequests.length} total requests, ${verifyCrossShard.length} cross-shard in memory`);
 
 		// Track this creep in the operation
 		if (!operation.creeps) {
@@ -307,11 +303,6 @@ global.ShardCoordinator = {
 		operation.creeps.push(creepName);
 
 		console.log(`<font color="#00FF00">[ShardCoordinator]</font> Colonization ${operation.id}: Spawn request created for colonizer ${creepName} (level ${colonizerLevel})`);
-		
-		// Debug: Immediately check if the request is in the array
-		let currentRequests = Memory.shard.spawn_requests || [];
-		let crossShardCount = _.filter(currentRequests, req => req.args && req.args.shard_operation).length;
-		console.log(`<font color="#00FF00">[ShardCoordinator]</font> Total spawn requests now: ${currentRequests.length}, cross-shard: ${crossShardCount}`);
 	},
 
 	/**
