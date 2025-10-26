@@ -199,8 +199,8 @@
 						}
 					}
 					
-					// Improved task priority for efficiency
-					if (shouldMine && currentCarry < carryCapacity * CARRY_CAPACITY_THRESHOLD) {
+					// Improved task priority for efficiency (mine if less than 80% capacity)
+					if (shouldMine && currentCarry < carryCapacity * 0.8) {
 						creep.memory.task = creep.memory.task || creep.getTask_Mine();
 					}
 					creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Source_Container();
