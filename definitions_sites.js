@@ -607,12 +607,15 @@
 					_.set(Memory, ["sites", "mining", rmHarvest, "survey"], surveyData);
 				}
 				
-				// Only calculate minerals and sources if not already cached
-				if (visible && surveyData.has_minerals === undefined) {
-					let minerals = Game.rooms[rmHarvest].find(FIND_MINERALS);
-					surveyData.has_minerals = minerals.some(m => m.mineralAmount > 0);
-					surveyData.source_amount = Game.rooms[rmHarvest].findSources().length;
-				} else if (!visible) {
+				// Calculate minerals and sources - check mineral depletion periodically (every 100 ticks)
+				// to prevent spawning extractors when mineral is depleted
+				if (visible) {
+					if (surveyData.has_minerals === undefined || Game.time % 100 === 0) {
+						let minerals = Game.rooms[rmHarvest].find(FIND_MINERALS);
+						surveyData.has_minerals = minerals.some(m => m.mineralAmount > 0);
+						surveyData.source_amount = Game.rooms[rmHarvest].findSources().length;
+					}
+				} else {
 					surveyData.has_minerals = false;
 					surveyData.source_amount = 0;
 				}

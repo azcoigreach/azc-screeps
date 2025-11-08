@@ -1008,6 +1008,7 @@ Creep.prototype.getTask_Extract = function getTask_Extract() {
 	if (!_.get(Memory, ["rooms", this.room.name, "defense", "is_safe"], true))
 		return;
 
+	// First try to find a mineral with extractor that has mineralAmount > 0
 	let mineral = _.head(_.filter(this.room.find(FIND_MINERALS), m => {
 		return m.mineralAmount > 0
 			&& _.some(m.pos.lookFor("structure"), s => { return s.structureType == "extractor"; });
@@ -1018,6 +1019,22 @@ Creep.prototype.getTask_Extract = function getTask_Extract() {
 			type: "harvest",
 			resource: "mineral",
 			id: mineral.id,
+			timer: 9999
+		};
+	}
+
+	// If no active mineral found, find any mineral with extractor (even if depleted)
+	// This ensures extractors move to the mineral location to die there instead of staying at spawn
+	mineral = _.head(_.filter(this.room.find(FIND_MINERALS), m => {
+		return _.some(m.pos.lookFor("structure"), s => { return s.structureType == "extractor"; });
+	}));
+
+	if (mineral != null) {
+		// Return a travel task to move to the mineral location even if it's empty
+		// This prevents extractors from hanging out at spawn and being kept alive
+		return {
+			type: "travel",
+			destination: mineral.pos,
 			timer: 9999
 		};
 	}

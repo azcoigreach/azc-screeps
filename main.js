@@ -92,7 +92,7 @@ module.exports.loop = function () {
 
 	// Run factory maintenance
 	if (hasCPU()) {
-		factories.maintenance();
+		factories.maintenance(false);
 	}
 
 	Control.endMemory();

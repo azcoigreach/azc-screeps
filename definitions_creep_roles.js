@@ -410,6 +410,12 @@
 					if (!creep.memory.task && this.goToRoom(creep, creep.memory.room, true))
 						return;
 
+					// If we're in the harvest room and have a stale "wait" task, clear it to force re-evaluation
+					// This ensures extractors move to mineral location even when mineral is depleted
+					if (creep.room.name == creep.memory.room && creep.memory.task && creep.memory.task.type == "wait") {
+						delete creep.memory.task;
+					}
+
 					creep.memory.task = creep.memory.task || creep.getTask_Extract();
 					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 

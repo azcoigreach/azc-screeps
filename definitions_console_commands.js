@@ -146,6 +146,87 @@
 			return `<font color=\"#D3FFA3\">[Console]</font> Blueprint placing defensive walls and ramparts: ${_.get(Memory, ["rooms", rmName, "layout", "place_defenses"], true)}`;
 		};
 
+		help_blueprint.push("blueprint.diagnose(roomName)");
+
+		blueprint.diagnose = function (roomName) {
+			let room = Game.rooms[roomName];
+			if (!room || !room.controller || !room.controller.my) {
+				return `<font color=\"#FF6B6B\">[Console]</font> Room ${roomName} not found or not owned.`;
+			}
+
+			let hasLayout = _.get(Memory, ["rooms", roomName, "layout"]) != null;
+			let hasOrigin = _.get(Memory, ["rooms", roomName, "layout", "origin"]) != null;
+			let layoutName = _.get(Memory, ["rooms", roomName, "layout", "name"]);
+			let origin = _.get(Memory, ["rooms", roomName, "layout", "origin"]);
+			let hasColonizationSite = _.get(Memory, ["sites", "colonization", roomName]) != null;
+			let colonizationLayout = _.get(Memory, ["sites", "colonization", roomName, "layout"]);
+			let spawns = room.find(FIND_MY_SPAWNS);
+			let constructionSites = room.find(FIND_MY_CONSTRUCTION_SITES).length;
+			let sitesPerRoom = room.controller.level <= 4 ? 15 : 10;
+
+			let output = [];
+			output.push(`<font color=\"#D3FFA3\">[Blueprint]</font> Diagnostics for ${roomName}:`);
+			output.push(`  Controller Level: ${room.controller.level}`);
+			output.push(`  Has Layout: ${hasLayout}`);
+			output.push(`  Has Origin: ${hasOrigin}`);
+			output.push(`  Layout Name: ${layoutName || "N/A"}`);
+			output.push(`  Origin: ${origin ? `(${origin.x}, ${origin.y})` : "N/A"}`);
+			output.push(`  Construction Sites: ${constructionSites}/${sitesPerRoom}`);
+			output.push(`  Spawns: ${spawns.length}`);
+			
+			if (spawns.length > 0) {
+				let topLeftSpawn = _.head(_.sortBy(spawns, s => s.pos.y * 50 + s.pos.x));
+				output.push(`  Top-left spawn: (${topLeftSpawn.pos.x}, ${topLeftSpawn.pos.y})`);
+			}
+
+			if (hasColonizationSite) {
+				output.push(`  Colonization Site: Found (layout may be recoverable)`);
+				if (colonizationLayout) {
+					let originX = (colonizationLayout.origin && colonizationLayout.origin.x) ? colonizationLayout.origin.x : "?";
+					let originY = (colonizationLayout.origin && colonizationLayout.origin.y) ? colonizationLayout.origin.y : "?";
+					output.push(`  Colonization Layout: ${colonizationLayout.name || "N/A"} at (${originX}, ${originY})`);
+				}
+			}
+
+			if (!hasOrigin) {
+				output.push(`<font color=\"#FF6B6B\">[Blueprint]</font> ISSUE: No layout origin set!`);
+				if (hasColonizationSite && colonizationLayout) {
+					output.push(`  Solution: Run blueprint.recover_layout("${roomName}") to recover from colonization site`);
+				} else if (spawns.length > 0) {
+					let topLeftSpawn = _.head(_.sortBy(spawns, s => s.pos.y * 50 + s.pos.x));
+					output.push(`  Solution: Run blueprint.set_layout("${roomName}", ${topLeftSpawn.pos.x}, ${topLeftSpawn.pos.y}, "def_hor")`);
+				} else {
+					output.push(`  Solution: Set layout manually with blueprint.set_layout("${roomName}", x, y, "def_hor")`);
+				}
+			} else if (constructionSites >= sitesPerRoom) {
+				output.push(`  Status: At construction site limit (${sitesPerRoom})`);
+			} else {
+				output.push(`  Status: Blueprint should be running`);
+			}
+
+			return output.join("\n");
+		};
+
+		help_blueprint.push("blueprint.recover_layout(roomName)");
+
+		blueprint.recover_layout = function (roomName) {
+			let room = Game.rooms[roomName];
+			if (!room || !room.controller || !room.controller.my) {
+				return `<font color=\"#FF6B6B\">[Console]</font> Room ${roomName} not found or not owned.`;
+			}
+
+			let colonizationSite = _.get(Memory, ["sites", "colonization", roomName]);
+			if (!colonizationSite || !colonizationSite.layout) {
+				return `<font color=\"#FF6B6B\">[Console]</font> No colonization site found for ${roomName} with layout data.`;
+			}
+
+			let layout = colonizationSite.layout;
+			_.set(Memory, ["rooms", roomName, "layout"], layout);
+			_.set(Memory, ["hive", "pulses", "blueprint", "request"], roomName);
+			
+			return `<font color=\"#D3FFA3\">[Console]</font> Recovered layout for ${roomName}: ${layout.name} at (${layout.origin.x}, ${layout.origin.y}). Blueprint requested for next tick.`;
+		};
+
 
 		factories = new Object();
 		help_factories.push("factories.set_production(commodity, amount, priority)");
@@ -317,8 +398,10 @@
 			return `<font color=\"#FFA500\">[Factory]</font> Factory status displayed.`;
 		};
 
-		factories.renew_assignments = function () {
-			console.log(`<font color=\"#FFA500\">[Factory]</font> Renewing factory assignments...`);
+		factories.renew_assignments = function (announce = true) {
+			if (announce) {
+				console.log(`<font color=\"#FFA500\">[Factory]</font> Renewing factory assignments...`);
+			}
 			// Safely clear existing assignments to force fresh assignment
 			if (Memory["resources"] && Memory["resources"]["factories"]) {
 				delete Memory["resources"]["factories"]["assignments"];
@@ -340,7 +423,7 @@
 		};
 
 		// Internal maintenance function (not exposed in help)
-		factories.maintenance = function () {
+		factories.maintenance = function (announce = true) {
 			// Initialize factory maintenance memory if needed
 			if (!Memory.factories) {
 				Memory.factories = {
@@ -356,16 +439,20 @@
 			
 			// Check if it's time for cleanup
 			if (currentTick - Memory.factories.lastCleanup >= Memory.factories.cleanupInterval) {
-				console.log(`<font color=\"#FFA500\">[Factory]</font> Running scheduled factory cleanup...`);
-				this.cleanup(1); // High priority cleanup
+				if (announce) {
+					console.log(`<font color=\"#FFA500\">[Factory]</font> Running scheduled factory cleanup...`);
+				}
+				this.cleanup(1, announce); // High priority cleanup
 				Memory.factories.lastCleanup = currentTick;
 				maintenanceActions.push("cleanup");
 			}
 			
 			// Check if it's time for assignment renewal
 			if (currentTick - Memory.factories.lastAssignmentCheck >= Memory.factories.assignmentCheckInterval) {
-				console.log(`<font color=\"#FFA500\">[Factory]</font> Running scheduled assignment check...`);
-				this.renew_assignments();
+				if (announce) {
+					console.log(`<font color=\"#FFA500\">[Factory]</font> Running scheduled assignment check...`);
+				}
+				this.renew_assignments(announce);
 				Memory.factories.lastAssignmentCheck = currentTick;
 				maintenanceActions.push("assignment renewal");
 			}
@@ -378,7 +465,7 @@
 		};
 
 		// Internal cleanup function (not exposed in help)
-		factories.cleanup = function (priority = 1) {
+		factories.cleanup = function (priority = 1, announce = true) {
 			let totalCleanupTasks = 0;
 			let roomsProcessed = 0;
 			let cleanupData = [];
@@ -540,7 +627,7 @@
 			});
 			
 			// Display consolidated cleanup table
-			if (cleanupData.length > 0) {
+			if (announce && cleanupData.length > 0) {
 				let tableStyle = "style=\"border-collapse: collapse; border: 1px solid #666; margin: 5px 0;\"";
 				let cellStyle = "style=\"border: 1px solid #666; padding: 6px 8px; text-align: left; font-size: 12px;\"";
 				let headerStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left; background-color: #FFA500; color: white; font-weight: bold;\"";
@@ -760,7 +847,7 @@
 		help_log.push("log.storage()");
 
 		log.storage = function () {
-			console.log(`<font color=\"#D3FFA3">log-storage</font>`);
+			console.log(`<font color=\"#D3FFA3\">log-storage</font>`);
 
 			for (let i = 0; i < Object.keys(Game.rooms).length; i++) {
 				let room = Game.rooms[Object.keys(Game.rooms)[i]];
