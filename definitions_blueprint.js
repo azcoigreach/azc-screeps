@@ -227,14 +227,20 @@
 
 		if (level >= 5) {
 			/* Building links... order to build:
-			 * RCL 5 (x2): 1 @ source; 1 @ storage
-			 * RCL 6 (x3): 2 @ sources; 1 @ storage
-			 * RCL 7 (x4): 2 @ sources; 1 @ storage; 1 @ controller
-			 * RCL 8 (x6): 2 @ sources; 2 @ storage; 2 @ controller
+			 * RCL 5 (x2): 1 @ storage (layout); 1 @ source (dynamic)
+			 * RCL 6 (x3): 1 @ storage (layout); 2 @ sources (dynamic)
+			 * RCL 7 (x4): 1 @ storage (layout); 2 @ sources (dynamic); 1 @ controller (dynamic)
+			 * RCL 8 (x5): 1 @ storage (layout); 2 @ sources (dynamic); 2 @ controller (dynamic)
 			 * In 1 source rooms, start at controller at 1 RCL lower
+			 * First link is placed from layout near storage, subsequent links placed dynamically
 			 */
 
 			let links = _.filter(structures, s => { return s.structureType == "link"; });
+			
+			// First: Place storage link from layout
+			sites = Blueprint.iterateStructure(room, sites, structures, layout, origin, sites_per_room, blocked_areas, "link");
+			
+			// Then: Place additional links dynamically near sources and controller
 			if (sites < sites_per_room) {
 				// Build links near sources
 				for (let i = 0; i < (level == 5 ? 1 : sources.length); i++) {
@@ -265,8 +271,6 @@
 					}
 				}
 			}
-
-			sites = Blueprint.iterateStructure(room, sites, structures, layout, origin, sites_per_room, blocked_areas, "link");
 
 			// Only build roads at level 5 to allow extensions, tower, and walls to be built
 			sites = Blueprint.iterateStructure(room, sites, all_structures, layout, origin, sites_per_room, blocked_areas, "road");
