@@ -28,7 +28,7 @@
 
 	getBody: function (type, level) {
 		switch (type) {
-			case "scout": return this.getBody_Scout();
+			case "scout": return this.getBody_Scout(level);
 			case "soldier": return this.getBody_Soldier(level);
 			case "brawler": return this.getBody_Brawler(level);
 			case "paladin": return this.getBody_Paladin(level);
@@ -57,9 +57,21 @@
 	},
 
 
-	getBody_Scout: function () {
-		return [ // 300 energy, 5x MOVE
-			MOVE, MOVE, MOVE, MOVE, MOVE];
+	getBody_Scout: function (level) {
+		switch (level) {
+			case 1:
+				return [MOVE];
+			case 2:
+				return [MOVE, MOVE];
+			case 3:
+				return [MOVE, MOVE, MOVE];
+			case 4:
+				return [MOVE, MOVE, MOVE, MOVE];
+			case 5:
+				return [MOVE, MOVE, MOVE, MOVE, MOVE];
+			default:
+				return [MOVE, MOVE, MOVE, MOVE, MOVE];
+		}
 	},
 
 	getBody_Soldier: function (level) {
@@ -836,9 +848,29 @@
 
 	getBody_Upgrader: function (level) {
 		switch (level) {
-			case 1: case 2: case 3: case 4: case 5:
-				return [ // Prevent spawn locking with null body
-					MOVE];
+			case 1:
+				return [ // 200 energy, 1x WORK, 1x CARRY, 1x MOVE
+					WORK, CARRY, MOVE];
+			case 2:
+				return [ // 350 energy, 2x WORK, 1x CARRY, 2x MOVE
+					WORK, WORK,
+					CARRY,
+					MOVE, MOVE];
+			case 3:
+				return [ // 450 energy, 3x WORK, 1x CARRY, 2x MOVE
+					WORK, WORK, WORK,
+					CARRY,
+					MOVE, MOVE];
+			case 4:
+				return [ // 650 energy, 4x WORK, 2x CARRY, 3x MOVE
+					WORK, WORK, WORK, WORK,
+					CARRY, CARRY,
+					MOVE, MOVE, MOVE];
+			case 5:
+				return [ // 750 energy, 5x WORK, 2x CARRY, 3x MOVE
+					WORK, WORK, WORK, WORK, WORK,
+					CARRY, CARRY,
+					MOVE, MOVE, MOVE];
 			case 6:
 				return [ // 650 energy, 4x WORK, 1x CARRY, 2x MOVE
 					WORK, WORK, WORK, WORK,

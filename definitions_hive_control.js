@@ -67,15 +67,202 @@
 		return minOps + Math.floor((1 - (Game.cpu.bucket / 10000)) * range);
 	},
 
+	_globalCreepStateCacheTick: 0,
+	_globalCreepStateCache: null,
+
+	getGlobalCreepState: function () {
+		if (typeof ShardMemory === "undefined")
+			return null;
+
+		if (this._globalCreepStateCache && this._globalCreepStateCacheTick === Game.time)
+			return this._globalCreepStateCache;
+
+		let state = {
+			payloads: {},
+			shards: _.get(ShardMemory, "KNOWN_SHARDS", [])
+		};
+
+		try {
+			state.payloads[Game.shard.name] = ShardMemory.getLocalPayload();
+		} catch (err) {
+			console.log(`<font color="#FF6B6B">[InterShard]</font> Failed to read local payload: ${err.message}`);
+		}
+
+		_.each(state.shards, shard => {
+			if (shard === Game.shard.name)
+				return;
+			try {
+				let payload = ShardMemory.readRemote(shard);
+				if (payload)
+					state.payloads[shard] = payload;
+			} catch (err) {
+				console.log(`<font color="#FF6B6B">[InterShard]</font> Failed to read remote payload ${shard}: ${err.message}`);
+			}
+		});
+
+		this._globalCreepStateCache = state;
+		this._globalCreepStateCacheTick = Game.time;
+		return state;
+	},
+
+	isCreepTrackedGlobally: function (name, state) {
+		if (!name || !state || !state.payloads)
+			return false;
+
+		const TTL_GRACE_TICKS = 5;
+		const DESCRIPTOR_STALE_TICKS = 150;
+		const COMPLETION_GRACE_TICKS = 200;
+		const TRANSFER_GRACE_TICKS = 200;
+		const HANDSHAKE_PENDING_TICKS = 75;
+		const HANDSHAKE_ACK_TICKS = 150;
+
+		for (let shardName in state.payloads) {
+			let payload = state.payloads[shardName];
+			if (!payload)
+				continue;
+
+			let descriptor = _.get(payload, ["global", "creeps", name]);
+			if (descriptor) {
+				let status = _.get(descriptor, "status", "active");
+				if (status !== "dead") {
+					let ttl = _.get(descriptor, "ttl", 0);
+					let lastUpdate = _.get(descriptor, "last_update", Game.time);
+					if (ttl > TTL_GRACE_TICKS)
+						return true;
+					if ((Game.time - lastUpdate) <= DESCRIPTOR_STALE_TICKS)
+						return true;
+					if (status === "transferring" && (Game.time - lastUpdate) <= TRANSFER_GRACE_TICKS)
+						return true;
+				}
+			}
+
+			let handshake = _.get(payload, "handshake");
+			if (handshake) {
+				let pending = _.get(handshake, ["pending", name]);
+				if (pending) {
+					let ts = _.get(pending, "transfer_time", _.get(pending, "updated", Game.time));
+					if ((Game.time - ts) <= HANDSHAKE_PENDING_TICKS)
+						return true;
+				}
+
+				let acknowledgement = _.get(handshake, ["acknowledgements", name]);
+				if (acknowledgement) {
+					let ts = _.get(acknowledgement, "updated", Game.time);
+					if ((Game.time - ts) <= HANDSHAKE_ACK_TICKS)
+						return true;
+				}
+
+				let completion = _.get(handshake, ["completions", name]);
+				if (completion && (Game.time - _.get(completion, "updated", Game.time)) <= COMPLETION_GRACE_TICKS)
+					return true;
+			}
+
+			let transfer = _.get(payload, ["creep_transfers", name]) || _.get(payload, ["transfers", name]);
+			if (transfer) {
+				let transferTime = _.get(transfer, "transfer_time", Game.time);
+				if ((Game.time - transferTime) <= TRANSFER_GRACE_TICKS)
+					return true;
+			}
+		}
+
+		return false;
+	},
+
+	_extractColonyFromRequestId: function (requestId) {
+		if (!requestId || !_.isString(requestId))
+			return null;
+		let parts = requestId.split(":");
+		if (parts.length < 2)
+			return null;
+		let colonyPart = parts[1];
+		let colonyParts = colonyPart.split("/");
+		return colonyParts.length === 2 ? colonyParts[1] : colonyPart;
+	},
+
+	registerRemoteMissionCreep: function (creepName, lastSeen) {
+		let creepMem = _.get(Memory, ["creeps", creepName]);
+		if (!creepMem)
+			return;
+
+		let requestId = _.get(creepMem, "scout_request_id");
+		if (!requestId)
+			return;
+
+		let colony = _.get(creepMem, "colony") || this._extractColonyFromRequestId(requestId);
+		if (!colony)
+			return;
+
+		let colonyRoom = colony;
+		if (_.isString(colonyRoom) && colonyRoom.indexOf("/") >= 0)
+			colonyRoom = colonyRoom.split("/").pop();
+
+		let requests = _.get(Memory, ["rooms", colonyRoom, "scout_requests"]);
+		if (!_.isArray(requests))
+			return;
+
+		for (let i = 0; i < requests.length; i++) {
+			let req = requests[i];
+			if (!req || req.id !== requestId)
+				continue;
+
+			if (!_.isObject(req.remote_creeps))
+				req.remote_creeps = {};
+			req.remote_creeps[creepName] = lastSeen || Game.time;
+			break;
+		}
+	},
+
+	unregisterRemoteMissionCreep: function (creepName) {
+		let creepMem = _.get(Memory, ["creeps", creepName]);
+		let requestId = creepMem ? _.get(creepMem, "scout_request_id") : null;
+		let colony = creepMem ? _.get(creepMem, "colony") : null;
+		if (!requestId)
+			return;
+		if (!colony)
+			colony = this._extractColonyFromRequestId(requestId);
+		if (!colony)
+			return;
+
+		let colonyRoom = colony;
+		if (_.isString(colonyRoom) && colonyRoom.indexOf("/") >= 0)
+			colonyRoom = colonyRoom.split("/").pop();
+
+		let requests = _.get(Memory, ["rooms", colonyRoom, "scout_requests"]);
+		if (!_.isArray(requests))
+			return;
+
+		for (let i = 0; i < requests.length; i++) {
+			let req = requests[i];
+			if (!req || req.id !== requestId)
+				continue;
+			if (_.isObject(req.remote_creeps) && _.has(req.remote_creeps, creepName))
+				delete req.remote_creeps[creepName];
+			break;
+		}
+	},
+
 	clearDeadMemory: function () {
 		if (!isPulse_Short())
 			return;
 
+		let deadCreeps = [];
+		let globalState = this.getGlobalCreepState();
+
 		if (_.has(Memory, "creeps"))
 			_.each(Object.keys(Memory.creeps), c => {
-				if (!_.has(Game, ["creeps", c])) {
-					delete Memory.creeps[c];
+				if (_.has(Game, ["creeps", c]))
+					return;
+
+				if (this.isCreepTrackedGlobally(c, globalState)) {
+					this.registerRemoteMissionCreep(c, Game.time);
+					_.set(Memory, ["creeps", c, "_global_remote"], true);
+					_.set(Memory, ["creeps", c, "_global_lastSeen"], Game.time);
+					return;
 				}
+
+				this.unregisterRemoteMissionCreep(c);
+				delete Memory.creeps[c];
+				deadCreeps.push(c);
 			});
 
 		if (_.has(Memory, "rooms"))
@@ -83,6 +270,97 @@
 				if (!_.has(Game, ["rooms", r]))
 					delete Memory.rooms[r];
 			});
+
+		if (deadCreeps.length > 0) {
+			if (typeof ShardMemory !== "undefined" && _.isFunction(_.get(ShardMemory, "removeGlobalCreep"))) {
+				_.each(deadCreeps, name => {
+					try {
+						ShardMemory.removeGlobalCreep(name, "dead");
+					} catch (err) {
+						console.log(`<font color="#FF944E">[Shard]</font> Failed to unregister ${name}: ${err.message}`);
+					}
+				});
+			}
+
+			try {
+				let raw = InterShardMemory.getLocal();
+				if (raw) {
+					let payload = JSON.parse(raw);
+					let changed = false;
+
+					_.each(deadCreeps, name => {
+						if (_.has(payload, ["global_creeps", name])) {
+							delete payload.global_creeps[name];
+							changed = true;
+						}
+						if (_.has(payload, ["creep_transfers", name])) {
+							let transferEntry = _.get(payload, ["creep_transfers", name]);
+							let destinationShard = _.get(transferEntry, "destination_shard");
+							let transferTime = _.get(transferEntry, "transfer_time", 0);
+							let recentTransfer = (Game.time - transferTime) <= 200;
+							let crossShard = destinationShard && destinationShard !== Game.shard.name;
+							if (!(crossShard && recentTransfer)) {
+								if (Memory && _.get(Memory, ["hive", "ism", "debug_transfers"])) {
+									console.log(`<font color="#9B5DE5">[InterShard]</font> clearDeadMemory removing transfer ${name}; crossShard=${crossShard} destination=${destinationShard} transferTime=${transferTime} recent=${recentTransfer}`);
+								}
+								delete payload.creep_transfers[name];
+								changed = true;
+							}
+						}
+						if (_.has(payload, ["transfers", name])) {
+							let transferEntry = _.get(payload, ["transfers", name]);
+							let destinationShard = _.get(transferEntry, "destination_shard");
+							let transferTime = _.get(transferEntry, "transfer_time", 0);
+							let recentTransfer = (Game.time - transferTime) <= 200;
+							let crossShard = destinationShard && destinationShard !== Game.shard.name;
+							if (!(crossShard && recentTransfer)) {
+								delete payload.transfers[name];
+								changed = true;
+							}
+						}
+					});
+
+					if (changed)
+						InterShardMemory.setLocal(JSON.stringify(payload));
+				}
+			} catch (err) {
+				console.log(`<font color="#FF944E">[Shard]</font> Failed to prune ISM for dead creeps: ${err.message}`);
+			}
+
+			let manifest = _.get(Memory, ["hive", "ism", "global", "local_manifest"]);
+			if (_.isObject(manifest)) {
+				_.each(deadCreeps, name => {
+					if (_.has(manifest, name))
+						delete manifest[name];
+				});
+				_.set(Memory, ["hive", "ism", "global", "local_manifest"], manifest);
+			}
+
+			_.each(_.keys(_.get(Memory, "rooms", {})), roomName => {
+				let requests = _.get(Memory, ["rooms", roomName, "scout_requests"]);
+				if (!_.isArray(requests) || requests.length === 0)
+					return;
+
+				let updated = [];
+				for (let i = 0; i < requests.length; i++) {
+					let req = requests[i];
+					if (!req)
+						continue;
+
+					if (_.isArray(req.creeps))
+						req.creeps = _.filter(req.creeps, name => _.has(Game.creeps, name));
+
+					if (!req.respawn && req.spawned_total >= _.get(req, "count", 1) && (_.isArray(req.creeps) && req.creeps.length === 0)) {
+						req._completed = true;
+					}
+
+					if (req._completed !== true)
+						updated.push(req);
+				}
+
+				_.set(Memory, ["rooms", roomName, "scout_requests"], updated);
+			});
+		}
 	},
 
 	initMemory: function () {
@@ -93,11 +371,12 @@
 		this.setPulse("defense", 8, 16);
 		this.setPulse("short", 19, 120);
 		this.setPulse("mid", 39, 180);
-		this.setPulse("long", 99, 400);
-		this.setPulse("spawn", 29, 60);
-		this.setPulse("lab", 1999, 2000);
-		this.setPulse("factory", 199, 400); // Factory assignments every 199-400 ticks
-		this.setPulse("blueprint", 19, 100); // Much faster blueprint for early game building
+	this.setPulse("long", 99, 400);
+	this.setPulse("spawn", 29, 60);
+	this.setPulse("lab", 1999, 2000);
+	this.setPulse("factory", 199, 400); // Factory assignments every 199-400 ticks
+	this.setPulse("blueprint", 19, 100); // Much faster blueprint for early game building
+	this.setPulse("intershard", 3, 10); // Fast intershard communication for handshakes and transfers
 
 		if (_.get(Memory, ["rooms"]) == null) _.set(Memory, ["rooms"], new Object());
 		if (_.get(Memory, ["hive", "allies"]) == null) _.set(Memory, ["hive", "allies"], new Array());
@@ -105,6 +384,7 @@
 		if (_.get(Memory, ["sites", "mining"]) == null) _.set(Memory, ["sites", "mining"], new Object());
 		if (_.get(Memory, ["sites", "colonization"]) == null) _.set(Memory, ["sites", "colonization"], new Object());
 		if (_.get(Memory, ["sites", "combat"]) == null) _.set(Memory, ["sites", "combat"], new Object());
+		if (_.get(Memory, ["hive", "ism"]) == null) _.set(Memory, ["hive", "ism"], new Object());
 
 		for (let r in Game["rooms"])
 			_.set(Memory, ["rooms", r, "population"], null);
@@ -134,6 +414,8 @@
 
 				if (room.controller.level >= 6)
 					Sites.Industry(room.name);
+
+				this.runScoutRequests(room.name);
 			}
 		});
 
@@ -142,6 +424,8 @@
 			if (_.get(mining, [req, "colony"]) != null)
 				Sites.Mining(_.get(mining, [req, "colony"]), req);
 		});
+
+		this.runGlobalScouts();
 	},
 
 	runColonizations: function () {
@@ -158,6 +442,223 @@
 	runHighwayMining: function () {
 		for (let highway_id in _.get(Memory, ["sites", "highway_mining"]))
 			Sites.HighwayMining(highway_id);
+	},
+
+	runGlobalScouts: function () {
+		let creeps = _.get(Game, "creeps");
+		if (!creeps)
+			return;
+
+		_.each(creeps, creep => {
+			if (!creep)
+				return;
+
+			let role = _.get(creep, ["memory", "role"]);
+			let looksLikeScout = role === "scout"
+				|| (typeof creep.name === "string" && creep.name.indexOf("scou:") === 0)
+				|| _.has(creep.memory, "scout_request_id");
+
+			if (!looksLikeScout)
+				return;
+
+			if (role !== "scout")
+				_.set(creep, ["memory", "role"], "scout");
+
+			if (_.get(creep.memory, "_last_scout_run") === Game.time)
+				return;
+
+			Creep_Roles.Scout(creep);
+		});
+	},
+
+	runScoutRequests: function (rmColony) {
+		let requests = _.get(Memory, ["rooms", rmColony, "scout_requests"]);
+		if (!_.isArray(requests) || requests.length == 0)
+			return;
+
+		let globalState = this.getGlobalCreepState();
+
+		let listSpawnRooms = _.get(Memory, ["rooms", rmColony, "spawn_assist", "rooms"]);
+		let globalSpawnQueue = _.get(Memory, ["hive", "spawn_requests"], []);
+
+		// Compact and sanitize requests
+		requests = _.filter(requests, req => req != null);
+
+		_.each(requests, request => {
+			request.count = Math.max(1, _.get(request, "count", 1));
+			request.respawn = _.get(request, "respawn", true) !== false;
+			request.wait_for_full_rally = _.get(request, "wait_for_full_rally", true) !== false;
+			request.spawned_total = _.get(request, "spawned_total", 0);
+			request.patrol_mode = _.includes(["station", "loop"], request.patrol_mode) ? request.patrol_mode : "station";
+			request.colony_shard = _.get(request, "colony_shard", Game.shard.name);
+			request.spawn_rooms = request.spawn_rooms || listSpawnRooms;
+			if (_.isArray(request.portals) && request.portals.length == 0)
+				delete request.portals;
+			let existingNames = _.get(request, "creeps", []);
+			if (!_.isArray(existingNames))
+				existingNames = [];
+			request.creeps = _.filter(existingNames, name => _.has(Game.creeps, name));
+			request._remote_pruned = request._remote_pruned || 0;
+
+			if (!_.isObject(request.remote_creeps))
+				request.remote_creeps = {};
+
+			// Discover creeps attached via memory but not yet tracked
+			_.each(Game.creeps, creep => {
+				if (_.get(creep, ["memory", "scout_request_id"]) === request.id) {
+					if (!_.includes(request.creeps, creep.name))
+						request.creeps.push(creep.name);
+					if (_.has(request.remote_creeps, creep.name))
+						delete request.remote_creeps[creep.name];
+				}
+			});
+
+			let creeps = _.map(request.creeps, name => Game.creeps[name]).filter(Boolean);
+			request.creeps = _.map(creeps, c => c.name);
+
+			let remoteNames = [];
+			if (_.isObject(request.remote_creeps)) {
+				_.each(Object.keys(request.remote_creeps), name => {
+					if (Game.creeps[name]) {
+						delete request.remote_creeps[name];
+						return;
+					}
+
+					let stillPresent = this.isCreepTrackedGlobally(name, globalState);
+					if (stillPresent) {
+						remoteNames.push(name);
+						request.remote_creeps[name] = Game.time;
+					} else {
+						delete request.remote_creeps[name];
+						request._remote_pruned++;
+					}
+				});
+			}
+
+			let rallyReached = 0;
+			_.each(creeps, creep => {
+				if (creep.memory.scout_rally_reached)
+					rallyReached++;
+			});
+
+			let requiredCount = request.count;
+			let remoteCount = remoteNames.length;
+			let activeCount = creeps.length + remoteCount;
+			let effectiveRally = rallyReached + remoteCount;
+			let rallyReady = request.wait_for_full_rally ? (activeCount >= requiredCount && effectiveRally >= requiredCount) : true;
+			let release = request.wait_for_full_rally ? (rallyReady || request.rally_release === true) : true;
+			request.rally_ready = rallyReady;
+			request.rally_reached = rallyReached;
+			request.remote_count = remoteCount;
+			request.active = activeCount;
+			request.rally_release = release;
+			request.waiting = request.wait_for_full_rally ? !release : false;
+			request.last_update = Game.time;
+
+			// Update live creep memory with current mission directives
+			_.each(creeps, creep => {
+				creep.memory.rally_release = release;
+				creep.memory.patrol_mode = request.patrol_mode;
+				creep.memory.respawn_mission = request.respawn;
+				creep.memory.wait_for_full_rally = request.wait_for_full_rally;
+				creep.memory.rally_pos = request.rally_pos;
+				creep.memory.dest_pos = request.dest_pos;
+				creep.memory.colony_shard = request.colony_shard;
+				if (request.list_route)
+					creep.memory.list_route = _.clone(request.list_route);
+				if (request.transfer_intent)
+					creep.memory.transfer_intent = _.cloneDeep(request.transfer_intent);
+				if (request.portals)
+					creep.memory.portals = _.cloneDeep(request.portals);
+				if (request.global)
+					creep.memory.global = _.cloneDeep(request.global);
+			});
+
+			let pendingSpawn = _.some(globalSpawnQueue, req => _.get(req, ["args", "scout_request_id"]) == request.id);
+			let desiredActive = request.count;
+			let canSpawnMore = request.respawn || request.spawned_total < request.count;
+
+			let prunedRemoteOvershoot = request._remote_pruned > 0 && creeps.length === 0 && remoteCount === 0;
+
+			if (canSpawnMore && request.active < desiredActive && !pendingSpawn) {
+				let priority = _.get(request, ["custom", "priority"], 22);
+				let level = _.get(request, ["custom", "level"], 1);
+				let bodyName = _.get(request, ["custom", "body"], "scout");
+				let spawnRooms = request.spawn_rooms;
+
+				let args = {
+					role: "scout",
+					colony: rmColony,
+					room: _.get(request, ["dest_pos", "roomName"], rmColony),
+					scout_request_id: request.id,
+					dest_pos: request.dest_pos,
+					rally_pos: request.rally_pos,
+					patrol_mode: request.patrol_mode,
+					list_route: request.list_route,
+					transfer_intent: request.transfer_intent,
+					global: request.global,
+					scout_rally_reached: false,
+					wait_for_full_rally: request.wait_for_full_rally,
+					respawn_mission: request.respawn,
+					colony_shard: Game.shard.name
+				};
+
+				Memory.hive.spawn_requests.push({
+					room: rmColony,
+					listRooms: spawnRooms,
+					priority: priority,
+					level: level,
+					scale: false,
+					body: bodyName,
+					name: _.get(request, ["custom", "name"], null),
+					args: args
+				});
+
+				request.spawned_total = (request.spawned_total || 0) + 1;
+			}
+
+			// Flag completion for one-shot missions with no surviving creeps or pending spawns
+			if (prunedRemoteOvershoot) {
+				request.spawned_total = Math.max(0, (request.spawned_total || 0) - request._remote_pruned);
+				request._remote_pruned = 0;
+			}
+
+			if (!request.respawn && request.spawned_total >= request.count && creeps.length == 0 && remoteCount == 0 && !pendingSpawn)
+				request._completed = true;
+		});
+
+		requests = _.filter(requests, req => req != null && req._completed !== true);
+		_.set(Memory, ["rooms", rmColony, "scout_requests"], requests);
+	},
+
+	deriveScoutRoute: function (origin, destination) {
+		if (origin == null || destination == null)
+			return origin ? [origin] : [];
+
+		if (origin === destination)
+			return [origin];
+
+		let route = [origin];
+		try {
+			let result = Game.map.findRoute(origin, destination);
+			if (_.isArray(result)) {
+				_.each(result, step => {
+					if (_.last(route) !== step.room)
+						route.push(step.room);
+				});
+			} else if (result === ERR_NO_PATH) {
+				route.push(destination);
+			}
+		} catch (error) {
+			console.log(`<font color=\"#FF944E\">[Scout]</font> Unable to derive route ${origin} -> ${destination}: ${error}`);
+			if (_.last(route) !== destination)
+				route.push(destination);
+		}
+
+		if (_.last(route) !== destination)
+			route.push(destination);
+
+		return _.uniq(route);
 	},
 
 	populationTally: function (rmName, popTarget, popActual) {
@@ -496,6 +997,11 @@
 	},
 
 	generatePixels: function () {
+		if (!_.isObject(Memory.hive))
+			Memory.hive = {};
+		if (!_.isObject(Memory.hive.pixels))
+			Memory.hive.pixels = {};
+
 		// Get pixel generation settings from memory (defaults: enabled, 80% CPU threshold)
 		let pixelEnabled = _.get(Memory, ["hive", "pixels", "enabled"], true);
 		let cpuThreshold = _.get(Memory, ["hive", "pixels", "cpu_threshold"], 0.8);

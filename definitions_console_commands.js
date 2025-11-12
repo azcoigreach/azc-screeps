@@ -17,6 +17,7 @@
 		let help_profiler = new Array();
 		let help_resources = new Array();
 		let help_visuals = new Array();
+		let help_shards = new Array();
 
 
 
@@ -33,6 +34,7 @@
 		help_main.push(`- "pixels" \t Pixel generation management and statistics`);
 		help_main.push(`- "profiler" \t Built-in CPU profiler`);
 		help_main.push(`- "resources" \t Management of resources, empire-wide sharing and/or selling to market`);
+		help_main.push(`- "shards" \t Inter-shard coordination and diagnostics`);
 		help_main.push(`- "visuals" \t Manage visual objects (RoomVisual class)`);
 		help_main.push("");
 
@@ -632,19 +634,16 @@
 				let cellStyle = "style=\"border: 1px solid #666; padding: 6px 8px; text-align: left; font-size: 12px;\"";
 				let headerStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left; background-color: #FFA500; color: white; font-weight: bold;\"";
 				
-				let cleanupTable = `<table ${tableStyle}><tr><th ${headerStyle}>Room</th><th ${headerStyle}>Status</th><th ${headerStyle}>Details</th></tr>`;
+				let cleanupTable = `<table ${tableStyle}>`;
+				cleanupTable += `<tr><th ${headerStyle}>Room</th><th ${headerStyle}>Status</th><th ${headerStyle}>Details</th></tr>`;
+				cleanupTable += `<tr><td ${cellStyle}>${cleanupData[0].room}</td><td ${cellStyle}><font color=\"${cleanupData[0].status.includes("✓") ? "green" : "red"}\">${cleanupData[0].status}</font></td><td ${cellStyle}>${cleanupData[0].details}</td></tr>`;
 				
-				_.each(cleanupData, data => {
-					let statusColor = data.status.includes("✓") ? "green" : data.status.includes("✗") ? "red" : "orange";
-					cleanupTable += `<tr><td ${cellStyle}>${data.room}</td><td ${cellStyle}><font color=\"${statusColor}\">${data.status}</font></td><td ${cellStyle}>${data.details}</td></tr>`;
-					
-					// Add factory details if available
-					if (data.factories && data.factories.length > 0) {
-						_.each(data.factories, factory => {
-							cleanupTable += `<tr><td ${cellStyle} style=\"padding-left: 20px;\">└─ ${factory.factory}</td><td ${cellStyle}>${factory.assignment}</td><td ${cellStyle}>${factory.actions}</td></tr>`;
-						});
-					}
-				});
+				// Add factory details if available
+				if (cleanupData[0].factories && cleanupData[0].factories.length > 0) {
+					_.each(cleanupData[0].factories, factory => {
+						cleanupTable += `<tr><td ${cellStyle} style=\"padding-left: 20px;\">└─ ${factory.factory}</td><td ${cellStyle}>${factory.assignment}</td><td ${cellStyle}>${factory.actions}</td></tr>`;
+					});
+				}
 				
 				cleanupTable += "</table>";
 				console.log(`<font color=\"#FFA500\">[Factory]</font> <b>Cleanup Summary (Priority ${priority}):</b><br>${cleanupTable}`);
@@ -1664,6 +1663,438 @@
 			_.set(Memory, ["sites", "mining", rmHarvest], { colony: rmColony, has_keepers: hasKeepers, list_route: listRoute, spawn_assist: listSpawnAssistRooms, population: customPopulation });
 			return `<font color=\"#D3FFA3\">[Console]</font> Remote mining added to Memory.sites.mining.${rmHarvest} ... to cancel, delete the entry.`;
 		};
+		help_empire.push("empire.scout(rmColony, rally_pos, dest_pos, { count, respawn, waitForFullRally, priority, level, body, name, spawnRooms, patrol_mode, transfer_intent, global, listRoute, rallyShard, destShard })");
+		help_empire.push(" - rally_pos / dest_pos accept RoomPosition or plain objects ({ x, y, roomName, shard? })");
+		help_empire.push(" - options.count: number of scouts to keep active (default 1) | respawn: keep mission alive (default true)");
+		help_empire.push(" - waitForFullRally: hold at rally until all count creeps arrive (default true)");
+		help_empire.push(" - patrol_mode: 'station' (hold destination) or 'loop' (bounce between rally/destination)");
+		help_empire.push(" - spawnRooms: string or array of rooms allowed to spawn the request (falls back to spawn_assist)");
+		help_empire.push(" - listRoute: array of waypoint rooms (accepts 'shard/room' when crossing shards)");
+		help_empire.push(" - transfer_intent: { destination_shard, destination_room, portal_pos, return_portal?, portals? } (used for cross-shard portal transfers)");
+		help_empire.push("   · portal_pos / return_portal.portal_pos accept { x, y, roomName, shard? }");
+		help_empire.push("   · transfer_intent.portals allows explicit portal network [{ from: { shard, roomName, pos }, to: { shard, roomName? } }]");
+		help_empire.push(" - rallyShard / destShard override inferred shard when the RoomPosition lacks shard metadata");
+		help_empire.push(" - global: mission manifest stored in Memory.hive.ism (e.g. { mission: 'portal_scout', origin: { shard, room }, target: { shard, room } })");
+		help_empire.push("   transfer/global are optional but recommended when sending scouts through inter-shard portals");
+		help_empire.push(" - example: empire.scout('E48S21', new RoomPosition(25,20,'E48S21'), new RoomPosition(45,24,'E50S20'), { count: 3, respawn: true, patrol_mode: 'loop' })");
+		empire.scout = function (rmColony, rally_pos, dest_pos, options) {
+			let parseShardRoom = function (value, defaultShard) {
+				let shard = defaultShard || Game.shard.name;
+				let roomName = null;
+
+				if (value == null)
+					return { shard: shard, roomName: roomName };
+
+				if (value instanceof RoomPosition) {
+					return { shard: shard, roomName: value.roomName };
+				}
+
+				if (_.isString(value)) {
+					let parts = value.split("/");
+					if (parts.length === 2) {
+						shard = parts[0];
+						roomName = parts[1];
+					} else {
+						roomName = value;
+					}
+					return { shard: shard, roomName: roomName };
+				}
+
+				if (_.isObject(value)) {
+					let candidate = _.get(value, "roomName") || _.get(value, "room") || _.get(value, "name");
+					if (_.isString(candidate)) {
+						let parts = candidate.split("/");
+						if (parts.length === 2) {
+							shard = parts[0];
+							roomName = parts[1];
+						} else {
+							roomName = candidate;
+						}
+					}
+					if (_.isString(_.get(value, "shard")))
+						shard = value.shard;
+				}
+
+				return { shard: shard, roomName: roomName };
+			};
+
+			let packPos = function (pos, fallbackShard) {
+				if (pos == null)
+					return null;
+
+				if (pos instanceof RoomPosition) {
+					return {
+						x: pos.x,
+						y: pos.y,
+						roomName: pos.roomName,
+						shard: fallbackShard || Game.shard.name
+					};
+				}
+
+				if (_.isObject(pos)) {
+					let x = _.get(pos, "x");
+					let y = _.get(pos, "y");
+					let roomName = _.get(pos, "roomName") || _.get(pos, "room");
+					let shard = _.get(pos, "shard", fallbackShard || Game.shard.name);
+
+					if (_.isString(roomName) && roomName.indexOf("/") >= 0) {
+						let parsed = parseShardRoom(roomName, shard);
+						roomName = parsed.roomName;
+						shard = parsed.shard;
+					}
+
+					if (_.isNumber(x) && _.isNumber(y) && _.isString(roomName)) {
+						return {
+							x: x,
+							y: y,
+							roomName: roomName,
+							shard: shard
+						};
+					}
+				}
+
+				return null;
+			};
+
+			let normalizeRoomsArray = function (rooms, fallbackShard) {
+				if (rooms == null)
+					return null;
+
+				let list = _.isArray(rooms) ? rooms : [rooms];
+				let result = [];
+
+				_.each(list, entry => {
+					let parsed = parseShardRoom(entry, fallbackShard);
+					if (_.isString(parsed.roomName) && (!parsed.shard || parsed.shard === fallbackShard))
+						result.push(parsed.roomName);
+				});
+
+				return _.uniq(result);
+			};
+
+			let normalizeRoute = function (route, fallbackShard) {
+				if (!_.isArray(route))
+					return null;
+
+				let normalized = [];
+				_.each(route, step => {
+					if (step == null)
+						return;
+
+					if (_.isString(step)) {
+						let parts = step.split("/");
+						if (parts.length === 2) {
+							normalized.push(`${parts[0]}/${parts[1]}`);
+						} else {
+							normalized.push(step);
+						}
+						return;
+					}
+
+					if (_.isObject(step)) {
+						let parsed = parseShardRoom(step, fallbackShard);
+						if (!_.isString(parsed.roomName))
+							return;
+						if (parsed.shard && parsed.shard !== fallbackShard)
+							normalized.push(`${parsed.shard}/${parsed.roomName}`);
+						else
+							normalized.push(parsed.roomName);
+					}
+				});
+
+				return _.uniq(normalized);
+			};
+
+			let uniquePortalEntries = function (entries) {
+				if (!_.isArray(entries))
+					return [];
+
+				let deduped = [];
+				let seen = {};
+
+				for (let i = 0; i < entries.length; i++) {
+					let entry = entries[i];
+					if (!entry || !_.get(entry, ["from", "pos"]))
+						continue;
+
+					let from = entry.from;
+					let to = entry.to || {};
+					let pos = from.pos;
+
+					if (!_.isNumber(pos.x) || !_.isNumber(pos.y) || !_.isString(from.roomName) || !_.isString(from.shard) || !_.isString(to.shard))
+						continue;
+
+					let key = `${from.shard}/${from.roomName}:${pos.x}:${pos.y}->${to.shard}/${to.roomName || ""}`;
+					if (!seen[key]) {
+						seen[key] = true;
+						deduped.push(entry);
+					}
+				}
+
+				return deduped;
+			};
+
+			let normalizeTransferIntent = function (intent, defaults) {
+				if (!_.isObject(intent))
+					return null;
+
+				let normalized = _.cloneDeep(intent);
+
+				normalized.origin_shard = _.get(normalized, "origin_shard", defaults.originShard);
+				normalized.origin_room = _.get(normalized, "origin_room", defaults.originRoom);
+				normalized.destination_shard = _.get(normalized, "destination_shard", defaults.destinationShard);
+				normalized.destination_room = _.get(normalized, "destination_room", defaults.destinationRoom);
+
+				if (_.has(normalized, "portal_pos")) {
+					normalized.portal_pos = packPos(normalized.portal_pos, normalized.origin_shard);
+					if (!normalized.portal_pos)
+						delete normalized.portal_pos;
+				}
+
+				if (_.has(normalized, "return_portal")) {
+					let ret = _.get(normalized, "return_portal");
+					if (_.isObject(ret)) {
+						ret.shard = _.get(ret, "shard", normalized.destination_shard);
+						ret.destination_shard = _.get(ret, "destination_shard", normalized.origin_shard);
+						ret.destination_room = _.get(ret, "destination_room", normalized.origin_room);
+						if (_.has(ret, "portal_pos"))
+							ret.portal_pos = packPos(ret.portal_pos, ret.shard);
+						if (!_.get(ret, ["portal_pos", "roomName"]))
+							delete normalized.return_portal;
+						else
+							normalized.return_portal = ret;
+					} else {
+						delete normalized.return_portal;
+					}
+				}
+
+				let portalEntries = [];
+
+				let addPortalEntry = function (fromShard, fromRoom, portalPos, toShard, toRoom, label) {
+					if (!fromShard || !fromRoom || !portalPos || !toShard)
+						return;
+					if (!_.isNumber(portalPos.x) || !_.isNumber(portalPos.y) || !_.isString(portalPos.roomName))
+						return;
+
+					portalEntries.push({
+						from: {
+							shard: fromShard,
+							roomName: fromRoom,
+							pos: {
+								x: portalPos.x,
+								y: portalPos.y,
+								roomName: portalPos.roomName,
+								shard: portalPos.shard || fromShard
+							}
+						},
+						to: {
+							shard: toShard,
+							roomName: toRoom || null
+						},
+						label: label || null
+					});
+				};
+
+				if (_.get(normalized, ["portal_pos", "roomName"]) && normalized.destination_shard) {
+					addPortalEntry(
+						normalized.origin_shard,
+						normalized.portal_pos.roomName,
+						normalized.portal_pos,
+						normalized.destination_shard,
+						normalized.destination_room,
+						"outbound"
+					);
+				}
+
+				if (_.get(normalized, ["return_portal", "portal_pos", "roomName"])) {
+					let ret = normalized.return_portal;
+					addPortalEntry(
+						ret.shard,
+						ret.portal_pos.roomName,
+						ret.portal_pos,
+						ret.destination_shard,
+						ret.destination_room,
+						"return"
+					);
+				}
+
+				if (_.isArray(_.get(normalized, "portals"))) {
+					_.each(normalized.portals, entry => {
+						let fromParsed = parseShardRoom(_.get(entry, "from"), normalized.origin_shard);
+						let toParsed = parseShardRoom(_.get(entry, "to"), normalized.destination_shard);
+						let fromPos = packPos(_.get(entry, ["from", "pos"]) || _.get(entry, ["from", "portal_pos"]) || entry.from, fromParsed.shard);
+
+						if (!fromPos || !fromParsed.roomName || !toParsed.shard)
+							return;
+
+						portalEntries.push({
+							from: {
+								shard: fromPos.shard || fromParsed.shard,
+								roomName: fromPos.roomName,
+								pos: fromPos
+							},
+							to: {
+								shard: toParsed.shard,
+								roomName: toParsed.roomName || null
+							},
+							label: _.get(entry, "label", null)
+						});
+					});
+				}
+
+				let filteredEntries = [];
+				_.each(portalEntries, entry => {
+					if (entry && entry.from && entry.to && entry.from.pos)
+						filteredEntries.push(entry);
+				});
+
+				normalized.portals = uniquePortalEntries(filteredEntries);
+
+				return normalized;
+			};
+
+			let parsedColony = parseShardRoom(rmColony, Game.shard.name);
+			if (!_.isString(parsedColony.roomName))
+				return `<font color=\"#FF4E50\">[Console]</font> Error: Invalid rmColony ${rmColony}.`;
+
+			let colonyShard = parsedColony.shard;
+			let colonyRoomName = parsedColony.roomName;
+
+			if (colonyShard === Game.shard.name) {
+				let colonyRoom = _.get(Game, ["rooms", colonyRoomName]);
+				if (!colonyRoom || !_.get(colonyRoom, ["controller", "my"]))
+					return `<font color=\"#FF4E50\">[Console]</font> Error: rmColony ${colonyRoomName} is not under our control.`;
+			}
+
+			options = (options && typeof options === "object") ? options : {};
+
+			let rallyShardHint = _.get(options, "rallyShard") || colonyShard;
+			let destShardHint = _.get(options, "destShard") || colonyShard;
+
+			let packedRally = packPos(rally_pos, rallyShardHint);
+			let packedDest = packPos(dest_pos, destShardHint);
+
+			if (!packedRally)
+				return `<font color=\"#FF4E50\">[Console]</font> Error: rally_pos must include x, y, roomName.`;
+			if (!packedDest)
+				return `<font color=\"#FF4E50\">[Console]</font> Error: dest_pos must include x, y, roomName.`;
+
+			let rallyShard = packedRally.shard || rallyShardHint;
+			let destShard = packedDest.shard || destShardHint;
+
+			let spawnRooms = options.spawnRooms;
+			if (typeof spawnRooms === "string")
+				spawnRooms = [spawnRooms];
+			spawnRooms = normalizeRoomsArray(spawnRooms, colonyShard);
+
+			let mission = {
+				id: `scout:${colonyShard}/${colonyRoomName}:${destShard}/${packedDest.roomName}:${Game.time}`,
+				colony: colonyRoomName,
+				colony_shard: colonyShard,
+				created: Game.time,
+				rally_pos: packedRally,
+				dest_pos: packedDest,
+				custom: null,
+				list_route: null,
+				transfer_intent: null,
+				portals: null,
+				global: null,
+				spawn_rooms: spawnRooms || null,
+				creeps: [],
+				spawned_total: 0,
+				count: Math.max(1, _.get(options, "count", 1)),
+				respawn: _.get(options, "respawn", true) !== false,
+				wait_for_full_rally: _.get(options, "waitForFullRally") !== false,
+				patrol_mode: null,
+				rally_ready: false
+			};
+
+			let patrolMode = options.patrol_mode;
+			patrolMode = _.includes(["station", "loop"], patrolMode) ? patrolMode : "station";
+			mission.patrol_mode = patrolMode;
+
+			let priority = _.get(options, "priority");
+			let level = _.get(options, "level");
+			let body = _.get(options, "body");
+			let name = _.get(options, "name");
+			mission.custom = {
+				priority: priority,
+				level: level,
+				body: body,
+				name: name
+			};
+
+			if (options.transfer_intent) {
+				let transferIntent = normalizeTransferIntent(options.transfer_intent, {
+					originShard: rallyShard,
+					originRoom: packedRally.roomName,
+					destinationShard: destShard,
+					destinationRoom: packedDest.roomName
+				});
+				if (transferIntent) {
+					mission.transfer_intent = transferIntent;
+					if (_.isArray(transferIntent.portals) && transferIntent.portals.length > 0)
+						mission.portals = transferIntent.portals;
+				}
+			}
+			if (options.global)
+				mission.global = _.cloneDeep(options.global);
+			if (options.listRoute)
+				mission.list_route = normalizeRoute(options.listRoute, colonyShard);
+
+			if (!mission.list_route) {
+				if (colonyShard !== destShard) {
+					console.log(`<font color=\"#FF944E\">[Scout]</font> Warning: cross-shard scout mission ${mission.id} has no listRoute; please supply options.listRoute to guide portal approach.`);
+				} else {
+					let derivedRoute = [colonyRoomName];
+					try {
+						let routeResult = Game.map.findRoute(colonyRoomName, packedDest.roomName);
+						if (_.isArray(routeResult)) {
+							_.each(routeResult, step => {
+								let lastRoom = _.last(derivedRoute);
+								if (lastRoom !== step.room)
+									derivedRoute.push(step.room);
+							});
+						} else if (routeResult === ERR_NO_PATH) {
+							derivedRoute.push(packedDest.roomName);
+						}
+					} catch (err) {
+						console.log(`<font color=\"#FF944E\">[Scout]</font> Warning: Unable to derive route for ${colonyRoomName} -> ${packedDest.roomName}; ${err}`);
+					}
+					if (_.last(derivedRoute) !== packedDest.roomName)
+						derivedRoute.push(packedDest.roomName);
+					mission.list_route = _.uniq(derivedRoute);
+				}
+			}
+
+			if (_.isArray(options.portals) && options.portals.length > 0) {
+				let extraIntent = normalizeTransferIntent({ portals: options.portals }, {
+					originShard: rallyShard,
+					originRoom: packedRally.roomName,
+					destinationShard: destShard,
+					destinationRoom: packedDest.roomName
+				});
+				if (extraIntent && _.isArray(extraIntent.portals)) {
+					let combined = [];
+					if (_.isArray(mission.portals))
+						combined = combined.concat(mission.portals);
+					combined = combined.concat(extraIntent.portals);
+					combined = _.filter(combined, Boolean);
+					combined = uniquePortalEntries(combined);
+					if (combined.length > 0)
+						mission.portals = combined;
+				}
+			}
+
+			let requests = _.get(Memory, ["rooms", colonyRoomName, "scout_requests"], []);
+			if (!_.isArray(requests))
+				requests = [];
+
+			requests.push(mission);
+			_.set(Memory, ["rooms", colonyRoomName, "scout_requests"], requests);
+
+			return `<font color=\"#D3FFA3\">[Console]</font> Scout mission ${mission.id} queued for ${colonyRoomName} -> ${packedDest.roomName}.`;
+		};
 
 		help_empire.push("empire.set_sign(message)")
 		help_empire.push("empire.set_sign(message, rmName)")
@@ -2196,6 +2627,186 @@
 			return `<font color=\"#FFD700\">[Pixels]</font> Pixel statistics reset.`;
 		};
 
+		shards = new Object();
+
+		help_shards.push("shards.help()");
+		help_shards.push(" - Print a quick reference to shard commands");
+		shards.help = function () {
+			return `<font color=\"#4ECDC4\">[Shards]</font> Commands: shards.status(), shards.requests(), shards.global(), shards.set_primary(). Use help("shards") for full descriptions.`;
+		};
+
+		help_shards.push("shards.status(shardName?)");
+		help_shards.push(" - Show local shard pulse and remote shard summaries (optional shardName)");
+		shards.status = function (targetShard) {
+			if (typeof ShardMemory === "undefined") {
+				return `<font color="#FF6B6B">[Shards]</font> Inter-shard interface not initialized.`;
+			}
+
+			let payload = ShardMemory.getLocalPayload();
+			let role = _.get(payload, ["summary", "role"], ShardMemory.isPrimaryShard() ? "primary" : "follower");
+			let primaryShard = ShardMemory.getPrimaryShardName();
+
+			let lines = new Array();
+			lines.push(`<font color="#4ECDC4">[Shards]</font> Local shard <b>${Game.shard.name}</b> (${role})`);
+			lines.push(`  Primary shard: ${primaryShard}`);
+			lines.push(`  Heartbeat: ${payload.heartbeat} (summary tick ${_.get(payload, ["summary", "tick"], "n/a")})`);
+			lines.push(`  Local globals: ${_.size(_.get(payload, ["global", "creeps"], {}))}`);
+			lines.push(`  Queues (R/C/M): ${_.size(_.get(payload, ["queues", "resource"], []))}/${_.size(_.get(payload, ["queues", "creep"], []))}/${_.size(_.get(payload, ["queues", "mission"], []))}`);
+
+			if (targetShard) {
+				let remote = ShardMemory.readRemote(targetShard);
+				if (!remote) {
+					lines.push(`  No payload detected for ${targetShard}.`);
+				} else {
+					lines.push(`  -- Remote ${targetShard} --`);
+					lines.push(`    Heartbeat: ${remote.heartbeat} (tick ${_.get(remote, ["summary", "tick"], "n/a")})`);
+					lines.push(`    Role: ${_.get(remote, ["summary", "role"], "unknown")}`);
+					lines.push(`    Globals: ${_.size(_.get(remote, ["global", "creeps"], {}))}`);
+					lines.push(`    Queues (R/C/M): ${_.size(_.get(remote, ["queues", "resource"], []))}/${_.size(_.get(remote, ["queues", "creep"], []))}/${_.size(_.get(remote, ["queues", "mission"], []))}`);
+				}
+			} else if (ShardMemory.isPrimaryShard()) {
+				let remotes = _.get(Memory, ["hive", "ism", "primary_snapshot", "remoteSummaries"], {});
+				if (_.size(remotes) === 0) {
+					lines.push(`  No remote shard summaries captured yet.`);
+				} else {
+					lines.push(`  Remote shard summaries:`);
+					_.each(remotes, (summary, shardName) => {
+						let queues = _.get(summary, "queues", {});
+						lines.push(`    ${shardName}: heartbeat ${summary.heartbeat}, globals ${_.get(summary, ["summary", "global_local"], "n/a")}, queues ${_.get(queues, "resource", 0)}/${_.get(queues, "creep", 0)}/${_.get(queues, "mission", 0)}`);
+					});
+				}
+			} else {
+				let follower = _.get(Memory, ["hive", "ism", "follower_snapshot"]);
+				if (follower) {
+					lines.push(`  Primary heartbeat: ${_.get(follower, "heartbeat", "n/a")} (tick ${_.get(follower, ["summary", "tick"], "n/a")})`);
+					if (_.get(follower, "directive")) {
+						lines.push(`  Active directive: ${JSON.stringify(_.get(follower, "directive"))}`);
+					}
+				} else {
+					lines.push(`  No data from primary yet.`);
+				}
+			}
+
+			return lines.join("\n");
+		};
+
+		help_shards.push("shards.requests(type?)");
+		help_shards.push(" - Inspect pending inter-shard requests (resource|creep|mission)");
+		shards.requests = function (type) {
+			if (typeof ShardMemory === "undefined") {
+				return `<font color="#FF6B6B">[Shards]</font> Inter-shard interface not initialized.`;
+			}
+
+			let validTypes = ["resource", "creep", "mission"];
+			let filters = validTypes;
+			if (type != null) {
+				type = type.toString().toLowerCase();
+				if (!_.includes(validTypes, type)) {
+					return `<font color="#FF6B6B">[Shards]</font> Unknown request type "${type}". Use resource, creep, or mission.`;
+				}
+				filters = [type];
+			}
+
+			let lines = new Array();
+			if (ShardMemory.isPrimaryShard()) {
+				let snapshot = _.get(Memory, ["hive", "ism", "primary_snapshot", "requests"]);
+				lines.push(`<font color="#4ECDC4">[Shards]</font> Aggregated remote requests (primary view)`);
+				if (!snapshot) {
+					lines.push("  No requests recorded yet.");
+				} else {
+					_.each(filters, queue => {
+						let items = _.get(snapshot, queue, []);
+						lines.push(`  ${queue}: ${items.length} pending`);
+						_.each(_.take(items, 10), item => {
+							let origin = _.get(item, "shard", "unknown");
+							lines.push(`    ${origin}: ${JSON.stringify(_.omit(item, "shard"))}`);
+						});
+						if (items.length > 10)
+							lines.push(`    ... ${items.length - 10} more`);
+					});
+				}
+			} else {
+				let payload = ShardMemory.getLocalPayload();
+				lines.push(`<font color="#4ECDC4">[Shards]</font> Local outbound requests`);
+				_.each(filters, queue => {
+					let items = _.get(payload, ["queues", queue], []);
+					lines.push(`  ${queue}: ${items.length} queued`);
+					_.each(_.take(items, 10), item => {
+						lines.push(`    ${JSON.stringify(item)}`);
+					});
+					if (items.length > 10)
+						lines.push(`    ... ${items.length - 10} more`);
+				});
+			}
+
+			return lines.join("\n");
+		};
+
+		help_shards.push("shards.global(creepName?)");
+		help_shards.push(" - List known global creeps or inspect a specific creep");
+		shards.global = function (creepName) {
+			if (typeof ShardMemory === "undefined") {
+				return `<font color="#FF6B6B">[Shards]</font> Inter-shard interface not initialized.`;
+			}
+
+			let manifest = {};
+			let localPayload = ShardMemory.getLocalPayload();
+			_.each(_.get(localPayload, ["global", "creeps"], {}), (descriptor, name) => {
+				manifest[name] = _.assign({ shard: Game.shard.name }, descriptor);
+			});
+
+			if (ShardMemory.isPrimaryShard()) {
+				let aggregated = _.get(Memory, ["hive", "ism", "primary_snapshot", "globalManifest"], {});
+				_.assign(manifest, aggregated);
+			} else {
+				let primaryPayload = ShardMemory.readPrimary();
+				if (primaryPayload) {
+					_.each(_.get(primaryPayload, ["global", "creeps"], {}), (descriptor, name) => {
+						manifest[name] = _.assign({ shard: ShardMemory.getPrimaryShardName() }, descriptor);
+					});
+				}
+			}
+
+			if (creepName != null) {
+				let info = manifest[creepName];
+				if (!info) {
+					return `<font color="#FF6B6B">[Shards]</font> Global creep ${creepName} not found.`;
+				}
+				return `<font color="#4ECDC4">[Shards]</font> ${creepName}\n${JSON.stringify(info, null, 2)}`;
+			}
+
+			let entries = Object.entries(manifest);
+			let lines = new Array();
+			lines.push(`<font color="#4ECDC4">[Shards]</font> Known global creeps: ${entries.length}`);
+
+			if (entries.length === 0) {
+				return lines.join("\n");
+			}
+
+			_.each(_.take(entries, 12), ([name, info]) => {
+				lines.push(`  ${name}: ${info.status || "unknown"} | shard ${info.shard || "?"} | room ${info.room || _.get(info, ["target", "room"], "?")} | ttl ${_.get(info, "ttl", "?")} | mission ${info.mission || "?"}`);
+			});
+
+			if (entries.length > 12) {
+				lines.push(`  ... ${entries.length - 12} more (use shards.global("name"))`);
+			}
+
+			return lines.join("\n");
+		};
+
+		help_shards.push("shards.set_primary(shardName)");
+		help_shards.push(" - Update the designated primary shard (defaults to shard0)");
+		shards.set_primary = function (shardName) {
+			if (!_.isString(shardName) || shardName.length === 0) {
+				return `<font color="#FF6B6B">[Shards]</font> Provide a shard name, e.g. shards.set_primary('shard0').`;
+			}
+			if (typeof ShardMemory === "undefined") {
+				return `<font color="#FF6B6B">[Shards]</font> Inter-shard interface not initialized.`;
+			}
+			ShardMemory.setPrimaryShardName(shardName);
+			return `<font color="#4ECDC4">[Shards]</font> Primary shard set to ${shardName}.`;
+		};
+
 
 		help = function (submenu) {
 			let menu = new Array()
@@ -2214,6 +2825,7 @@
 					case "pixels": menu = help_pixels; break;
 					case "profiler": menu = help_profiler; break;
 					case "resources": menu = help_resources; break;
+					case "shards": menu = help_shards; break;
 					case "visuals": menu = help_visuals; break;
 				}
 			}

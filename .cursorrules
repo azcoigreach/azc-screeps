@@ -233,6 +233,9 @@ mcp_screeps_analyze_performance({});
 
 All console commands are defined in `definitions_console_commands.js`. Commands are registered globally and available in the Screeps console.
 
+### Console Syntax Reminder
+- Screeps console executes ES5 JavaScript. Avoid modern syntax such as optional chaining (`?.`) or `let`/`const` scoping quirks that rely on newer runtimes when entering commands manually. Use classic guards (`if`, `&&`) to prevent runtime syntax errors.
+
 ### Main Command Categories
 - **`help(category)`**: Display help for commands
 - **`empire.*`**: Empire management (colonize, remote mining, spawn assist)

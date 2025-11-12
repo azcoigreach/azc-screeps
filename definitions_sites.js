@@ -36,6 +36,10 @@
 				this.runCreeps(rmColony, listCreeps, listSpawnRoute);
 				Stats_CPU.End(rmColony, "Colony-runCreeps");
 
+				Stats_CPU.Start(rmColony, "Colony-runScouts");
+				this.runScouts(rmColony, listCreeps);
+				Stats_CPU.End(rmColony, "Colony-runScouts");
+
 				Stats_CPU.Start(rmColony, "Colony-runTowers");
 				this.runTowers(rmColony);
 				Stats_CPU.End(rmColony, "Colony-runTowers");
@@ -283,9 +287,11 @@
 
 			runCreeps: function (rmColony, listCreeps, listSpawnRoute) {
 				_.each(listCreeps, creep => {
-					_.set(creep, ["memory", "list_route"], listSpawnRoute);
+					if (_.get(creep, ["memory", "role"]) != "scout")
+						_.set(creep, ["memory", "list_route"], listSpawnRoute);
 
 					switch (_.get(creep, ["memory", "role"])) {
+						case "scout": Creep_Roles.Scout(creep); break;
 						case "worker": Creep_Roles.Worker(creep); break;
 						case "upgrader": Creep_Roles.Upgrader(creep, _.get(Memory, ["rooms", rmColony, "defense", "is_safe"], true)); break;
 						case "healer": Creep_Roles.Healer(creep, true); break;
@@ -298,6 +304,22 @@
 							Creep_Roles.Archer(creep, false, true);
 							break;
 					}
+				});
+			},
+
+			runScouts: function (rmColony, listColonyCreeps) {
+				let existing = {};
+				_.each(listColonyCreeps, creep => existing[creep.name] = true);
+
+				let scouts = _.filter(Game.creeps, creep => {
+					return _.get(creep, ["memory", "role"]) == "scout"
+						&& (_.get(creep, ["memory", "colony"]) == rmColony
+							|| _.get(creep, ["memory", "room"]) == rmColony);
+				});
+
+				_.each(scouts, creep => {
+					if (!existing[creep.name])
+						Creep_Roles.Scout(creep);
 				});
 			},
 
@@ -1162,6 +1184,10 @@
 					t => {
 						let amount = 0, r1_amount = 0, r2_amount = 0;
 						let reagents = getReagents(_.get(t, "mineral"));
+						if (reagents == null || reagents.length < 2) {
+							console.log(`<font color="#A17BFF">[Labs]</font> Skipping reaction target ${_.get(t, "mineral")} - no reagent mapping found.`);
+							return false;
+						}
 						_.each(_.filter(Game.rooms,
 							r => { return r.controller != null && r.controller.my && r.terminal; }),
 							r => {

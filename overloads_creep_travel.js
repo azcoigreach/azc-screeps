@@ -116,26 +116,81 @@ Creep.prototype.travelByPath = function travelByPath() {
 	}
 };
 
-Creep.prototype.travelToRoom = function travelToRoom(tgtRoom, forward) {
+Creep.prototype.travelToRoom = function travelToRoom(tgtRoom, forward, portalCallback) {
 	if (this.room.name == tgtRoom)
 		return ERR_NO_PATH;
 
 	let list_route = _.get(this, ["memory", "list_route"]);
-	
-	if (list_route && list_route.length > 0) {
+
+	const parsedRoute = (function (route) {
+		if (!route)
+			return [];
+
+		const defaultShard = _.get(this, ["memory", "colony_shard"], Game.shard.name);
+
+		return _.chain(_.isArray(route) ? route : [route])
+			.map(entry => {
+				if (entry == null)
+					return null;
+
+				if (_.isString(entry)) {
+					let parts = entry.split("/");
+					if (parts.length === 2)
+						return { shard: parts[0], roomName: parts[1] };
+					return { shard: defaultShard, roomName: entry };
+				}
+
+				if (_.isObject(entry)) {
+					let shard = _.get(entry, "shard", defaultShard);
+					let roomName = _.get(entry, "roomName") || _.get(entry, "room") || _.get(entry, "name");
+					if (_.isString(roomName)) {
+						let parts = roomName.split("/");
+						if (parts.length === 2) {
+							shard = parts[0];
+							roomName = parts[1];
+						}
+						return { shard: shard, roomName: roomName };
+					}
+				}
+
+				return null;
+			})
+			.filter(entry => entry && _.isString(entry.roomName))
+			.value();
+	}).call(this, list_route);
+
+	if (parsedRoute.length > 0) {
 		if (forward === true) {
-			for (let i = 1; i < list_route.length; i++) {
-				if (this.room.name === list_route[i - 1]) {
+			for (let i = 1; i < parsedRoute.length; i++) {
+				if (parsedRoute[i - 1].shard !== Game.shard.name)
+					continue;
+				if (this.room.name === parsedRoute[i - 1].roomName) {
 					// Check for portal to next room in the route
 					let portal = this.pos.findClosestByRange(FIND_STRUCTURES, {
-						filter: (structure) => structure.structureType == STRUCTURE_PORTAL && structure.destination.roomName == list_route[i]
+						filter: (structure) => {
+							if (structure.structureType != STRUCTURE_PORTAL)
+								return false;
+							if (_.get(structure, ["destination", "roomName"]) != parsedRoute[i].roomName)
+								return false;
+							if (_.get(structure, ["destination", "shard"]) && _.get(structure, ["destination", "shard"]) != parsedRoute[i].shard)
+								return false;
+							return true;
+						}
 					});
 					if (portal) {
+						if (_.isFunction(portalCallback))
+							portalCallback.call(this, portal, parsedRoute[i]);
+						else if (parsedRoute[i] && parsedRoute[i].shard && parsedRoute[i].shard !== Game.shard.name && _.isFunction(this._recordTransferSnapshot))
+							this._recordTransferSnapshot(portal.pos, parsedRoute[i].shard, parsedRoute[i].roomName);
 						_.set(this, ["memory", "path", "portal"], portal.id);
 						let result = this.travel(portal.pos);
 						if (result == OK) {
 							return OK;
 						} else {
+							if (_.isFunction(portalCallback))
+								portalCallback.call(this, portal, parsedRoute[i]);
+							else if (parsedRoute[i] && parsedRoute[i].shard && parsedRoute[i].shard !== Game.shard.name && _.isFunction(this._recordTransferSnapshot))
+								this._recordTransferSnapshot(portal.pos, parsedRoute[i].shard, parsedRoute[i].roomName);
 							// Fallback to moveTo if travel fails
 							result = this.moveTo(portal.pos);
 							if (result == OK) {
@@ -144,19 +199,29 @@ Creep.prototype.travelToRoom = function travelToRoom(tgtRoom, forward) {
 						}
 					}
 					// Attempt to travel to the exit tile of the target room
-					let result = this.travelToExitTile(list_route[i]);
+					let result = this.travelToExitTile(parsedRoute[i].roomName);
 					if (result == OK)
 						return OK;
 					else
-						return this.travel(new RoomPosition(25, 25, list_route[i]));
+						return this.travel(new RoomPosition(25, 25, parsedRoute[i].roomName));
 				}
 			}
 		} else if (forward === false) {
-			for (let i = list_route.length - 2; i >= 0; i--) {
-				if (this.room.name === list_route[i + 1]) {
+			for (let i = parsedRoute.length - 2; i >= 0; i--) {
+				if (parsedRoute[i + 1].shard !== Game.shard.name)
+					continue;
+				if (this.room.name === parsedRoute[i + 1].roomName) {
 					// Check for portal to previous room in the route
 					let portal = this.pos.findClosestByRange(FIND_STRUCTURES, {
-						filter: (structure) => structure.structureType == STRUCTURE_PORTAL && structure.destination.roomName == list_route[i]
+						filter: (structure) => {
+							if (structure.structureType != STRUCTURE_PORTAL)
+								return false;
+							if (_.get(structure, ["destination", "roomName"]) != parsedRoute[i].roomName)
+								return false;
+							if (_.get(structure, ["destination", "shard"]) && _.get(structure, ["destination", "shard"]) != parsedRoute[i].shard)
+								return false;
+							return true;
+						}
 					});
 					if (portal) {
 						_.set(this, ["memory", "path", "portal"], portal.id);
@@ -172,11 +237,11 @@ Creep.prototype.travelToRoom = function travelToRoom(tgtRoom, forward) {
 						}
 					}
 					// Attempt to travel to the exit tile of the target room
-					let result = this.travelToExitTile(list_route[i]);
+					let result = this.travelToExitTile(parsedRoute[i].roomName);
 					if (result == OK)
 						return OK;
 					else
-						return this.travel(new RoomPosition(25, 25, list_route[i]));
+						return this.travel(new RoomPosition(25, 25, parsedRoute[i].roomName));
 				}
 			}
 		}

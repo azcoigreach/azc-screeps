@@ -38,6 +38,7 @@ require("overloads_creep_travel");
 require("overloads_lab");
 require("overloads_room");
 require("overloads_room_position");
+require("definitions_intershard");
 require("definitions_populations");
 require("definitions_combat_populations");
 require("definitions_creep_body");
@@ -45,6 +46,7 @@ require("definitions_creep_roles");
 require("definitions_creep_combat_roles");
 require("definitions_sites");
 require("definitions_hive_control");
+require("definitions_shard_control");
 require("definitions_blueprint");
 require("definitions_blueprint_layouts");
 require("definitions_console_commands");
@@ -70,6 +72,8 @@ module.exports.loop = function () {
 	Control.initMemory();
 	Control.initLabs();
         Control.initVisuals();
+
+	ShardControl.run();
 
         FlagController.run();
         

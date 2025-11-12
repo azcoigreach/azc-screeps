@@ -56,6 +56,10 @@
     isPulse_Blueprint = function () {
         return _.get(Memory, ["hive", "pulses", "blueprint", "active"], true);
     };
+
+    isPulse_InterShard = function () {
+        return _.get(Memory, ["hive", "pulses", "intershard", "active"], true);
+    };
     
     getReagents = function (mineral) {
         for (let r1 in REACTIONS) {
