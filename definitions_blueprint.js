@@ -345,6 +345,20 @@
 					continue;
 			}
 
+			// Check if structure already exists at this position
+			let lookStructure = room.lookForAt("structure", x, y);
+			if (lookStructure.length > 0 && _.findIndex(lookStructure, s => { return s.structureType == structureType }) >= 0) {
+				// Structure already exists, skip
+				continue;
+			}
+
+			// Check if construction site already exists at this position
+			let lookConstruction = room.lookForAt("constructionSite", x, y);
+			if (lookConstruction.length > 0 && lookConstruction[0].structureType == structureType) {
+				// Construction site already exists, skip
+				continue;
+			}
+
 			let result = room.createConstructionSite(x, y, structureType);
 			if (result == OK) {
 				console.log(`<font color=\"#6065FF\">[Blueprint]</font> ${room.name} placing ${structureType} at `
@@ -357,7 +371,7 @@
 					continue;
 				}
 
-				let lookStructure = room.lookForAt("structure", x, y);
+				// Different structure type exists, destroy it
 				if (lookStructure.length > 0 && _.findIndex(lookStructure, s => { return s.structureType == structureType }) < 0) {
 					_.head(lookStructure).destroy();
 					i -= 1;
