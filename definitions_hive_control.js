@@ -110,9 +110,9 @@
 			return false;
 
 		const TTL_GRACE_TICKS = 5;
-		const DESCRIPTOR_STALE_TICKS = 150;
+		const DESCRIPTOR_STALE_TICKS = 50; // Reduced from 150 for faster dead detection
 		const COMPLETION_GRACE_TICKS = 200;
-		const TRANSFER_GRACE_TICKS = 200;
+		const TRANSFER_GRACE_TICKS = 100; // Reduced from 200 for faster dead detection
 		const HANDSHAKE_PENDING_TICKS = 75;
 		const HANDSHAKE_ACK_TICKS = 150;
 
@@ -124,16 +124,37 @@
 			let descriptor = _.get(payload, ["global", "creeps", name]);
 			if (descriptor) {
 				let status = _.get(descriptor, "status", "active");
-				if (status !== "dead") {
-					let ttl = _.get(descriptor, "ttl", 0);
-					let lastUpdate = _.get(descriptor, "last_update", Game.time);
-					if (ttl > TTL_GRACE_TICKS)
-						return true;
-					if ((Game.time - lastUpdate) <= DESCRIPTOR_STALE_TICKS)
-						return true;
-					if (status === "transferring" && (Game.time - lastUpdate) <= TRANSFER_GRACE_TICKS)
-						return true;
+				if (status === "dead") {
+					// Explicitly marked as dead
+					return false;
 				}
+				
+				let ttl = _.get(descriptor, "ttl", 0);
+				let lastUpdate = _.get(descriptor, "last_update", Game.time);
+				let age = Game.time - lastUpdate;
+				
+				// If TTL is very low and update is stale, likely dead
+				if (ttl <= TTL_GRACE_TICKS && age > DESCRIPTOR_STALE_TICKS) {
+					return false;
+				}
+				
+				// If status is active but update is very stale, likely dead
+				if (status === "active" && age > DESCRIPTOR_STALE_TICKS) {
+					return false;
+				}
+				
+				// If transferring but update is stale, likely dead
+				if (status === "transferring" && age > TRANSFER_GRACE_TICKS) {
+					return false;
+				}
+				
+				// Otherwise, consider it alive
+				if (ttl > TTL_GRACE_TICKS)
+					return true;
+				if (age <= DESCRIPTOR_STALE_TICKS)
+					return true;
+				if (status === "transferring" && age <= TRANSFER_GRACE_TICKS)
+					return true;
 			}
 
 			let handshake = _.get(payload, "handshake");
@@ -520,6 +541,7 @@
 			if (_.isObject(request.remote_creeps)) {
 				_.each(Object.keys(request.remote_creeps), name => {
 					if (Game.creeps[name]) {
+						// Creep is now local, remove from remote tracking
 						delete request.remote_creeps[name];
 						return;
 					}
@@ -529,6 +551,12 @@
 						remoteNames.push(name);
 						request.remote_creeps[name] = Game.time;
 					} else {
+						// Creep is dead or no longer tracked
+						let lastSeen = request.remote_creeps[name] || Game.time;
+						let debugScouts = _.get(Memory, ["hive", "debug", "scout"], false);
+						if (debugScouts) {
+							console.log(`<font color="#FF944E">[Scout]</font> Detected dead remote scout ${name} (last seen ${Game.time - lastSeen} ticks ago)`);
+						}
 						delete request.remote_creeps[name];
 						request._remote_pruned++;
 					}
@@ -629,6 +657,110 @@
 
 		requests = _.filter(requests, req => req != null && req._completed !== true);
 		_.set(Memory, ["rooms", rmColony, "scout_requests"], requests);
+	},
+
+	// Reusable inter-shard mission framework helpers
+	getPortalForDirection: function (creep, direction, missionData) {
+		// Helper to determine which portal to use based on mission direction
+		// direction: "to_dest" or "to_rally"
+		// missionData: object with dest_pos, rally_pos, transfer_intent, portals
+		if (!creep || !missionData)
+			return null;
+
+		let targetShard = null;
+		let targetRoom = null;
+
+		if (direction === "to_dest") {
+			targetShard = _.get(missionData, ["dest_pos", "shard"]);
+			targetRoom = _.get(missionData, ["dest_pos", "roomName"]);
+		} else if (direction === "to_rally") {
+			targetShard = _.get(missionData, ["rally_pos", "shard"]);
+			targetRoom = _.get(missionData, ["rally_pos", "roomName"]);
+		}
+
+		if (!targetShard || targetShard === Game.shard.name)
+			return null;
+
+		// Check portals array first
+		let portals = _.get(missionData, "portals", []);
+		if (_.isArray(portals)) {
+			for (let i = 0; i < portals.length; i++) {
+				let entry = portals[i];
+				if (!entry || !entry.from || !entry.to)
+					continue;
+				if (entry.from.shard === Game.shard.name && entry.to.shard === targetShard) {
+					if (!targetRoom || entry.to.roomName === targetRoom || !entry.to.roomName)
+						return entry;
+				}
+			}
+		}
+
+		// Check transfer_intent
+		let transferIntent = _.get(missionData, "transfer_intent");
+		if (_.isObject(transferIntent)) {
+			if (direction === "to_dest") {
+				let portalPos = _.get(transferIntent, "portal_pos");
+				if (portalPos && _.get(transferIntent, "destination_shard") === targetShard) {
+					return {
+						from: { shard: Game.shard.name, roomName: portalPos.roomName, pos: portalPos },
+						to: { shard: targetShard, roomName: targetRoom }
+					};
+				}
+			} else if (direction === "to_rally") {
+				let returnPortal = _.get(transferIntent, "return_portal");
+				if (returnPortal) {
+					let portalPos = _.get(returnPortal, "portal_pos");
+					if (portalPos && _.get(returnPortal, "destination_shard") === targetShard) {
+						return {
+							from: { shard: Game.shard.name, roomName: portalPos.roomName, pos: portalPos },
+							to: { shard: targetShard, roomName: targetRoom }
+						};
+					}
+				}
+			}
+		}
+
+		return null;
+	},
+
+	updateMissionState: function (creep, missionData) {
+		// Helper to update mission state for inter-shard operations
+		// Ensures mission data is persisted in global memory
+		if (!creep || !missionData)
+			return;
+
+		let missionCache = _.get(creep.memory, ["global", "mission_data"]);
+		if (!_.isObject(missionCache))
+			missionCache = {};
+
+		_.assign(missionCache, missionData);
+		_.set(creep.memory, ["global", "mission_data"], missionCache);
+
+		// Update global descriptor
+		if (typeof creep.ensureGlobal === "function") {
+			creep.ensureGlobal({
+				mission: _.get(missionCache, "mission", "scout"),
+				status: _.get(creep.memory, "global_status", "active"),
+				origin: _.get(missionCache, "origin"),
+				target: _.get(missionCache, "target")
+			});
+		}
+	},
+
+	trackRemoteMissionCreep: function (creepName, missionId, missionType) {
+		// Helper to track remote mission creeps (reusable for scouts, colonizers, etc.)
+		// missionType: "scout", "colonize", "resource", etc.
+		let creepMem = _.get(Memory, ["creeps", creepName]);
+		if (!creepMem)
+			return false;
+
+		let requestId = _.get(creepMem, missionType === "scout" ? "scout_request_id" : "mission_id");
+		if (!requestId || requestId !== missionId)
+			return false;
+
+		// Check if creep is tracked globally
+		let globalState = this.getGlobalCreepState();
+		return this.isCreepTrackedGlobally(creepName, globalState);
 	},
 
 	deriveScoutRoute: function (origin, destination) {

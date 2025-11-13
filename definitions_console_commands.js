@@ -18,6 +18,7 @@
 		let help_resources = new Array();
 		let help_visuals = new Array();
 		let help_shards = new Array();
+		let help_scouts = new Array();
 
 
 
@@ -34,6 +35,7 @@
 		help_main.push(`- "pixels" \t Pixel generation management and statistics`);
 		help_main.push(`- "profiler" \t Built-in CPU profiler`);
 		help_main.push(`- "resources" \t Management of resources, empire-wide sharing and/or selling to market`);
+		help_main.push(`- "scouts" \t Scout mission status and diagnostics`);
 		help_main.push(`- "shards" \t Inter-shard coordination and diagnostics`);
 		help_main.push(`- "visuals" \t Manage visual objects (RoomVisual class)`);
 		help_main.push("");
@@ -2807,6 +2809,122 @@
 			return `<font color="#4ECDC4">[Shards]</font> Primary shard set to ${shardName}.`;
 		};
 
+		// Scout mission diagnostics
+		scouts = new Object();
+		help_scouts.push("scouts.status(requestId?)");
+		help_scouts.push(" - Show status of scout missions (optional requestId for specific mission)");
+		help_scouts.push(" - Displays active scouts, patrol state, shard locations, and mission details");
+		scouts.status = function (requestId) {
+			if (typeof Control === "undefined") {
+				return `<font color="#FF6B6B">[Scouts]</font> Control system not initialized.`;
+			}
+
+			let allRequests = {};
+			let totalScouts = 0;
+			let totalRequests = 0;
+
+			// Collect all scout requests
+			for (let roomName in Memory.rooms) {
+				let requests = _.get(Memory, ["rooms", roomName, "scout_requests"]);
+				if (_.isArray(requests) && requests.length > 0) {
+					for (let i = 0; i < requests.length; i++) {
+						let req = requests[i];
+						if (!req || (requestId && req.id !== requestId))
+							continue;
+						
+						totalRequests++;
+						let reqId = req.id || `unknown_${totalRequests}`;
+						allRequests[reqId] = {
+							request: req,
+							colony: roomName
+						};
+					}
+				}
+			}
+
+			if (requestId && Object.keys(allRequests).length === 0) {
+				return `<font color="#FF944E">[Scouts]</font> No scout request found with ID: ${requestId}`;
+			}
+
+			let lines = [];
+			lines.push(`<font color="#4ECDC4"><b>[Scouts]</b></font> Scout Mission Status (Tick ${Game.time})`);
+			lines.push("");
+
+			for (let reqId in allRequests) {
+				let reqData = allRequests[reqId];
+				let req = reqData.request;
+				let colony = reqData.colony;
+
+				lines.push(`<font color="#D3FFA3"><b>Request ID:</b></font> ${reqId}`);
+				lines.push(`  Colony: ${colony}`);
+				lines.push(`  Patrol Mode: ${req.patrol_mode || "station"}`);
+				lines.push(`  Count: ${req.count || 1} (Active: ${req.active || 0}, Remote: ${req.remote_count || 0})`);
+				lines.push(`  Respawn: ${req.respawn !== false ? "Yes" : "No"}`);
+				lines.push(`  Rally Ready: ${req.rally_ready ? "Yes" : "No"}`);
+				lines.push(`  Rally Release: ${req.rally_release ? "Yes" : "No"}`);
+
+				if (req.rally_pos) {
+					let rallyShard = _.get(req.rally_pos, "shard", Game.shard.name);
+					lines.push(`  Rally: ${req.rally_pos.roomName} (${req.rally_pos.x},${req.rally_pos.y}) [${rallyShard}]`);
+				}
+				if (req.dest_pos) {
+					let destShard = _.get(req.dest_pos, "shard", Game.shard.name);
+					lines.push(`  Destination: ${req.dest_pos.roomName} (${req.dest_pos.x},${req.dest_pos.y}) [${destShard}]`);
+				}
+
+				// List active creeps
+				let creeps = _.get(req, "creeps", []);
+				if (creeps.length > 0) {
+					lines.push(`  Active Scouts (${creeps.length}):`);
+					for (let i = 0; i < creeps.length; i++) {
+						let creepName = creeps[i];
+						let creep = Game.creeps[creepName];
+						if (creep) {
+							let patrolState = _.get(creep.memory, "scout_patrol_state", "unknown");
+							let shard = Game.shard.name;
+							let room = creep.room.name;
+							let ttl = creep.ticksToLive;
+							lines.push(`    - ${creepName}: ${room} [${shard}], state=${patrolState}, TTL=${ttl}`);
+						} else {
+							lines.push(`    - ${creepName}: <font color="#FF944E">not found</font>`);
+						}
+					}
+				}
+
+				// List remote creeps
+				let remoteCreeps = _.get(req, "remote_creeps", {});
+				let remoteNames = Object.keys(remoteCreeps);
+				if (remoteNames.length > 0) {
+					lines.push(`  Remote Scouts (${remoteNames.length}):`);
+					let globalState = Control.getGlobalCreepState();
+					for (let i = 0; i < remoteNames.length; i++) {
+						let creepName = remoteNames[i];
+						let lastSeen = remoteCreeps[creepName];
+						let isAlive = Control.isCreepTrackedGlobally(creepName, globalState);
+						let status = isAlive ? "alive" : "<font color=\"#FF944E\">dead</font>";
+						lines.push(`    - ${creepName}: ${status}, last seen ${Game.time - lastSeen} ticks ago`);
+					}
+				}
+
+				lines.push("");
+			}
+
+			if (Object.keys(allRequests).length === 0) {
+				lines.push("No active scout requests found.");
+			}
+
+			console.log(lines.join("<br>"));
+			return `<font color="#4ECDC4">[Scouts]</font> Status displayed for ${Object.keys(allRequests).length} request(s).`;
+		};
+
+		help_scouts.push("scouts.debug(enabled)");
+		help_scouts.push(" - Enable/disable debug logging for scouts");
+		help_scouts.push(" - enabled: true to enable, false to disable");
+		scouts.debug = function (enabled) {
+			_.set(Memory, ["hive", "debug", "scout"], enabled === true);
+			return `<font color="#4ECDC4">[Scouts]</font> Debug logging ${enabled ? "enabled" : "disabled"}.`;
+		};
+
 
 		help = function (submenu) {
 			let menu = new Array()
@@ -2825,6 +2943,7 @@
 					case "pixels": menu = help_pixels; break;
 					case "profiler": menu = help_profiler; break;
 					case "resources": menu = help_resources; break;
+					case "scouts": menu = help_scouts; break;
 					case "shards": menu = help_shards; break;
 					case "visuals": menu = help_visuals; break;
 				}
