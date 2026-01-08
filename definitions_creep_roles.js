@@ -43,7 +43,22 @@
 	const knownShards = (typeof ShardMemory !== "undefined" && _.isArray(_.get(ShardMemory, "KNOWN_SHARDS")))
 		? ShardMemory.KNOWN_SHARDS
 		: ["shard0", "shard1", "shard2", "shard3"];
-	const debugEnabled = _.get(Memory, ["hive", "debug", "scout"], false) === true;
+	// Debug level: 0 = none, 1 = errors/state changes, 2 = +movement/portals, 3 = full verbose
+	const debugLevel = _.get(Memory, ["hive", "debug", "scout"], 0);
+	const debugEnabled = debugLevel > 0;
+	const debugVerbose = debugLevel >= 3;
+	const debugMovement = debugLevel >= 2;
+	
+	// Helper function for throttled debug logging
+	const debugLog = function(level, message, throttleTicks) {
+		if (debugLevel < level) return;
+		if (throttleTicks && throttleTicks > 0) {
+			let lastLog = _.get(creep.memory, `_scout_debug_log_${level}`, 0);
+			if (Game.time - lastLog < throttleTicks) return;
+			creep.memory[`_scout_debug_log_${level}`] = Game.time;
+		}
+		console.log(message);
+	};
 
 	const shouldWaitForTransferAck = function () {
 		// TODO: re-enable once inter-shard handshake acks are flowing reliably
@@ -51,16 +66,14 @@
 	};
 
 	const recordTransferSnapshot = function (portalPos, targetShard, targetRoom) {
-		if (debugEnabled)
-			console.log(`<font color="#4ECDC4">[Scout]</font> recordTransferSnapshot called for ${creep.name} - target: ${targetShard}/${targetRoom}`);
+		// Early return if transfer already recorded - prevent loops
 		if (creep.memory._scout_transfer_recorded === true) {
-			if (debugEnabled)
-				console.log(`<font color="#FFD700">[Scout]</font> Transfer already recorded for ${creep.name}`);
-					return;
-				}
+			return;
+		}
+		
+		debugLog(2, `<font color="#4ECDC4">[Scout]</font> recordTransferSnapshot called for ${creep.name} - target: ${targetShard}/${targetRoom}`, 10);
 
-		if (debugEnabled)
-			console.log(`<font color="#4ECDC4">[Scout]</font> Recording transfer snapshot for ${creep.name}`);
+		debugLog(2, `<font color="#4ECDC4">[Scout]</font> Recording transfer snapshot for ${creep.name}`, 10);
 		let snapshot;
 			try {
 				snapshot = JSON.parse(JSON.stringify(creep.memory || {}));
@@ -154,16 +167,20 @@
 					ismData.global_creeps = {};
 				ismData.global_creeps[creep.name] = descriptor;
 				InterShardMemory.setLocal(JSON.stringify(ismData));
-				if (debugEnabled)
-					console.log(`<font color="#4ECDC4">[Scout]</font> snapshot stored for ${creep.name}`);
+				debugLog(2, `<font color="#4ECDC4">[Scout]</font> snapshot stored for ${creep.name}`, 10);
 			}
 		} catch (err) {
-			if (debugEnabled)
-				console.log(`<font color="#FFA500">[Scout]</font> Failed to record transfer for ${creep.name}: ${err.message}`);
+			debugLog(1, `<font color="#FFA500">[Scout]</font> Failed to record transfer for ${creep.name}: ${err.message}`, 0);
 		}
 
 		creep.memory._scout_next_portal_allowed = Game.time + 20;
 		creep.memory._scout_transfer_recorded = true;
+		
+		// Register scout as remote immediately when transfer is recorded
+		// This ensures proper tracking even if the creep disappears before clearDeadMemory runs
+		if (typeof Control !== "undefined" && _.isFunction(Control.registerRemoteMissionCreep)) {
+			Control.registerRemoteMissionCreep(creep.name, Game.time);
+		}
 		};
 
 		// Allow pathing helpers to trigger snapshot recording when they detect a portal
@@ -180,8 +197,7 @@
 				return;
 			}
 
-		if (debugEnabled)
-			console.log(`<font color="#4ECDC4">[Scout]</font> Attempting restoration for ${creep.name} on shard ${Game.shard.name}`);
+		debugLog(2, `<font color="#4ECDC4">[Scout]</font> Attempting restoration for ${creep.name} on shard ${Game.shard.name}`, 0);
 		let transferData = null;
 
 		for (let i = 0; i < knownShards.length; i++) {
@@ -215,8 +231,7 @@
 
 			if (entry) {
 				transferData = entry;
-				if (debugEnabled)
-					console.log(`<font color="#4ECDC4">[Scout]</font> Found transfer for ${creep.name} from ${shardName}`);
+				debugLog(2, `<font color="#4ECDC4">[Scout]</font> Found transfer for ${creep.name} from ${shardName}`, 0);
 				break;
 			}
 		}
@@ -227,18 +242,15 @@
 				offer = ShardMemory.getHandshakeOffer(creep.name, true);
 			}
 			if (_.get(offer, "transfer_data")) {
-				if (debugEnabled)
-					console.log(`<font color="#4ECDC4">[Scout]</font> Using handshake backup transfer for ${creep.name}`);
+				debugLog(2, `<font color="#4ECDC4">[Scout]</font> Using handshake backup transfer for ${creep.name}`, 0);
 				transferData = _.get(offer, "transfer_data");
 			} else {
-				if (debugEnabled)
-					console.log(`<font color="#FFD700">[Scout]</font> No transfer data found for ${creep.name}`);
+				debugLog(1, `<font color="#FFD700">[Scout]</font> No transfer data found for ${creep.name}`, 0);
 				return;
 			}
 		}
 
-		if (debugEnabled)
-			console.log(`<font color="#4ECDC4">[Scout]</font> Restoring memory for ${creep.name} from transfer data`);
+		debugLog(2, `<font color="#4ECDC4">[Scout]</font> Restoring memory for ${creep.name} from transfer data`, 0);
 		let snapshot = _.get(transferData, "memory");
 
 		if (_.isObject(snapshot)) {
@@ -299,17 +311,91 @@
 			if (typeof creep.travelClear === "function")
 				creep.travelClear();
 
-			let destShard = _.get(creep.memory, ["dest_pos", "shard"]);
-			let rallyShard = _.get(creep.memory, ["rally_pos", "shard"], colonyShard);
-			if (destShard === Game.shard.name) {
-				creep.memory.scout_patrol_state = "to_dest";
-				creep.memory.scout_dest_reached = false;
-				creep.memory.scout_rally_reached = creep.memory.scout_rally_reached || false;
-			} else if (rallyShard === Game.shard.name) {
-				creep.memory.scout_patrol_state = "to_rally";
-				creep.memory.scout_rally_reached = false;
-				creep.memory.scout_dest_reached = creep.memory.scout_dest_reached || false;
+			// Restore patrol state based on shard and loop mode progress
+			let destPosData = _.get(creep.memory, "dest_pos");
+			let rallyPosData = _.get(creep.memory, "rally_pos");
+			let destShard = _.get(destPosData, "shard");
+			let rallyShard = _.get(rallyPosData, "shard", colonyShard);
+			let patrolMode = _.get(creep.memory, "patrol_mode", "station");
+			let restoredPatrolState = _.get(creep.memory, "scout_patrol_state");
+			let destReached = _.get(creep.memory, "scout_dest_reached", false);
+			let rallyReached = _.get(creep.memory, "scout_rally_reached", false);
+			
+			// Check if scout is actually at rally/destination position
+			let atRallyPos = false;
+			let atDestPos = false;
+			if (rallyPosData && rallyShard === Game.shard.name) {
+				let rallyPos = new RoomPosition(rallyPosData.x, rallyPosData.y, rallyPosData.roomName);
+				atRallyPos = creep.room.name === rallyPos.roomName && creep.pos.inRangeTo(rallyPos, 1);
 			}
+			if (destPosData && destShard === Game.shard.name) {
+				let destPos = new RoomPosition(destPosData.x, destPosData.y, destPosData.roomName);
+				atDestPos = creep.room.name === destPos.roomName && creep.pos.inRangeTo(destPos, 1);
+			}
+			
+			if (patrolMode === "loop") {
+				// In loop mode, determine state based on shard, progress, and actual position
+				if (destShard === Game.shard.name) {
+					// On destination shard
+					if (atDestPos) {
+						// Actually at destination - should be heading back to rally
+						creep.memory.scout_patrol_state = "to_rally";
+						creep.memory.scout_dest_reached = true;
+						creep.memory.scout_rally_reached = false;
+					} else if (restoredPatrolState === "to_rally" && destReached) {
+						// Was heading back to rally after reaching destination, keep that state
+						creep.memory.scout_patrol_state = "to_rally";
+						creep.memory.scout_dest_reached = true;
+						creep.memory.scout_rally_reached = false;
+					} else {
+						// Heading to destination
+						creep.memory.scout_patrol_state = "to_dest";
+						creep.memory.scout_dest_reached = destReached;
+						creep.memory.scout_rally_reached = rallyReached;
+					}
+				} else if (rallyShard === Game.shard.name) {
+					// On rally shard
+					if (atRallyPos) {
+						// Actually at rally - should be heading to destination (start next loop)
+						creep.memory.scout_patrol_state = "to_dest";
+						creep.memory.scout_rally_reached = true;
+						creep.memory.scout_dest_reached = false;
+					} else if (restoredPatrolState === "to_rally" && destReached) {
+						// Was returning to rally after completing destination leg, keep that state
+						creep.memory.scout_patrol_state = "to_rally";
+						creep.memory.scout_dest_reached = true;
+						creep.memory.scout_rally_reached = false;
+					} else if (restoredPatrolState === "to_dest" && rallyReached) {
+						// Was heading to destination after reaching rally, keep that state
+						creep.memory.scout_patrol_state = "to_dest";
+						creep.memory.scout_rally_reached = true;
+						creep.memory.scout_dest_reached = false;
+					} else {
+						// Default: heading to rally
+						creep.memory.scout_patrol_state = "to_rally";
+						creep.memory.scout_rally_reached = rallyReached;
+						creep.memory.scout_dest_reached = destReached;
+					}
+				} else {
+					// On neither shard - preserve state or default to heading to destination
+					creep.memory.scout_patrol_state = restoredPatrolState || "to_dest";
+					creep.memory.scout_dest_reached = destReached;
+					creep.memory.scout_rally_reached = rallyReached;
+				}
+			} else {
+				// Station mode - simple shard-based state
+				if (destShard === Game.shard.name) {
+					creep.memory.scout_patrol_state = "to_dest";
+					creep.memory.scout_dest_reached = false;
+					creep.memory.scout_rally_reached = rallyReached;
+				} else if (rallyShard === Game.shard.name) {
+					creep.memory.scout_patrol_state = "to_rally";
+					creep.memory.scout_rally_reached = false;
+					creep.memory.scout_dest_reached = destReached;
+				}
+			}
+			
+			debugLog(1, `<font color="#4ECDC4">[Scout]</font> ${creep.name} restored on ${Game.shard.name}: patrol_state=${creep.memory.scout_patrol_state}, mode=${patrolMode}, dest_reached=${creep.memory.scout_dest_reached}, rally_reached=${creep.memory.scout_rally_reached}, at_rally=${atRallyPos}, at_dest=${atDestPos}`, 0);
 
 			creep.memory._scout_next_portal_allowed = Game.time + 20;
 			creep.memory._scout_last_shard_switch = Game.time;
@@ -351,8 +437,7 @@
 				if (typeof ShardMemory !== "undefined" && _.isFunction(_.get(ShardMemory, "registerGlobalCreep")))
 					ShardMemory.registerGlobalCreep(creep.name, descriptor);
 			} catch (err) {
-				if (debugEnabled)
-					console.log(`<font color="#FFA500">[Scout]</font> Failed to update ISM for restored ${creep.name}: ${err.message}`);
+				debugLog(1, `<font color="#FFA500">[Scout]</font> Failed to update ISM for restored ${creep.name}: ${err.message}`, 0);
 			}
 		};
 
@@ -634,9 +719,7 @@
 					let returnToShard = _.get(intent, "return_portal.destination_shard", colonyShard);
 					let returnToRoom = _.get(intent, "return_portal.destination_room", null);
 					
-					if (debugEnabled && Game.time % 50 === 0) {
-						console.log(`<font color="#4ECDC4">[Scout]</font> ${creep.name} registering return portal: ${returnFromShard}/${ret.roomName} -> ${returnToShard}/${returnToRoom || "?"}`);
-					}
+					debugLog(2, `<font color="#4ECDC4">[Scout]</font> ${creep.name} registering return portal: ${returnFromShard}/${ret.roomName} -> ${returnToShard}/${returnToRoom || "?"}`, 50);
 					
 					registerEntry(
 						returnFromShard,
@@ -708,16 +791,10 @@
 					// Heading to destination - use destination shard/room
 					targetShard = _.get(destPosData, "shard", targetShard);
 					targetRoom = _.get(destPosData, "roomName", targetRoom);
-					if (debugEnabled) {
-						console.log(`<font color="#4ECDC4">[Scout]</font> ${creep.name} portal selection (to_dest): target=${targetShard}/${targetRoom || "?"}`);
-					}
 				} else if (currentPatrolState === "to_rally") {
 					// Heading to rally - use rally shard/room (this is the return journey)
 					targetShard = _.get(rallyPosData, "shard", colonyShard);
 					targetRoom = _.get(rallyPosData, "roomName", targetRoom);
-					if (debugEnabled) {
-						console.log(`<font color="#4ECDC4">[Scout]</font> ${creep.name} portal selection (to_rally/return): target=${targetShard}/${targetRoom || "?"}`);
-					}
 				}
 			}
 
@@ -735,52 +812,66 @@
 			let portalEntry = findPortalEntry(targetShard, targetRoom);
 			if (!portalEntry) {
 				let warnTick = _.get(creep.memory, "_scout_portal_warn");
-				if (debugEnabled && (!warnTick || warnTick + 50 < Game.time)) {
-					console.log(`<font color="#FF944E">[Scout]</font> ${creep.name} missing portal entry for ${targetShard}/${targetRoom || "?"} (state=${currentPatrolState}); intent=${JSON.stringify(_.get(creep.memory, "transfer_intent"))}`);
-					console.log(`<font color="#FF944E">[Scout]</font> Available portals: ${JSON.stringify(collectPortalEntries().map(e => `${e.from.shard}/${e.from.roomName}->${e.to.shard}/${e.to.roomName || "?"}`))}`);
+				if (!warnTick || warnTick + 50 < Game.time) {
+					debugLog(1, `<font color="#FF944E">[Scout]</font> ${creep.name} missing portal entry for ${targetShard}/${targetRoom || "?"} (state=${currentPatrolState})`, 0);
 					creep.memory._scout_portal_warn = Game.time;
 				}
 				return false;
-			}
-			if (debugEnabled) {
-				console.log(`<font color="#4ECDC4">[Scout]</font> ${creep.name} portal entry located: ${portalEntry.from.shard}/${portalEntry.from.roomName} (${portalEntry.from.pos.x},${portalEntry.from.pos.y}) -> ${portalEntry.to.shard}/${portalEntry.to.roomName || "?"} (state=${currentPatrolState})`);
 			}
 
 			let portalPos = _.get(portalEntry, ["from", "pos"]);
 			if (!portalPos)
 				return false;
 
+			// Check cooldown again after portal lookup
 			if (_.has(creep.memory, "_scout_next_portal_allowed") && creep.memory._scout_next_portal_allowed > Game.time)
 				return false;
 
+			// If transfer already recorded and we're at portal position, try to enter
+			// Don't just wait - actively try to move into the portal
+			if (creep.memory._scout_transfer_recorded === true && creep.room.name === portalPos.roomName && creep.pos.inRangeTo(portalPos, 1)) {
+				// If exactly at portal position, we're already there - portal should transfer us
+				if (creep.pos.isEqualTo(portalPos)) {
+					return true;
+				}
+				// If within range 1 but not at portal, move towards it
+				// Fall through to movement logic below
+			}
+
+			// Travel to portal room if not there yet
 			if (creep.room.name !== portalPos.roomName) {
-				creep.travelToRoom(portalPos.roomName, true, function (portal, nextStep) {
-					let targetShardForCallback = _.get(nextStep, "shard", targetShard);
-					let targetRoomForCallback = _.get(nextStep, "roomName", targetRoom);
-					recordTransferSnapshot(portal.pos, targetShardForCallback, targetRoomForCallback);
-				});
+				// Don't record transfer in callback if already recorded
+				if (creep.memory._scout_transfer_recorded) {
+					creep.travelToRoom(portalPos.roomName, true);
+				} else {
+					creep.travelToRoom(portalPos.roomName, true, function (portal, nextStep) {
+						let targetShardForCallback = _.get(nextStep, "shard", targetShard);
+						let targetRoomForCallback = _.get(nextStep, "roomName", targetRoom);
+						recordTransferSnapshot(portal.pos, targetShardForCallback, targetRoomForCallback);
+					});
+				}
 				return true;
 			}
 
-			recordTransferSnapshot(portalPos, targetShard, targetRoom);
+			// Record transfer snapshot if not already recorded
+			if (!creep.memory._scout_transfer_recorded) {
+				recordTransferSnapshot(portalPos, targetShard, targetRoom);
+			}
 
 			let awaitingAck = shouldWaitForTransferAck(targetShard);
 			if (awaitingAck) {
 				creep.memory._awaiting_transfer_ack = true;
-				if (debugEnabled && _.get(creep.memory, "_scout_ack_wait_log", 0) + 10 < Game.time) {
-					console.log(`<font color="#4ECDC4">[Scout]</font> ${creep.name} awaiting transfer acknowledgement to ${targetShard}/${targetRoom || "?"}`);
-					creep.memory._scout_ack_wait_log = Game.time;
-				}
+				debugLog(2, `<font color="#4ECDC4">[Scout]</font> ${creep.name} awaiting transfer acknowledgement to ${targetShard}/${targetRoom || "?"}`, 10);
 			} else {
 				if (_.get(creep.memory, "_awaiting_transfer_ack") === true) {
-					if (debugEnabled)
-						console.log(`<font color="#4ECDC4">[Scout]</font> ${creep.name} received transfer acknowledgement for ${targetShard}/${targetRoom || "?"}`);
+					debugLog(2, `<font color="#4ECDC4">[Scout]</font> ${creep.name} received transfer acknowledgement for ${targetShard}/${targetRoom || "?"}`, 0);
 					creep.say("GO!");
 				}
 				delete creep.memory._awaiting_transfer_ack;
 				delete creep.memory._scout_ack_wait_log;
 			}
 
+			// If at portal position, wait for transfer
 			if (creep.pos.isEqualTo(portalPos)) {
 				if (awaitingAck) {
 					creep.travelClear();
@@ -789,6 +880,7 @@
 				return true;
 			}
 
+			// Move towards portal - ALWAYS move if not at portal, even if transfer is recorded
 			let range = creep.pos.getRangeTo(portalPos);
 			if (range > 1) {
 				creep.travel(portalPos);
@@ -801,12 +893,15 @@
 				return true;
 			}
 
+			// Try to move into portal
 			let direction = creep.pos.getDirectionTo(portalPos);
 			let moveResult = creep.move(direction);
-			if (moveResult != OK)
+			if (moveResult != OK) {
 				creep.travel(portalPos);
-			else
+			} else if (!creep.memory._scout_transfer_recorded) {
+				// Only record if not already recorded
 				recordTransferSnapshot(portalPos, targetShard, targetRoom);
+			}
 			return true;
 		};
 
@@ -891,9 +986,7 @@
 				}
 			}
 
-			if (debugEnabled) {
-				console.log(`<font color="#4ECDC4">[Scout]</font> ${creep.name} shard switch: ${current} -> ${Game.shard.name}, patrol_state=${creep.memory.scout_patrol_state}, mode=${currentPatrolMode}, dest_reached=${destReached}, rally_reached=${rallyReached}`);
-			}
+			debugLog(1, `<font color="#4ECDC4">[Scout]</font> ${creep.name} shard switch: ${current} -> ${Game.shard.name}, patrol_state=${creep.memory.scout_patrol_state}, mode=${currentPatrolMode}, dest_reached=${destReached}, rally_reached=${rallyReached}`, 0);
 
 			creep.memory._scout_next_portal_allowed = Game.time + 20;
 			creep.memory._scout_last_shard_switch = Game.time;
@@ -966,51 +1059,83 @@
 			let destReached = _.get(creep.memory, "scout_dest_reached", false);
 			let rallyReached = _.get(creep.memory, "scout_rally_reached", false);
 
+			// Check if scout is actually at destination/rally position before correcting state
+			let atDestPos = false;
+			let atRallyPos = false;
+			if (destPosData && destShard === Game.shard.name) {
+				let destPos = new RoomPosition(destPosData.x, destPosData.y, destPosData.roomName);
+				atDestPos = creep.room.name === destPos.roomName && creep.pos.inRangeTo(destPos, 1);
+			}
+			if (rallyPosData && rallyShard === Game.shard.name) {
+				let rallyPos = new RoomPosition(rallyPosData.x, rallyPosData.y, rallyPosData.roomName);
+				atRallyPos = creep.room.name === rallyPos.roomName && creep.pos.inRangeTo(rallyPos, 1);
+			}
+
 			// Correct state if it's inconsistent with current shard and progress
+			// Only correct once per state change to avoid clearing path repeatedly
+			let lastStateCorrection = _.get(creep.memory, "_scout_last_state_correction_tick", 0);
+			let shouldCorrect = (Game.time - lastStateCorrection) > 5; // Only correct every 5 ticks max
+			
 			if (destShard === Game.shard.name) {
 				// On destination shard
-				if (!destReached && state !== "to_dest") {
+				if (atDestPos && state !== "to_rally" && shouldCorrect) {
+					// Actually at destination position, should be heading back to rally
+					debugLog(1, `<font color="#FF944E">[Scout]</font> ${creep.name} correcting state: ${state} -> to_rally (at dest pos)`, 0);
+					if (typeof creep.travelClear === "function")
+						creep.travelClear();
+					creep.memory.scout_patrol_state = "to_rally";
+					creep.memory.scout_dest_reached = true;
+					creep.memory.scout_rally_reached = false;
+					creep.memory._scout_last_state_correction_tick = Game.time;
+					state = "to_rally";
+				} else if (!atDestPos && !destReached && state !== "to_dest" && shouldCorrect) {
 					// Haven't reached destination yet, should be heading to destination
-					if (debugEnabled) {
-						console.log(`<font color="#FF944E">[Scout]</font> ${creep.name} correcting state: ${state} -> to_dest (on dest shard, dest not reached)`);
-					}
+					debugLog(1, `<font color="#FF944E">[Scout]</font> ${creep.name} correcting state: ${state} -> to_dest (on dest shard, dest not reached)`, 0);
 					if (typeof creep.travelClear === "function")
 						creep.travelClear();
 					creep.memory.scout_patrol_state = "to_dest";
 					creep.memory.scout_dest_reached = false;
+					creep.memory._scout_last_state_correction_tick = Game.time;
 					state = "to_dest";
-				} else if (destReached && state !== "to_rally") {
-					// Reached destination, should be heading back to rally
-					if (debugEnabled) {
-						console.log(`<font color="#FF944E">[Scout]</font> ${creep.name} correcting state: ${state} -> to_rally (on dest shard, dest reached)`);
-					}
+				} else if (destReached && state !== "to_rally" && shouldCorrect) {
+					// Reached destination (flag set), should be heading back to rally
+					debugLog(1, `<font color="#FF944E">[Scout]</font> ${creep.name} correcting state: ${state} -> to_rally (on dest shard, dest reached)`, 0);
 					if (typeof creep.travelClear === "function")
 						creep.travelClear();
 					creep.memory.scout_patrol_state = "to_rally";
 					creep.memory.scout_rally_reached = false;
+					creep.memory._scout_last_state_correction_tick = Game.time;
 					state = "to_rally";
 				}
 			} else if (rallyShard === Game.shard.name) {
 				// On rally shard
-				if (!rallyReached && state !== "to_rally") {
+				if (atRallyPos && state !== "to_dest" && shouldCorrect) {
+					// Actually at rally position, should be heading to destination
+					debugLog(1, `<font color="#FF944E">[Scout]</font> ${creep.name} correcting state: ${state} -> to_dest (at rally pos)`, 0);
+					if (typeof creep.travelClear === "function")
+						creep.travelClear();
+					creep.memory.scout_patrol_state = "to_dest";
+					creep.memory.scout_rally_reached = true;
+					creep.memory.scout_dest_reached = false;
+					creep.memory._scout_last_state_correction_tick = Game.time;
+					state = "to_dest";
+				} else if (!atRallyPos && !rallyReached && state !== "to_rally" && shouldCorrect) {
 					// Haven't reached rally yet, should be heading to rally
-					if (debugEnabled) {
-						console.log(`<font color="#FF944E">[Scout]</font> ${creep.name} correcting state: ${state} -> to_rally (on rally shard, rally not reached)`);
-					}
+					debugLog(1, `<font color="#FF944E">[Scout]</font> ${creep.name} correcting state: ${state} -> to_rally (on rally shard, rally not reached)`, 0);
 					if (typeof creep.travelClear === "function")
 						creep.travelClear();
 					creep.memory.scout_patrol_state = "to_rally";
 					creep.memory.scout_rally_reached = false;
+					creep.memory._scout_last_state_correction_tick = Game.time;
 					state = "to_rally";
-				} else if (rallyReached && state !== "to_dest") {
-					// Reached rally, should be heading to destination
-					if (debugEnabled) {
-						console.log(`<font color="#FF944E">[Scout]</font> ${creep.name} correcting state: ${state} -> to_dest (on rally shard, rally reached)`);
-					}
+				} else if (rallyReached && state !== "to_dest" && shouldCorrect) {
+					// Reached rally (flag set), should be heading to destination
+					debugLog(1, `<font color="#FF944E">[Scout]</font> ${creep.name} correcting state: ${state} -> to_dest (on rally shard, rally reached)`, 0);
 					if (typeof creep.travelClear === "function")
 						creep.travelClear();
 					creep.memory.scout_patrol_state = "to_dest";
 					creep.memory.scout_dest_reached = false;
+					creep.memory._scout_last_state_correction_tick = Game.time;
 					state = "to_dest";
 				}
 			}
@@ -1024,9 +1149,18 @@
 					&& typeof creep.travelClear === "function") {
 					creep.travelClear();
 				}
-				// Pass patrol state to ensure correct portal selection for outbound journey
+				
+			// CRITICAL: Only check for portals if we're NOT on the destination shard
+			// If we're already on the destination shard, go directly to the destination position
+			// Also check that we haven't just transferred (cooldown period)
+			let portalCooldown = _.get(creep.memory, "_scout_next_portal_allowed", 0);
+			if (destShard !== Game.shard.name && portalCooldown <= Game.time) {
+				// Need to transfer to destination shard - check for portal
 				if (maybeHandlePortal(destPosData, "to_dest") === true)
 					return;
+			}
+				
+				// We're on the destination shard (or portal handling failed) - go to destination position
 				if (creep.room.name != destPos.roomName) {
 					creep.travelToRoom(destPos.roomName, true);
 					return;
@@ -1035,7 +1169,14 @@
 					creep.travel(destPos);
 					return;
 				}
+				// Reached destination - switch to heading to rally
+				debugLog(1, `<font color="#4ECDC4">[Scout]</font> ${creep.name} reached destination, switching to rally`, 0);
 				creep.memory.scout_patrol_state = "to_rally";
+				creep.memory.scout_dest_reached = true;
+				creep.memory.scout_rally_reached = false;
+				// Clear path to ensure fresh movement on next leg
+				if (typeof creep.travelClear === "function")
+					creep.travelClear();
 				return;
 			}
 
@@ -1048,9 +1189,18 @@
 					&& typeof creep.travelClear === "function") {
 					creep.travelClear();
 				}
-				// Pass patrol state to ensure correct portal selection for return journey
+				
+			// CRITICAL: Only check for portals if we're NOT on the rally shard
+			// If we're already on the rally shard, go directly to the rally position
+			// Also check that we haven't just transferred (cooldown period)
+			let portalCooldown = _.get(creep.memory, "_scout_next_portal_allowed", 0);
+			if (rallyShard !== Game.shard.name && portalCooldown <= Game.time) {
+				// Need to transfer to rally shard - check for portal
 				if (maybeHandlePortal(rallyPosData, "to_rally") === true)
 					return;
+			}
+				
+				// We're on the rally shard (or portal handling failed) - go to rally position
 				if (creep.room.name != rallyPos.roomName) {
 					creep.travelToRoom(rallyPos.roomName, false);
 					return;
@@ -1059,7 +1209,14 @@
 					creep.travel(rallyPos);
 					return;
 				}
+				// Reached rally - switch to heading to destination (start next loop)
+				debugLog(1, `<font color="#4ECDC4">[Scout]</font> ${creep.name} reached rally, switching to destination`, 0);
 				creep.memory.scout_patrol_state = "to_dest";
+				creep.memory.scout_rally_reached = true;
+				creep.memory.scout_dest_reached = false;
+				// Clear path to ensure fresh movement on next leg
+				if (typeof creep.travelClear === "function")
+					creep.travelClear();
 				return;
 			}
 		}
@@ -1078,10 +1235,12 @@
 				return;
 			}
 
+			// At destination - for station mode, move away from edges periodically
 			if (patrolMode === "station" && Game.time % 11 === 0 && creep.pos.isEdge()) {
 				creep.travel(new RoomPosition(25, 25, destPos.roomName));
 				return;
 			}
+			// At destination in station mode - no movement needed
 			return;
 		}
 

@@ -2917,12 +2917,129 @@
 			return `<font color="#4ECDC4">[Scouts]</font> Status displayed for ${Object.keys(allRequests).length} request(s).`;
 		};
 
-		help_scouts.push("scouts.debug(enabled)");
-		help_scouts.push(" - Enable/disable debug logging for scouts");
-		help_scouts.push(" - enabled: true to enable, false to disable");
-		scouts.debug = function (enabled) {
-			_.set(Memory, ["hive", "debug", "scout"], enabled === true);
-			return `<font color="#4ECDC4">[Scouts]</font> Debug logging ${enabled ? "enabled" : "disabled"}.`;
+		help_scouts.push("scouts.debug(level)");
+		help_scouts.push(" - Set debug logging level for scouts");
+		help_scouts.push(" - level: 0 = none, 1 = errors/state changes, 2 = +movement/portals, 3 = full verbose");
+		help_scouts.push(" - Example: scouts.debug(2) for movement and portal logging");
+		scouts.debug = function (level) {
+			if (level === undefined || level === null) {
+				let currentLevel = _.get(Memory, ["hive", "debug", "scout"], 0);
+				return `<font color="#4ECDC4">[Scouts]</font> Current debug level: ${currentLevel} (0=none, 1=errors, 2=movement, 3=verbose)`;
+			}
+			level = parseInt(level);
+			if (isNaN(level) || level < 0 || level > 3) {
+				return `<font color="#FF944E">[Scouts]</font> Invalid debug level. Use 0-3.`;
+			}
+			_.set(Memory, ["hive", "debug", "scout"], level);
+			let levelNames = ["none", "errors/state", "movement/portals", "verbose"];
+			return `<font color="#4ECDC4">[Scouts]</font> Debug level set to ${level} (${levelNames[level]}).`;
+		};
+
+		help_scouts.push("scouts.trace(creepName)");
+		help_scouts.push(" - Show detailed trace for specific scout");
+		help_scouts.push(" - Displays current state, memory, position, and mission details");
+		scouts.trace = function (creepName) {
+			if (!creepName) {
+				return `<font color="#FF944E">[Scouts]</font> Please provide a creep name.`;
+			}
+			let creep = Game.creeps[creepName];
+			if (!creep) {
+				return `<font color="#FF944E">[Scouts]</font> Creep ${creepName} not found.`;
+			}
+			if (creep.memory.role !== "scout") {
+				return `<font color="#FF944E">[Scouts]</font> ${creepName} is not a scout.`;
+			}
+
+			let output = [];
+			output.push(`<font color="#4ECDC4">[Scouts]</font> <b>Trace for ${creepName}:</b>`);
+			output.push(`Position: ${creep.pos.x},${creep.pos.y} in ${creep.room.name} (shard: ${Game.shard.name})`);
+			output.push(`TTL: ${creep.ticksToLive}`);
+			output.push(`Role: ${creep.memory.role}`);
+			output.push(`Colony: ${creep.memory.colony || "none"}`);
+			output.push(`Mission ID: ${creep.memory.scout_request_id || "none"}`);
+			output.push(`Patrol Mode: ${creep.memory.patrol_mode || "station"}`);
+			output.push(`Patrol State: ${creep.memory.scout_patrol_state || "none"}`);
+			output.push(`Dest Reached: ${creep.memory.scout_dest_reached || false}`);
+			output.push(`Rally Reached: ${creep.memory.scout_rally_reached || false}`);
+			output.push(`Transfer Recorded: ${creep.memory._scout_transfer_recorded || false}`);
+			output.push(`Restored: ${creep.memory._scout_restored || false}`);
+			
+			if (creep.memory.rally_pos) {
+				let rp = creep.memory.rally_pos;
+				output.push(`Rally: ${rp.shard || Game.shard.name}/${rp.roomName} (${rp.x},${rp.y})`);
+			}
+			if (creep.memory.dest_pos) {
+				let dp = creep.memory.dest_pos;
+				output.push(`Destination: ${dp.shard || Game.shard.name}/${dp.roomName} (${dp.x},${dp.y})`);
+			}
+			
+			let pathDest = _.get(creep.memory, ["path", "destination"]);
+			if (pathDest) {
+				output.push(`Path Destination: ${pathDest.roomName} (${pathDest.x},${pathDest.y})`);
+			}
+
+			console.log(output.join("<br>"));
+			return `<font color="#4ECDC4">[Scouts]</font> Trace complete for ${creepName}.`;
+		};
+
+		help_scouts.push("scouts.state(creepName)");
+		help_scouts.push(" - Show current state and memory for scout");
+		help_scouts.push(" - Compact version of trace() focused on state information");
+		scouts.state = function (creepName) {
+			if (!creepName) {
+				return `<font color="#FF944E">[Scouts]</font> Please provide a creep name.`;
+			}
+			let creep = Game.creeps[creepName];
+			if (!creep) {
+				return `<font color="#FF944E">[Scouts]</font> Creep ${creepName} not found.`;
+			}
+			if (creep.memory.role !== "scout") {
+				return `<font color="#FF944E">[Scouts]</font> ${creepName} is not a scout.`;
+			}
+
+			let state = {
+				position: `${creep.pos.x},${creep.pos.y}@${creep.room.name}`,
+				shard: Game.shard.name,
+				patrol_mode: creep.memory.patrol_mode || "station",
+				patrol_state: creep.memory.scout_patrol_state || "none",
+				dest_reached: creep.memory.scout_dest_reached || false,
+				rally_reached: creep.memory.scout_rally_reached || false,
+				transfer_recorded: creep.memory._scout_transfer_recorded || false,
+				restored: creep.memory._scout_restored || false
+			};
+
+			return `<font color="#4ECDC4">[Scouts]</font> ${creepName} state: ${JSON.stringify(state)}`;
+		};
+
+		help_scouts.push("scouts.movement(creepName)");
+		help_scouts.push(" - Show movement history for scout (last 10 ticks)");
+		help_scouts.push(" - Requires movement tracking to be enabled");
+		scouts.movement = function (creepName) {
+			if (!creepName) {
+				return `<font color="#FF944E">[Scouts]</font> Please provide a creep name.`;
+			}
+			let creep = Game.creeps[creepName];
+			if (!creep) {
+				return `<font color="#FF944E">[Scouts]</font> Creep ${creepName} not found.`;
+			}
+			if (creep.memory.role !== "scout") {
+				return `<font color="#FF944E">[Scouts]</font> ${creepName} is not a scout.`;
+			}
+
+			let history = _.get(creep.memory, "_scout_movement_history", []);
+			if (history.length === 0) {
+				return `<font color="#FF944E">[Scouts]</font> No movement history available for ${creepName}. Movement tracking may not be enabled.`;
+			}
+
+			let output = [];
+			output.push(`<font color="#4ECDC4">[Scouts]</font> <b>Movement history for ${creepName} (last ${Math.min(10, history.length)} ticks):</b>`);
+			let recent = history.slice(-10);
+			_.each(recent, (entry, idx) => {
+				output.push(`Tick ${entry.tick}: ${entry.action} at ${entry.pos.x},${entry.pos.y}@${entry.room}`);
+			});
+
+			console.log(output.join("<br>"));
+			return `<font color="#4ECDC4">[Scouts]</font> Movement history displayed for ${creepName}.`;
 		};
 
 

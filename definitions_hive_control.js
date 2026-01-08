@@ -148,13 +148,18 @@
 					return false;
 				}
 				
-				// Otherwise, consider it alive
-				if (ttl > TTL_GRACE_TICKS)
-					return true;
-				if (age <= DESCRIPTOR_STALE_TICKS)
-					return true;
-				if (status === "transferring" && age <= TRANSFER_GRACE_TICKS)
-					return true;
+				// Check if descriptor is actually valid (not stale)
+				// Only return true if we have a valid descriptor
+				if (ttl > TTL_GRACE_TICKS && age <= DESCRIPTOR_STALE_TICKS) {
+					return true; // Valid descriptor with good TTL and recent update
+				}
+				if (age <= DESCRIPTOR_STALE_TICKS && status !== "transferring") {
+					return true; // Recent update, not transferring
+				}
+				if (status === "transferring" && age <= TRANSFER_GRACE_TICKS) {
+					return true; // Valid transferring descriptor
+				}
+				// If we get here, descriptor exists but is stale - continue checking other shards
 			}
 
 			let handshake = _.get(payload, "handshake");
@@ -540,21 +545,96 @@
 			let remoteNames = [];
 			if (_.isObject(request.remote_creeps)) {
 				_.each(Object.keys(request.remote_creeps), name => {
+					// Check if creep exists locally first
 					if (Game.creeps[name]) {
 						// Creep is now local, remove from remote tracking
 						delete request.remote_creeps[name];
 						return;
 					}
 
-					let stillPresent = this.isCreepTrackedGlobally(name, globalState);
+					// Since creep doesn't exist locally, check if it's actually tracked globally
+					// If not found in global state OR descriptor is stale, mark as dead
+					let stillPresent = false;
+					// Preserve existing timestamp - don't default to Game.time which causes "last seen 0 ticks ago"
+					let lastSeen = request.remote_creeps[name];
+					if (!lastSeen || lastSeen === Game.time) {
+						// If no timestamp or timestamp is current tick, use a reasonable default
+						// This handles edge cases where timestamp wasn't set properly
+						lastSeen = Game.time - 1;
+					}
+					
+					// Grace period for recently registered remote scouts (just transferred)
+					// Give them time for global state to update before marking as dead
+					let ageSinceRegistration = Game.time - lastSeen;
+					let TRANSFER_GRACE_PERIOD = 10; // Allow 10 ticks for global state to update
+					if (ageSinceRegistration <= TRANSFER_GRACE_PERIOD) {
+						// Recently registered - assume alive and give it time
+						stillPresent = true;
+					} else if (globalState && globalState.payloads) {
+						let foundValidDescriptor = false;
+						for (let shardName in globalState.payloads) {
+							let payload = globalState.payloads[shardName];
+							if (payload) {
+								let descriptor = _.get(payload, ["global", "creeps", name]);
+								if (descriptor) {
+									let status = _.get(descriptor, "status", "active");
+									let lastUpdate = _.get(descriptor, "last_update", 0);
+									let age = Game.time - lastUpdate;
+									
+									// If descriptor is stale (> 100 ticks for transferring, > 50 for others), it's dead
+									let maxAge = (status === "transferring") ? 100 : 50;
+									if (age <= maxAge) {
+										foundValidDescriptor = true;
+										break;
+									}
+								}
+								
+								// Check handshakes/transfers - but only if they're very recent (< 50 ticks)
+								let handshake = _.get(payload, "handshake");
+								if (handshake) {
+									let pending = _.get(handshake, ["pending", name]);
+									if (pending) {
+										let ts = _.get(pending, "transfer_time", _.get(pending, "updated", 0));
+										if ((Game.time - ts) <= 50) {
+											foundValidDescriptor = true;
+											break;
+										}
+									}
+									let acknowledgement = _.get(handshake, ["acknowledgements", name]);
+									if (acknowledgement) {
+										let ts = _.get(acknowledgement, "updated", 0);
+										if ((Game.time - ts) <= 50) {
+											foundValidDescriptor = true;
+											break;
+										}
+									}
+								}
+								
+								let transfer = _.get(payload, ["creep_transfers", name]) || _.get(payload, ["transfers", name]);
+								if (transfer) {
+									let transferTime = _.get(transfer, "transfer_time", 0);
+									if ((Game.time - transferTime) <= 50) {
+										foundValidDescriptor = true;
+										break;
+									}
+								}
+							}
+						}
+						
+						stillPresent = foundValidDescriptor;
+					}
+					
 					if (stillPresent) {
+						// Scout is alive - preserve existing timestamp, don't reset it
+						// Only update timestamp if it's missing or extremely old (to track when we first saw it)
+						if (!request.remote_creeps[name]) {
+							request.remote_creeps[name] = Game.time;
+						}
 						remoteNames.push(name);
-						request.remote_creeps[name] = Game.time;
 					} else {
 						// Creep is dead or no longer tracked
-						let lastSeen = request.remote_creeps[name] || Game.time;
-						let debugScouts = _.get(Memory, ["hive", "debug", "scout"], false);
-						if (debugScouts) {
+						let debugScouts = _.get(Memory, ["hive", "debug", "scout"], 0);
+						if (debugScouts >= 1) {
 							console.log(`<font color="#FF944E">[Scout]</font> Detected dead remote scout ${name} (last seen ${Game.time - lastSeen} ticks ago)`);
 						}
 						delete request.remote_creeps[name];
