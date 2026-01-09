@@ -816,6 +816,11 @@
 		_.assign(missionCache, missionData);
 		_.set(creep.memory, ["global", "mission_data"], missionCache);
 
+		// Register authoritative mission on primary shard (Option A)
+		if (typeof ShardMemory !== "undefined" && _.isFunction(_.get(ShardMemory, "registerMission"))) {
+			ShardMemory.registerMission(creep.name, missionCache);
+		}
+
 		// Update global descriptor
 		if (typeof creep.ensureGlobal === "function") {
 			creep.ensureGlobal({

@@ -2809,6 +2809,72 @@
 			return `<font color="#4ECDC4">[Shards]</font> Primary shard set to ${shardName}.`;
 		};
 
+		// Primary-shard mission registry commands (Option A)
+		help_shards.push("shards.mission(creepName)");
+		help_shards.push(" - Inspect the authoritative mission for a creep (primary shard)");
+		shards.mission = function (creepName) {
+			if (!creepName)
+				return `<font color="#FF6B6B">[Shards]</font> Provide a creep name: shards.mission('MyCreep')`;
+			if (typeof ShardMemory === "undefined")
+				return `<font color="#FF6B6B">[Shards]</font> Inter-shard interface not initialized.`;
+			var mission = ShardMemory.getMission(creepName);
+			if (!mission)
+				return `<font color="#FF944E">[Shards]</font> No mission found for ${creepName} on primary.`;
+			console.log(`<font color="#4ECDC4">[Shards]</font> Mission for ${creepName}:\n` + JSON.stringify(mission, null, 2));
+			return `<font color="#4ECDC4">[Shards]</font> Mission displayed for ${creepName}.`;
+		};
+
+		help_shards.push("shards.missions(limit?)");
+		help_shards.push(" - List missions registered on the primary shard (default limit 12)");
+		shards.missions = function (limit) {
+			if (typeof ShardMemory === "undefined")
+				return `<font color="#FF6B6B">[Shards]</font> Inter-shard interface not initialized.`;
+			var primary = ShardMemory.readPrimary();
+			if (!primary)
+				return `<font color="#FF944E">[Shards]</font> No primary payload available.`;
+			var missions = _.get(primary, "missions", {});
+			var names = Object.keys(missions);
+			var max = parseInt(limit) || 12;
+			console.log(`<font color="#4ECDC4">[Shards]</font> Missions on primary: ${names.length}`);
+			_.each(_.take(names, max), function (name) {
+				var m = missions[name] || {};
+				console.log(`  ${name}: role=${_.get(m, 'role', 'unknown')} mission=${_.get(m, 'mission', 'unknown')} shard=${_.get(m, 'current_shard', _.get(m, ['origin','shard'], 'n/a'))} updated=${_.get(m, 'updated', 'n/a')}`);
+			});
+			if (names.length > max)
+				console.log(`  ... ${names.length - max} more`);
+			return `<font color="#4ECDC4">[Shards]</font> Listed ${Math.min(names.length, max)} mission(s).`;
+		};
+
+		help_shards.push("shards.set_mission(creepName, mission)");
+		help_shards.push(" - Set/replace the authoritative mission for a creep (primary only)");
+		shards.set_mission = function (creepName, mission) {
+			if (!creepName || typeof mission !== "object")
+				return `<font color="#FF6B6B">[Shards]</font> Usage: shards.set_mission('MyCreep', { role: 'worker', mission: 'assist', origin: { shard: 'shard0', room: 'E1N1' } })`;
+			if (typeof ShardMemory === "undefined")
+				return `<font color="#FF6B6B">[Shards]</font> Inter-shard interface not initialized.`;
+			if (!ShardMemory.isPrimaryShard()) {
+				console.log(`<font color="#FF944E">[Shards]</font> Warning: set_mission should be run on the primary shard (${ShardMemory.getPrimaryShardName()}).`);
+			}
+			// Minimal normalization
+			mission = _.assign({}, mission, { updated: Game.time });
+			ShardMemory.registerMission(creepName, mission);
+			return `<font color="#4ECDC4">[Shards]</font> Mission registered for ${creepName}.`;
+		};
+
+		help_shards.push("shards.remove_mission(creepName)");
+		help_shards.push(" - Remove the mission entry for a creep (primary only)");
+		shards.remove_mission = function (creepName) {
+			if (!creepName)
+				return `<font color="#FF6B6B">[Shards]</font> Provide a creep name: shards.remove_mission('MyCreep')`;
+			if (typeof ShardMemory === "undefined")
+				return `<font color="#FF6B6B">[Shards]</font> Inter-shard interface not initialized.`;
+			if (!ShardMemory.isPrimaryShard()) {
+				console.log(`<font color="#FF944E">[Shards]</font> Warning: remove_mission should be run on the primary shard (${ShardMemory.getPrimaryShardName()}).`);
+			}
+			ShardMemory.removeMission(creepName);
+			return `<font color="#4ECDC4">[Shards]</font> Mission removed for ${creepName}.`;
+		};
+
 		// Scout mission diagnostics
 		scouts = new Object();
 		help_scouts.push("scouts.status(requestId?)");

@@ -178,6 +178,17 @@ Creep.prototype.travelToRoom = function travelToRoom(tgtRoom, forward, portalCal
 						}
 					});
 					if (portal) {
+						// Primary-shard mission authority: mark transfer intent for any creep
+						if (parsedRoute[i] && parsedRoute[i].shard && parsedRoute[i].shard !== Game.shard.name && typeof ShardMemory !== "undefined" && _.isFunction(_.get(ShardMemory, "markTransferStart"))) {
+							let missionData = _.get(this, ["memory", "global", "mission_data"], {});
+							ShardMemory.markTransferStart(this.name, {
+								destination_shard: parsedRoute[i].shard,
+								destination_room: parsedRoute[i].roomName,
+								portal: { x: portal.pos.x, y: portal.pos.y, roomName: portal.pos.roomName, shard: Game.shard.name },
+								role: _.get(this, ["memory", "role"]),
+								mission: _.get(missionData, "mission") || _.get(this, ["memory", "shard_mission"]) || _.get(this, ["memory", "role"]) || "unknown"
+							});
+						}
 						if (_.isFunction(portalCallback))
 							portalCallback.call(this, portal, parsedRoute[i]);
 						else if (parsedRoute[i] && parsedRoute[i].shard && parsedRoute[i].shard !== Game.shard.name && _.isFunction(this._recordTransferSnapshot))
@@ -224,6 +235,17 @@ Creep.prototype.travelToRoom = function travelToRoom(tgtRoom, forward, portalCal
 						}
 					});
 					if (portal) {
+						// Primary-shard mission authority: mark transfer intent for any creep (reverse traversal)
+						if (parsedRoute[i] && parsedRoute[i].shard && parsedRoute[i].shard !== Game.shard.name && typeof ShardMemory !== "undefined" && _.isFunction(_.get(ShardMemory, "markTransferStart"))) {
+							let missionData = _.get(this, ["memory", "global", "mission_data"], {});
+							ShardMemory.markTransferStart(this.name, {
+								destination_shard: parsedRoute[i].shard,
+								destination_room: parsedRoute[i].roomName,
+								portal: { x: portal.pos.x, y: portal.pos.y, roomName: portal.pos.roomName, shard: Game.shard.name },
+								role: _.get(this, ["memory", "role"]),
+								mission: _.get(missionData, "mission") || _.get(this, ["memory", "shard_mission"]) || _.get(this, ["memory", "role"]) || "unknown"
+							});
+						}
 						_.set(this, ["memory", "path", "portal"], portal.id);
 						let result = this.travel(portal.pos);
 						if (result == OK) {

@@ -32,6 +32,107 @@ global.ShardMemory = {
 	MAX_QUEUE_LENGTH,
 	MAX_HISTORY_LENGTH,
 
+	// -----------------------------
+	// Primary-Shard Mission Authority (Option A)
+	// Missions are authoritative on the primary shard and keyed by creep name.
+	// All shards read missions from the primary for restoration after portal transfer.
+
+	registerMission: function (name, mission) {
+		if (!_.isString(name) || name.length === 0)
+			return;
+
+		this.updateLocal(payload => {
+			if (!_.isObject(payload.missions))
+				payload.missions = {};
+			payload.missions[name] = _.assign({}, mission || {}, { updated: Game.time });
+		});
+	},
+
+	getMission: function (name) {
+		if (!_.isString(name) || name.length === 0)
+			return null;
+		let primary = this.readPrimary();
+		return _.get(primary, ["missions", name], null);
+	},
+
+	removeMission: function (name) {
+		if (!_.isString(name) || name.length === 0)
+			return;
+		this.updateLocal(payload => {
+			if (_.has(payload, ["missions", name]))
+				delete payload.missions[name];
+		});
+	},
+
+	markTransferStart: function (name, details) {
+		if (!_.isString(name) || name.length === 0)
+			return;
+		this.updateLocal(payload => {
+			if (!_.isObject(payload.missions))
+				payload.missions = {};
+			let mission = _.get(payload, ["missions", name], {});
+			mission.transfer = _.assign({}, details || {}, {
+				origin_shard: Game.shard.name,
+				started: Game.time
+			});
+			mission.updated = Game.time;
+			payload.missions[name] = mission;
+		});
+	},
+
+	markTransferComplete: function (name, details) {
+		if (!_.isString(name) || name.length === 0)
+			return;
+		this.updateLocal(payload => {
+			if (!_.isObject(payload.missions))
+				payload.missions = {};
+			let mission = _.get(payload, ["missions", name], {});
+			mission.transfer = _.assign({}, mission.transfer, details || {}, {
+				completed: Game.time,
+				destination_shard: Game.shard.name
+			});
+			mission.current_shard = Game.shard.name;
+			mission.updated = Game.time;
+			payload.missions[name] = mission;
+		});
+	},
+
+	restoreCreepFromMission: function (creep) {
+		if (!creep || !creep.name)
+			return false;
+		if (_.get(creep.memory, "_mission_restored") === true)
+			return true;
+		let mission = this.getMission(creep.name);
+		if (!mission)
+			return false;
+
+		// Minimal restoration: set role and attach mission_data; avoid overriding existing role-specific memory.
+		if (!_.has(creep.memory, "role") && _.isString(_.get(mission, "role")))
+			creep.memory.role = mission.role;
+		let missionData = _.cloneDeep(mission);
+		// Do not blindly overwrite creep.memory; attach under global.mission_data
+		_.set(creep.memory, ["global", "mission_data"], missionData);
+		creep.memory._mission_restored = true;
+		creep.memory._last_mission_restore = Game.time;
+
+		// If a transfer was in progress and destination is this shard, mark it complete
+		if (_.isObject(mission.transfer) && _.get(mission, ["transfer", "destination_shard"]) === Game.shard.name && !_.get(mission, ["transfer", "completed"])) {
+			this.markTransferComplete(creep.name, {
+				restored: Game.time
+			});
+		}
+
+		return true;
+	},
+
+	restoreAllCreeps: function () {
+		// Universal restoration pass for newly arrived creeps on any shard
+		for (let name in Game.creeps) {
+			let creep = Game.creeps[name];
+			this.restoreCreepFromMission(creep);
+		}
+	},
+
 	getPrimaryShardName: function () {
 		return _.get(Memory, ["hive", "ism", "primary"], DEFAULT_PRIMARY_SHARD);
 	},
@@ -554,6 +655,7 @@ global.ShardMemory = {
 				creeps: {},
 				history: []
 			},
+			missions: {},
 			directives: {
 				shards: {},
 				primary: null
@@ -612,6 +714,10 @@ global.ShardMemory = {
 				coerced.global.creeps = {};
 			if (!Array.isArray(coerced.global.history))
 				coerced.global.history = [];
+		}
+
+		if (!_.isObject(coerced.missions)) {
+			coerced.missions = {};
 		}
 
 		if (!_.isObject(coerced.directives)) {
@@ -857,6 +963,40 @@ global.ShardMemory = {
 		}
 
 		return trimmed;
+	},
+
+	cleanupDeadCreeps: function () {
+		// Aggressively clean up old creeps to keep payload under control
+		// Since the ISM limit is tight (95KB), we need to be ruthless
+		this.updateLocal(payload => {
+			let manifest = _.get(payload, ["global", "creeps"], {});
+			let removeThreshold = Game.time - 1000;  // Remove anything not updated in 1000 ticks
+			let removed = [];
+			
+			for (let name in manifest) {
+				let lastUpdate = _.get(manifest[name], "last_update", 0);
+				// Only keep entries updated within last 1000 ticks
+				if (lastUpdate < removeThreshold) {
+					delete manifest[name];
+					removed.push(name);
+				}
+			}
+			
+			// If still too many entries, trim down to only 20 most recent
+			let keys = Object.keys(manifest);
+			if (keys.length > 20) {
+				let sorted = _.sortBy(keys, k => _.get(manifest[k], "last_update", 0));
+				let toDelete = sorted.slice(0, keys.length - 20);
+				for (let key of toDelete) {
+					delete manifest[key];
+					removed.push(key);
+				}
+			}
+			
+			if (removed.length > 0) {
+				console.log(`<font color="#FFD700">[InterShard]</font> Cleanup: Removed ${removed.length} old creeps from manifest`);
+			}
+		});
 	}
 };
 

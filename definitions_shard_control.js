@@ -21,7 +21,9 @@ global.ShardControl = {
 			ShardMemory.updateLocal(payload => {
 				payload.summary.role = role;
 				payload.summary.intershard_pulse = true;
-				this._writeManifestToPayload(payload, manifest);
+				// DISABLED: Writing full creep manifests to ISM bloats the payload
+				// The transfer snapshot system is sufficient for cross-shard creep recovery
+				// this._writeManifestToPayload(payload, manifest);
 			});
 
 			if (ShardMemory.isPrimaryShard()) {
@@ -57,7 +59,7 @@ global.ShardControl = {
 
 		let handshakeCount = 0;
 		ShardMemory.updateLocal(payload => {
-			// Distribute handshake offers FIRST, before overwriting directives.shards
+			// Distribute handshake offers FIRST, but only store minimal data
 			let handshakePending = _.get(payload, ["handshake", "pending"], {});
 			let handshakesByDestination = {};
 			
@@ -65,26 +67,43 @@ global.ShardControl = {
 				let destinationShard = _.get(offer, "destination_shard");
 				if (destinationShard && destinationShard !== Game.shard.name) {
 					if (!handshakesByDestination[destinationShard]) {
-						handshakesByDestination[destinationShard] = { pending: {}, acknowledgements: {}, completions: {} };
+						handshakesByDestination[destinationShard] = {};
 					}
-					handshakesByDestination[destinationShard].pending[creepName] = offer;
+					// Only store minimal handshake info, not full offer details
+					handshakesByDestination[destinationShard][creepName] = {
+						status: _.get(offer, "status", "offered"),
+						portal: _.get(offer, "portal"),
+						created: _.get(offer, "created")
+					};
 					handshakeCount++;
 				}
 			});
 			
-			// Now set directives.shards with aggregated data
-			payload.directives.shards = aggregated.remoteSummaries;
+			// Now set directives.shards with minimal aggregated data (summaries only, not full manifests)
+			// This prevents the payload from bloating with redundant creep data
+			let minimalDirectives = {};
+			_.each(aggregated.remoteSummaries, (summary, shardName) => {
+				minimalDirectives[shardName] = {
+					summary: {
+						creeps: _.get(summary, ["summary", "creeps_total"], 0),
+						rooms: _.get(summary, ["summary", "rooms_owned"], 0),
+						tick: _.get(summary, ["summary", "tick"], 0)
+					},
+					heartbeat: _.get(summary, "heartbeat", 0)
+				};
+			});
+			payload.directives.shards = minimalDirectives;
 			payload.directives.global_manifest = aggregated.globalCount;
 			payload.directives.last_remote_scan = Game.time;
 			payload.summary.remote_shards = Object.keys(aggregated.remoteSummaries).length;
 			payload.summary.remote_requests_total = aggregated.requestsTotal;
 			
-		// Merge handshake data into each shard's directive
-		_.each(handshakesByDestination, (handshakeData, shardName) => {
+		// Merge minimal handshake data into each shard's directive
+		_.each(handshakesByDestination, (pending, shardName) => {
 			if (!_.has(payload.directives.shards, shardName)) {
 				payload.directives.shards[shardName] = {};
 			}
-			payload.directives.shards[shardName].handshake = handshakeData;
+			payload.directives.shards[shardName].pending_handshakes = pending;
 		});
 		});
 		

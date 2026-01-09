@@ -186,6 +186,9 @@
 		// Allow pathing helpers to trigger snapshot recording when they detect a portal
 		creep._recordTransferSnapshot = recordTransferSnapshot;
 
+		// Define colonyShard early so tryRestoreFromTransfer can use it
+		const colonyShard = _.get(creep.memory, "colony_shard", Game.shard.name);
+
 		const tryRestoreFromTransfer = function () {
 		if (_.get(creep.memory, "_scout_restored") === true)
 			return;
@@ -442,8 +445,6 @@
 		};
 
 		tryRestoreFromTransfer();
-
-		const colonyShard = _.get(creep.memory, "colony_shard", Game.shard.name);
 
 		const ensureGlobalRegistration = function () {
 			let destinationShard = _.get(creep.memory, ["dest_pos", "shard"])
