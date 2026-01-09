@@ -202,6 +202,28 @@ global.ShardMemory = {
 		return _.get(payload, ["creep_transfers", name], null);
 	},
 
+	recordCreepTransfer: function (name, transferData) {
+		if (!_.isString(name) || name.length === 0 || !transferData)
+			return;
+
+		this.updateLocal(payload => {
+			if (!_.isObject(payload.creep_transfers))
+				payload.creep_transfers = {};
+
+			payload.creep_transfers[name] = _.assign({}, transferData, { transfer_time: Game.time });
+
+			// Cap queue to MAX_REQUEST_QUEUE to stay lean
+			let keys = Object.keys(payload.creep_transfers);
+			if (keys.length > MAX_REQUEST_QUEUE) {
+				let sorted = _.sortBy(keys, key => _.get(payload.creep_transfers[key], "transfer_time", 0));
+				let toRemove = sorted.slice(0, keys.length - MAX_REQUEST_QUEUE);
+				for (let k of toRemove) {
+					delete payload.creep_transfers[k];
+				}
+			}
+		});
+	},
+
 	deleteCreepTransfer: function (name) {
 		if (!_.isString(name) || name.length === 0)
 			return;
@@ -374,6 +396,7 @@ global.ShardMemory = {
 				rooms_owned: _.size(_.filter(Game.rooms, r => _.get(r, ["controller", "my"], false)))
 			},
 			directives: { shards: {}, primary: null },  // Legacy compatibility
+			creep_transfers: {}, // Small queue of transfer snapshots
 			requests: {},       // Shard->Shard0 requests
 			acknowledgements: {},  // Shard0 acks
 			responses: {},      // Shard0 responses
@@ -402,6 +425,9 @@ global.ShardMemory = {
 		if (lean.directives.primary === undefined) {
 			lean.directives.primary = null;
 		}
+
+		// Keep a small creep transfer queue (lean)
+		lean.creep_transfers = _.isObject(payload.creep_transfers) ? payload.creep_transfers : {};
 		
 		lean.requests = _.isObject(payload.requests) ? payload.requests : {};
 		lean.acknowledgements = _.isObject(payload.acknowledgements) ? payload.acknowledgements : {};
