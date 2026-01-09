@@ -384,33 +384,20 @@ global.ShardMemory = {
 	},
 
 	_coercePayload: function (payload) {
-		let coerced = _.isObject(payload) ? payload : {};
+		// IMPORTANT: Only preserve lean ISM fields
+		// Discard legacy bloat (creep_transfers, missions, directives, handshake, etc.)
+		let lean = {};
 
-		if (!_.isNumber(coerced.version))
-			coerced.version = this.VERSION;
+		lean.version = _.isNumber(payload.version) ? payload.version : this.VERSION;
+		lean.shard = _.isString(payload.shard) ? payload.shard : Game.shard.name;
+		lean.heartbeat = _.isNumber(payload.heartbeat) ? payload.heartbeat : Game.time;
+		lean.summary = _.isObject(payload.summary) ? payload.summary : {};
+		lean.requests = _.isObject(payload.requests) ? payload.requests : {};
+		lean.acknowledgements = _.isObject(payload.acknowledgements) ? payload.acknowledgements : {};
+		lean.responses = _.isObject(payload.responses) ? payload.responses : {};
+		lean.meta = _.isObject(payload.meta) ? payload.meta : {};
 
-		if (!_.isString(coerced.shard))
-			coerced.shard = Game.shard.name;
-
-		if (!_.isNumber(coerced.heartbeat))
-			coerced.heartbeat = Game.time;
-
-		if (!_.isObject(coerced.summary))
-			coerced.summary = {};
-
-		if (!_.isObject(coerced.requests))
-			coerced.requests = {};
-
-		if (!_.isObject(coerced.acknowledgements))
-			coerced.acknowledgements = {};
-
-		if (!_.isObject(coerced.responses))
-			coerced.responses = {};
-
-		if (!_.isObject(coerced.meta))
-			coerced.meta = {};
-
-		return coerced;
+		return lean;
 	},
 
 	_upgradePayload: function (payload) {
