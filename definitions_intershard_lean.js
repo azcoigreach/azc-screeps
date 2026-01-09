@@ -373,6 +373,7 @@ global.ShardMemory = {
 				creeps_total: _.size(Game.creeps),
 				rooms_owned: _.size(_.filter(Game.rooms, r => _.get(r, ["controller", "my"], false)))
 			},
+			directives: { shards: {}, primary: null },  // Legacy compatibility
 			requests: {},       // Shard->Shard0 requests
 			acknowledgements: {},  // Shard0 acks
 			responses: {},      // Shard0 responses
@@ -385,13 +386,23 @@ global.ShardMemory = {
 
 	_coercePayload: function (payload) {
 		// IMPORTANT: Only preserve lean ISM fields
-		// Discard legacy bloat (creep_transfers, missions, directives, handshake, etc.)
+		// Discard legacy bloat (creep_transfers, missions, handshake, etc.)
 		let lean = {};
 
 		lean.version = _.isNumber(payload.version) ? payload.version : this.VERSION;
 		lean.shard = _.isString(payload.shard) ? payload.shard : Game.shard.name;
 		lean.heartbeat = _.isNumber(payload.heartbeat) ? payload.heartbeat : Game.time;
 		lean.summary = _.isObject(payload.summary) ? payload.summary : {};
+		
+		// Ensure directives has proper structure (legacy compatibility)
+		lean.directives = _.isObject(payload.directives) ? payload.directives : {};
+		if (!_.isObject(lean.directives.shards)) {
+			lean.directives.shards = {};
+		}
+		if (lean.directives.primary === undefined) {
+			lean.directives.primary = null;
+		}
+		
 		lean.requests = _.isObject(payload.requests) ? payload.requests : {};
 		lean.acknowledgements = _.isObject(payload.acknowledgements) ? payload.acknowledgements : {};
 		lean.responses = _.isObject(payload.responses) ? payload.responses : {};
