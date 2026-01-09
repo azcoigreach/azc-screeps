@@ -248,7 +248,11 @@
 				debugLog(2, `<font color="#4ECDC4">[Scout]</font> Using handshake backup transfer for ${creep.name}`, 0);
 				transferData = _.get(offer, "transfer_data");
 			} else {
-				debugLog(1, `<font color="#FFD700">[Scout]</font> No transfer data found for ${creep.name}`, 0);
+				// Log once per creep to avoid console spam when transfer data never arrives
+				if (!creep.memory._scout_transfer_missing_logged) {
+					creep.memory._scout_transfer_missing_logged = true;
+					debugLog(1, `<font color="#FFD700">[Scout]</font> No transfer data found for ${creep.name}`, 0);
+				}
 				return;
 			}
 		}
