@@ -160,7 +160,103 @@ global.ShardMemory = {
 
 	removeGlobalCreep: function (creepName) {
 		// Remove dead creep from Memory
-		_.unset(Memory, ["hive", "ism", "global_creeps", creepName]);
+		let registry = _.get(Memory, ["hive", "ism", "global_creeps"], {});
+		if (registry[creepName]) {
+			delete registry[creepName];
+		}
+	},
+
+	// =========================================================
+	// SHARD MANAGEMENT
+	// =========================================================
+
+	getPrimaryShardName: function () {
+		return _.get(Memory, ["hive", "ism", "primary"], PRIMARY_SHARD);
+	},
+
+	setPrimaryShardName: function (name) {
+		if (_.isString(name) && name.length > 0) {
+			_.set(Memory, ["hive", "ism", "primary"], name);
+		}
+	},
+
+	isPrimaryShard: function () {
+		return Game.shard.name === this.getPrimaryShardName();
+	},
+
+	// =========================================================
+	// CREEP TRANSFER MANAGEMENT (Legacy Compatibility)
+	// =========================================================
+	// Note: Transfer snapshots are the primary mechanism
+	// These methods provide backward compatibility with old code
+
+	getCreepTransfer: function (shardName, name) {
+		if (!_.isString(name) || name.length === 0)
+			return null;
+
+		let payload = shardName ? this.readRemote(shardName) : this.getLocalPayload();
+		if (!payload)
+			return null;
+
+		// Check for transfers in payload (legacy support)
+		return _.get(payload, ["creep_transfers", name], null);
+	},
+
+	deleteCreepTransfer: function (name) {
+		if (!_.isString(name) || name.length === 0)
+			return;
+
+		this.updateLocal(payload => {
+			if (_.has(payload, ["creep_transfers", name]))
+				delete payload.creep_transfers[name];
+		});
+	},
+
+	acknowledgeTransfer: function (name, details) {
+		if (!_.isString(name) || name.length === 0)
+			return;
+
+		// In lean ISM, transfers are handled via transfer snapshots
+		// This method provides legacy compatibility
+		this.updateLocal(payload => {
+			if (!_.isObject(payload.meta))
+				payload.meta = {};
+			if (!_.isObject(payload.meta.acks))
+				payload.meta.acks = {};
+			
+			payload.meta.acks[name] = _.assign({}, details || {}, {
+				acknowledged: Game.time,
+				shard: Game.shard.name
+			});
+		});
+	},
+
+	// =========================================================
+	// SHARD DIRECTIVES (Legacy Compatibility)
+	// =========================================================
+
+	setShardDirective: function (shardName, directive) {
+		if (!_.isString(shardName) || shardName.length === 0)
+			return;
+
+		// Store directives in Memory (not ISM)
+		_.set(Memory, ["hive", "ism", "directives", "shards", shardName], _.assign({}, directive, {
+			updated: Game.time
+		}));
+	},
+
+	getShardDirective: function (shardName) {
+		return _.get(Memory, ["hive", "ism", "directives", "shards", shardName], null);
+	},
+
+	setPrimaryDirective: function (directive) {
+		_.set(Memory, ["hive", "ism", "directives", "primary"], _.assign({}, directive || {}, {
+			updated: Game.time
+		}));
+	},
+
+	getPrimaryDirective: function () {
+		return _.get(Memory, ["hive", "ism", "directives", "primary"], null);
 	},
 
 	// =========================================================
