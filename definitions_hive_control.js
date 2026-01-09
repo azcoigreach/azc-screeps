@@ -553,95 +553,75 @@
 					}
 
 					// Since creep doesn't exist locally, check if it's actually tracked globally
-					// If not found in global state OR descriptor is stale, mark as dead
-					let stillPresent = false;
-					// Preserve existing timestamp - don't default to Game.time which causes "last seen 0 ticks ago"
-					let lastSeen = request.remote_creeps[name];
-					if (!lastSeen || lastSeen === Game.time) {
-						// If no timestamp or timestamp is current tick, use a reasonable default
-						// This handles edge cases where timestamp wasn't set properly
-						lastSeen = Game.time - 1;
+				// With lean ISM, global creeps are now stored in Memory.hive.ism.global_creeps
+				let stillPresent = false;
+				// Preserve existing timestamp - don't default to Game.time which causes "last seen 0 ticks ago"
+				let lastSeen = request.remote_creeps[name];
+				if (!lastSeen || lastSeen === Game.time) {
+					// If no timestamp or timestamp is current tick, use a reasonable default
+					// This handles edge cases where timestamp wasn't set properly
+					lastSeen = Game.time - 1;
+				}
+				
+				// Grace period for recently registered remote scouts (just transferred)
+				// Give them time for global state to update before marking as dead
+				let ageSinceRegistration = Game.time - lastSeen;
+				let TRANSFER_GRACE_PERIOD = 10; // Allow 10 ticks for global state to update
+				if (ageSinceRegistration <= TRANSFER_GRACE_PERIOD) {
+					// Recently registered - assume alive and give it time
+					stillPresent = true;
+				} else {
+					// Check lean ISM global creep registry
+					let globalCreeps = _.get(Memory, ["hive", "ism", "global_creeps"], {});
+					let descriptor = globalCreeps[name];
+					if (descriptor) {
+						let status = _.get(descriptor, "status", "active");
+						let lastUpdate = _.get(descriptor, "last_update", 0);
+						let age = Game.time - lastUpdate;
+						
+						// If descriptor is stale (> 100 ticks for transferring, > 50 for others), it's dead
+						let maxAge = (status === "transferring") ? 100 : 50;
+						if (age <= maxAge) {
+							stillPresent = true;
+						}
 					}
 					
-					// Grace period for recently registered remote scouts (just transferred)
-					// Give them time for global state to update before marking as dead
-					let ageSinceRegistration = Game.time - lastSeen;
-					let TRANSFER_GRACE_PERIOD = 10; // Allow 10 ticks for global state to update
-					if (ageSinceRegistration <= TRANSFER_GRACE_PERIOD) {
-						// Recently registered - assume alive and give it time
-						stillPresent = true;
-					} else if (globalState && globalState.payloads) {
-						let foundValidDescriptor = false;
+					// If not found in global registry, check for recent transfer in ISM payload
+					if (!stillPresent && globalState && globalState.payloads) {
 						for (let shardName in globalState.payloads) {
 							let payload = globalState.payloads[shardName];
 							if (payload) {
-								let descriptor = _.get(payload, ["global", "creeps", name]);
-								if (descriptor) {
-									let status = _.get(descriptor, "status", "active");
-									let lastUpdate = _.get(descriptor, "last_update", 0);
-									let age = Game.time - lastUpdate;
-									
-									// If descriptor is stale (> 100 ticks for transferring, > 50 for others), it's dead
-									let maxAge = (status === "transferring") ? 100 : 50;
-									if (age <= maxAge) {
-										foundValidDescriptor = true;
-										break;
-									}
-								}
-								
-								// Check handshakes/transfers - but only if they're very recent (< 50 ticks)
-								let handshake = _.get(payload, "handshake");
-								if (handshake) {
-									let pending = _.get(handshake, ["pending", name]);
-									if (pending) {
-										let ts = _.get(pending, "transfer_time", _.get(pending, "updated", 0));
-										if ((Game.time - ts) <= 50) {
-											foundValidDescriptor = true;
-											break;
-										}
-									}
-									let acknowledgement = _.get(handshake, ["acknowledgements", name]);
-									if (acknowledgement) {
-										let ts = _.get(acknowledgement, "updated", 0);
-										if ((Game.time - ts) <= 50) {
-											foundValidDescriptor = true;
-											break;
-										}
-									}
-								}
-								
-								let transfer = _.get(payload, ["creep_transfers", name]) || _.get(payload, ["transfers", name]);
+								let transfer = _.get(payload, ["creep_transfers", name]);
 								if (transfer) {
 									let transferTime = _.get(transfer, "transfer_time", 0);
 									if ((Game.time - transferTime) <= 50) {
-										foundValidDescriptor = true;
+										stillPresent = true;
 										break;
 									}
 								}
 							}
 						}
-						
-						stillPresent = foundValidDescriptor;
 					}
-					
-					if (stillPresent) {
-						// Scout is alive - preserve existing timestamp, don't reset it
-						// Only update timestamp if it's missing or extremely old (to track when we first saw it)
-						if (!request.remote_creeps[name]) {
-							request.remote_creeps[name] = Game.time;
-						}
-						remoteNames.push(name);
-					} else {
-						// Creep is dead or no longer tracked
-						let debugScouts = _.get(Memory, ["hive", "debug", "scout"], 0);
-						if (debugScouts >= 1) {
-							console.log(`<font color="#FF944E">[Scout]</font> Detected dead remote scout ${name} (last seen ${Game.time - lastSeen} ticks ago)`);
-						}
-						delete request.remote_creeps[name];
-						request._remote_pruned++;
+				}
+				
+				if (stillPresent) {
+					// Scout is alive - preserve existing timestamp, don't reset it
+					// Only update timestamp if it's missing or extremely old (to track when we first saw it)
+					if (!request.remote_creeps[name]) {
+						request.remote_creeps[name] = Game.time;
 					}
-				});
-			}
+					remoteNames.push(name);
+				} else {
+					// Creep is dead or no longer tracked
+					let debugScouts = _.get(Memory, ["hive", "debug", "scout"], 0);
+					if (debugScouts >= 1) {
+						console.log(`<font color="#FF944E">[Scout]</font> Detected dead remote scout ${name} (last seen ${Game.time - lastSeen} ticks ago)`);
+					}
+					delete request.remote_creeps[name];
+					request._remote_pruned++;
+				}
+			});
+		}
 
 			let rallyReached = 0;
 			_.each(creeps, creep => {
