@@ -199,6 +199,12 @@
 					creep.memory._scout_next_portal_allowed = Game.time + 20;
 				return;
 			}
+		
+		// If scout is very young (< 10 ticks old), it was spawned locally, not transferred
+		if (creep.ticksToLive > (CREEP_LIFE_TIME - 10)) {
+			creep.memory._scout_restored = true; // Mark as restored to prevent future checks
+			return;
+		}
 
 		debugLog(2, `<font color="#4ECDC4">[Scout]</font> Attempting restoration for ${creep.name} on shard ${Game.shard.name}`, 0);
 		let transferData = null;
