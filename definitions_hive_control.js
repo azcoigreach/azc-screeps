@@ -454,11 +454,17 @@
 		this.runGlobalScouts();
 	},
 
-	runColonizations: function () {
-		_.each(_.get(Memory, ["sites", "colonization"]), req => {
-			Sites.Colonization(_.get(req, "from"), _.get(req, "target"));
-		});
-	},
+		runColonizations: function () {
+			let colonizations = _.get(Memory, ["sites", "colonization"]);
+			_.each(colonizations, (req, key) => {
+				if (!req)
+					return;
+				// Normalize target (strip shard prefix) for same-shard execution while keeping key for cross-shard bookkeeping
+				let targetBase = _.isString(req.target) && req.target.indexOf("/") >= 0 ? req.target.split("/")[1] : req.target;
+				let targetRoom = targetBase || req.target || key;
+				Sites.Colonization(_.get(req, "from"), targetRoom);
+			});
+		},
 
 	runCombat: function () {
 		for (let memory_id in _.get(Memory, ["sites", "combat"]))

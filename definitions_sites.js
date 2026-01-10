@@ -2585,10 +2585,17 @@
 
 				Stats_CPU.Start(rmColony, `Colonization-${rmTarget}-init`);
 				listRoute = _.get(Memory, ["sites", "colonization", rmTarget, "list_route"]);
+				const rmTargetBase = _.isString(rmTarget) && rmTarget.indexOf("/") >= 0 ? rmTarget.split("/")[1] : rmTarget;
 				Stats_CPU.End(rmColony, `Colonization-${rmTarget}-init`);
 
 				Stats_CPU.Start(rmColony, `Colonization-${rmTarget}-listCreeps`);
-				let listCreeps = _.filter(Game.creeps, c => c.memory.room == rmTarget && c.memory.colony == rmColony);
+				let listCreeps = _.filter(Game.creeps, c => {
+					if (c.memory.colony != rmColony)
+						return false;
+
+					let targetKey = _.get(c, ["memory", "target_key"]);
+					return targetKey == rmTarget || c.memory.room == rmTarget || c.memory.room == rmTargetBase;
+				});
 				Stats_CPU.End(rmColony, `Colonization-${rmTarget}-listCreeps`);
 
 				if (isPulse_Spawn()) {
@@ -2603,6 +2610,7 @@
 			},
 
 			runPopulation: function (rmColony, rmTarget, listCreeps) {
+				const rmTargetBase = _.isString(rmTarget) && rmTarget.indexOf("/") >= 0 ? rmTarget.split("/")[1] : rmTarget;
 				let popActual = new Object();
 				_.set(popActual, "colonizer", _.filter(listCreeps, c => c.memory.role == "colonizer").length);
 
@@ -2620,13 +2628,18 @@
 						level: _.get(popTarget, ["colonizer", "level"], 6),
 						scale: _.get(popTarget, ["colonizer", "scale"], false),
 						body: _.get(popTarget, ["colonizer", "body"], "reserver_at"),
-						name: null, args: { role: "colonizer", room: rmTarget, colony: rmColony }
+						name: null, args: { role: "colonizer", room: rmTargetBase, target_key: rmTarget, colony: rmColony }
 					});
 				}
 			},
 
 			runCreeps: function (rmColony, rmTarget, listCreeps, listRoute) {
+				const rmTargetBase = _.isString(rmTarget) && rmTarget.indexOf("/") >= 0 ? rmTarget.split("/")[1] : rmTarget;
 				_.each(listCreeps, creep => {
+					if (!_.get(creep.memory, "target_key"))
+						creep.memory.target_key = rmTarget;
+					if (rmTargetBase && creep.memory.room !== rmTargetBase)
+						creep.memory.room = rmTargetBase;
 					_.set(creep, ["memory", "list_route"], listRoute);
 
 					if (creep.memory.role == "colonizer") {

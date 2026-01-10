@@ -1912,9 +1912,13 @@
 		} else if (result == ERR_NO_BODYPART) {
 			return;		// Reservers and colonizers with no "claim" parts prevent null body spawn locking
 		} else {
-			let request = _.get(Memory, ["sites", "colonization", creep.memory.room]);
-			if (_.get(request, ["target"]) == creep.room.name && creep.room.controller.my) {
-				delete Memory["sites"]["colonization"][creep.room.name];
+			let request = _.get(Memory, ["sites", "colonization", creep.memory.target_key])
+				|| _.get(Memory, ["sites", "colonization", creep.memory.room]);
+			let reqTarget = _.get(request, ["target"]);
+			let reqTargetBase = _.isString(reqTarget) && reqTarget.indexOf("/") >= 0 ? reqTarget.split("/")[1] : reqTarget;
+			if ((reqTarget == creep.room.name || reqTargetBase == creep.room.name) && creep.room.controller.my) {
+				let key = creep.memory.target_key || creep.room.name;
+				delete Memory["sites"]["colonization"][key];
 				_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "rooms"], [_.get(request, ["from"])]);
 				_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "list_route"], _.get(request, ["list_route"]));
 				_.set(Memory, ["rooms", creep.room.name, "layout"], _.get(request, "layout"));
