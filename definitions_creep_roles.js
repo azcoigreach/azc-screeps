@@ -2024,29 +2024,47 @@
 		if (this.moveToDestination(creep))
 			return;
 
+		// Check if room is already claimed - if so, close the colonization mission
+		let request = _.get(Memory, ["sites", "colonization", creep.memory.target_key])
+			|| _.get(Memory, ["sites", "colonization", creep.memory.room]);
+		let reqTarget = _.get(request, ["target"]);
+		let reqTargetBase = _.isString(reqTarget) && reqTarget.indexOf("/") >= 0 ? reqTarget.split("/")[1] : reqTarget;
+		
+		if ((reqTarget == creep.room.name || reqTargetBase == creep.room.name) && creep.room.controller.my) {
+			// Room already claimed! Close colonization mission and set up the new colony
+			let key = creep.memory.target_key || creep.room.name;
+			delete Memory["sites"]["colonization"][key];
+			_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "rooms"], [_.get(request, ["from"])]);
+			_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "list_route"], _.get(request, ["list_route"]));
+			_.set(Memory, ["rooms", creep.room.name, "layout"], _.get(request, "layout"));
+			_.set(Memory, ["rooms", creep.room.name, "focus_defense"], _.get(request, "focus_defense"));
+			_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
+			console.log(`<font color="#4ECDC4">[Colonization]</font> ${creep.name} - room already claimed, colonization mission complete!`);
+			creep.memory = {};
+			return;
+		}
+
+		// Attempt to claim the controller
 		let result = creep.claimController(creep.room.controller);
 		if (result == ERR_NOT_IN_RANGE) {
 			creep.moveTo(creep.room.controller)
 			return;
 		} else if (result == ERR_NO_BODYPART) {
 			return;		// Reservers and colonizers with no "claim" parts prevent null body spawn locking
+		} else if (result == OK) {
+			// Successfully claimed! Close the colonization mission
+			let key = creep.memory.target_key || creep.room.name;
+			delete Memory["sites"]["colonization"][key];
+			_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "rooms"], [_.get(request, ["from"])]);
+			_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "list_route"], _.get(request, ["list_route"]));
+			_.set(Memory, ["rooms", creep.room.name, "layout"], _.get(request, "layout"));
+			_.set(Memory, ["rooms", creep.room.name, "focus_defense"], _.get(request, "focus_defense"));
+			_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
+			console.log(`<font color="#4ECDC4">[Colonization]</font> ${creep.name} successfully claimed ${creep.room.name}!`);
+			creep.memory = {};
+			return;
 		} else {
-			let request = _.get(Memory, ["sites", "colonization", creep.memory.target_key])
-				|| _.get(Memory, ["sites", "colonization", creep.memory.room]);
-			let reqTarget = _.get(request, ["target"]);
-			let reqTargetBase = _.isString(reqTarget) && reqTarget.indexOf("/") >= 0 ? reqTarget.split("/")[1] : reqTarget;
-			if ((reqTarget == creep.room.name || reqTargetBase == creep.room.name) && creep.room.controller.my) {
-				let key = creep.memory.target_key || creep.room.name;
-				delete Memory["sites"]["colonization"][key];
-				_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "rooms"], [_.get(request, ["from"])]);
-				_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "list_route"], _.get(request, ["list_route"]));
-				_.set(Memory, ["rooms", creep.room.name, "layout"], _.get(request, "layout"));
-				_.set(Memory, ["rooms", creep.room.name, "focus_defense"], _.get(request, "focus_defense"));
-				_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
-				creep.memory = {};
-			} else if (result != OK) {
-				console.log(`<font color=\"#F0FF00\">[Colonization]</font> ${creep.name} unable to colonize ${_.get(request, ["target"])}; error ${result}`);
-			}
+			console.log(`<font color=\"#F0FF00\">[Colonization]</font> ${creep.name} unable to colonize ${_.get(request, ["target"])}; error ${result}`);
 			return;
 		}
 	},
