@@ -2619,19 +2619,27 @@
 			runPopulation: function (rmColony, rmTarget, listCreeps, listRoute) {
 				const rmTargetBase = _.isString(rmTarget) && rmTarget.indexOf("/") >= 0 ? rmTarget.split("/")[1] : rmTarget;
 				let popActual = new Object();
-			// Count ACTIVE colonizers only - exclude those in transit (transferring status)
-			// This prevents spawning replacements while a colonizer is crossing shards
-			_.set(popActual, "colonizer", _.filter(listCreeps, c => (c.memory.role == "colonizer" || c.name.startsWith('colo:')) && c.memory.global_status !== 'transferring').length);
+				// Count colonizers regardless of transfer state so we do not spawn a duplicate
+				// while one is crossing shards. Previously we excluded global_status === 'transferring',
+				// which caused an extra colonizer to spawn mid-transfer.
+				_.set(popActual, "colonizer", _.filter(listCreeps, c => (c.memory.role == "colonizer" || c.name.startsWith('colo:'))).length);
 
-			let popTarget = _.cloneDeep(Population_Colonization);
+				const popTarget = _.cloneDeep(Population_Colonization);
+				const listSpawnRooms = _.get(Memory, ["rooms", rmColony, "spawn_assist", "rooms"]);
+				const colonyLevel = _.get(Game, ["rooms", rmColony, "controller", "level"], 1);
 
-			// Tally population levels for level scaling and statistics
-			Control.populationTally(rmColony,
-				_.sum(popTarget, p => { return _.get(p, "amount", 0); }),
-				_.sum(popActual));
+				// Tally population levels for level scaling and statistics
+				Control.populationTally(rmColony,
+					_.sum(popTarget, p => { return _.get(p, "amount", 0); }),
+					_.sum(popActual));
 
-			if (_.get(popActual, "colonizer", 0) < _.get(popTarget, ["colonizer", "amount"], 0)) {
-				Memory["hive"]["spawn_requests"].push({
+				const pendingColonizer = _.find(_.get(Memory, ["hive", "spawn_requests"], []), r => r && r.role === "colonizer" && _.get(r, ["args", "target_key"]) === rmTarget);
+				if (_.get(popActual, "colonizer", 0) < _.get(popTarget, ["colonizer", "amount"], 0) && !pendingColonizer) {
+					Memory["hive"]["spawn_requests"].push({
+						room: rmColony,
+						listRooms: listSpawnRooms,
+						priority: 21,
+						level: _.get(popTarget, ["colonizer", "level"], colonyLevel),
 						scale: _.get(popTarget, ["colonizer", "scale"], false),
 						body: _.get(popTarget, ["colonizer", "body"], "reserver_at"),
 						name: null,
