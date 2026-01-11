@@ -452,19 +452,19 @@
 		});
 
 		this.runGlobalScouts();
+		this.runGlobalColonizers();
 	},
 
-		runColonizations: function () {
-			let colonizations = _.get(Memory, ["sites", "colonization"]);
-			_.each(colonizations, (req, key) => {
-				if (!req)
-					return;
-				// Normalize target (strip shard prefix) for same-shard execution while keeping key for cross-shard bookkeeping
-				let targetBase = _.isString(req.target) && req.target.indexOf("/") >= 0 ? req.target.split("/")[1] : req.target;
-				let targetRoom = targetBase || req.target || key;
-				Sites.Colonization(_.get(req, "from"), targetRoom);
-			});
-		},
+	runColonizations: function () {
+		let colonizations = _.get(Memory, ["sites", "colonization"]);
+		_.each(colonizations, (req, key) => {
+			if (!req)
+				return;
+			// Use full shard-aware target if provided; fallback to key
+			let targetRoom = _.get(req, "target") || key;
+			Sites.Colonization(_.get(req, "from"), targetRoom);
+		});
+	},
 
 	runCombat: function () {
 		for (let memory_id in _.get(Memory, ["sites", "combat"]))
@@ -500,6 +500,83 @@
 				return;
 
 			Creep_Roles.Scout(creep);
+		});
+	},
+
+	runGlobalColonizers: function () {
+		let creeps = _.get(Game, "creeps");
+		if (!creeps)
+			return;
+
+		// Debug: Check if this function is even running
+		let colonizer_creeps = _.filter(creeps, c => c && (c.memory.role === "colonizer" || (typeof c.name === "string" && c.name.indexOf("colo:") === 0)));
+		if (colonizer_creeps.length > 0) {
+			console.log(`<font color="#FF00FF">[DEBUG]</font> runGlobalColonizers running on shard ${Game.shard.name}, found ${colonizer_creeps.length} colonizer-like creeps`);
+		}
+
+		_.each(creeps, creep => {
+			if (!creep)
+				return;
+
+			let role = _.get(creep, ["memory", "role"]);
+			let looksLikeColonizer = role === "colonizer"
+				|| (typeof creep.name === "string" && creep.name.indexOf("colo:") === 0);
+
+			if (!looksLikeColonizer)
+				return;
+
+			// For transferred colonizers, attempt memory restoration from ISM BEFORE setting role
+			// Check if this creep needs restoration: either has no role OR is a transferred creep without room field
+			let needsRestoration = !role && creep.name.startsWith('colo:');
+			if (!needsRestoration && creep.memory.role === "colonizer" && !creep.memory.room && creep.name.startsWith('colo:')) {
+				// Transferred creep with role set but missing room - definitely needs ISM restoration
+				needsRestoration = true;
+				console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} detected as transferred (role set, room missing)`);
+			}
+
+			if (needsRestoration) {
+				console.log(`<font color="#FFA500">[Colonizer]</font> Global handler attempting restoration for ${creep.name}`);
+				try {
+					let transferData = null;
+					let masterIsmData = InterShardMemory.getRemote('shard0');
+					if (masterIsmData) {
+						let parsed = JSON.parse(masterIsmData);
+						transferData = _.get(parsed, ["creep_transfers", creep.name], null) 
+							|| _.get(parsed, ["transfers", creep.name], null);
+						console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} ISM check: found=${!!transferData}`);
+					}
+					if (transferData) {
+						// Restore all memory fields from transfer data
+						creep.memory.role = transferData.role;
+						creep.memory.room = transferData.room;
+						creep.memory.colony = transferData.colony;
+						creep.memory.level = transferData.level;
+						creep.memory.shard_mission = transferData.shard_mission;
+						creep.memory.list_route = transferData.list_route;
+						creep.memory.spawn_pos = transferData.spawn_pos;
+						creep.memory.layout_config = transferData.layout_config;
+						creep.memory.focus_defense = transferData.focus_defense;
+						creep.memory.transferred = true;
+						creep.memory.transfer_time = transferData.transfer_time;
+						creep.memory.global_status = 'restored';
+						console.log(`<font color="#4ECDC4">[Colonizer]</font> Global handler restored ${creep.name}: role=${creep.memory.role}, room=${creep.memory.room}`);
+						role = creep.memory.role; // Update local role variable
+					}
+				} catch (e) {
+					console.log(`<font color="#FFA500">[Colonizer]</font> Error restoring ${creep.name} from ISM: ${e.message}`);
+				}
+			}
+
+			// Transferred colonizers may not have role set yet; set it now
+			if (role !== "colonizer")
+				_.set(creep, ["memory", "role"], "colonizer");
+
+			// Ensure we don't run multiple times per tick
+			if (_.get(creep.memory, "_last_colonizer_run") === Game.time)
+				return;
+
+			creep.memory._last_colonizer_run = Game.time;
+			Creep_Roles.Colonizer(creep);
 		});
 	},
 
@@ -834,6 +911,69 @@
 		return this.isCreepTrackedGlobally(creepName, globalState);
 	},
 
+	parseRoute: function (route, originShard) {
+		// Parses a route array and returns structured route with shard transitions
+		// Supports both "roomName" and "shard/roomName" formats
+		// Returns array of { shard, roomName } objects
+		if (!_.isArray(route))
+			return [];
+
+		let currentShard = originShard || Game.shard.name;
+		let parsed = [];
+
+		_.each(route, step => {
+			if (!step || !_.isString(step))
+				return;
+
+			let shard = currentShard;
+			let roomName = step;
+
+			// Check for shard prefix: "shard1/E29S14"
+			if (step.indexOf("/") >= 0) {
+				let parts = step.split("/");
+				if (parts.length === 2) {
+					shard = parts[0];
+					roomName = parts[1];
+					currentShard = shard; // Update current shard for subsequent steps
+				}
+			}
+
+			parsed.push({ shard: shard, roomName: roomName });
+		});
+
+		return parsed;
+	},
+
+	detectShardTransitions: function (route) {
+		// Detects shard transitions in a parsed route
+		// Returns array of { fromShard, fromRoom, toShard, toRoom, portalRoom }
+		if (!_.isArray(route) || route.length < 2)
+			return [];
+
+		let transitions = [];
+
+		for (let i = 0; i < route.length - 1; i++) {
+			let current = route[i];
+			let next = route[i + 1];
+
+			if (!current || !next)
+				continue;
+
+			// Check if shard changes
+			if (current.shard !== next.shard) {
+				transitions.push({
+					fromShard: current.shard,
+					fromRoom: current.roomName,
+					toShard: next.shard,
+					toRoom: next.roomName,
+					portalRoom: current.roomName // Portal is in the "from" room
+				});
+			}
+		}
+
+		return transitions;
+	},
+
 	deriveScoutRoute: function (origin, destination) {
 		if (origin == null || destination == null)
 			return origin ? [origin] : [];
@@ -870,6 +1010,138 @@
 		_.set(Memory, ["rooms", rmName, "population", "actual"], _.get(Memory, ["rooms", rmName, "population", "actual"], 0) + popActual);
 	},
 
+	processCrossShardSpawnRequests: function () {
+		// Master shard (shard0) reads spawn requests from all slave shards
+		// and dispatches them to appropriate shards
+		if (Game.shard.name !== "shard0")
+			return;
+
+		let knownShards = _.get(Memory, ["hive", "ism", "known_shards"], ["shard0", "shard1", "shard2", "shard3"]);
+		let crossShardRequests = [];
+
+		// Check for clear requests from slave shards
+		try {
+			let localData = InterShardMemory.getLocal();
+			if (localData) {
+				let localParsed = JSON.parse(localData);
+				let dispatched = _.get(localParsed, "dispatched_spawn_requests", {});
+				
+				// Check each slave shard for clear requests
+				_.each(knownShards, shard => {
+					if (shard === "shard0")
+						return;
+					
+					try {
+						let slaveData = InterShardMemory.getRemote(shard);
+						if (slaveData) {
+							let slaveParsed = JSON.parse(slaveData);
+							if (_.get(slaveParsed, "clear_dispatched")) {
+								// Clear dispatched requests for this shard
+								if (dispatched[shard]) {
+									delete dispatched[shard];
+									console.log(`<font color="#4ECDC4">[CrossShard]</font> Cleared dispatched requests for ${shard}`);
+								}
+							}
+						}
+					} catch (err) {
+						// Ignore parse errors
+					}
+				});
+				
+				// Update local ISM with cleared dispatches
+				localParsed.dispatched_spawn_requests = dispatched;
+				InterShardMemory.setLocal(JSON.stringify(localParsed));
+			}
+		} catch (err) {
+			console.log(`<font color="#FF6B6B">[CrossShard]</font> Failed to process clear requests: ${err.message}`);
+		}
+
+		// Read spawn requests from all shards
+		_.each(knownShards, shard => {
+			if (shard === "shard0")
+				return; // Skip master shard (already in local memory)
+
+			try {
+				let remoteData = InterShardMemory.getRemote(shard);
+				if (!remoteData)
+					return;
+
+				let parsed = JSON.parse(remoteData);
+				let requests = _.get(parsed, "spawn_requests", []);
+
+				if (_.isArray(requests) && requests.length > 0) {
+					_.each(requests, req => {
+						if (!req)
+							return;
+
+						// Add source shard to request
+						req._sourceShard = shard;
+						crossShardRequests.push(req);
+					});
+				}
+			} catch (err) {
+				console.log(`<font color="#FF6B6B">[CrossShard]</font> Failed to read spawn requests from ${shard}: ${err.message}`);
+			}
+		});
+
+		// Process cross-shard requests
+		_.each(crossShardRequests, req => {
+			let listRooms = _.get(req, "listRooms", []);
+			let targetShard = null;
+			let targetRooms = [];
+
+			// Parse listRooms to find which shard can fulfill the request
+			_.each(listRooms, room => {
+				if (!room || !_.isString(room))
+					return;
+
+				let shard = Game.shard.name;
+				let roomName = room;
+
+				// Check for shard prefix
+				if (room.indexOf("/") >= 0) {
+					let parts = room.split("/");
+					if (parts.length === 2) {
+						shard = parts[0];
+						roomName = parts[1];
+					}
+				}
+
+				if (!targetShard)
+					targetShard = shard;
+
+				targetRooms.push({ shard: shard, room: roomName });
+			});
+
+			// If no target shard found, use source shard
+			if (!targetShard)
+				targetShard = req._sourceShard;
+
+			// Dispatch request to target shard
+			if (targetShard === "shard0") {
+				// Add to local spawn queue
+				Memory.hive.spawn_requests.push(req);
+			} else {
+				// Send to target shard via ISM
+				try {
+					let localData = InterShardMemory.getLocal();
+					let localParsed = localData ? JSON.parse(localData) : {};
+
+					if (!localParsed.dispatched_spawn_requests)
+						localParsed.dispatched_spawn_requests = {};
+					if (!localParsed.dispatched_spawn_requests[targetShard])
+						localParsed.dispatched_spawn_requests[targetShard] = [];
+
+					localParsed.dispatched_spawn_requests[targetShard].push(req);
+
+					InterShardMemory.setLocal(JSON.stringify(localParsed));
+				} catch (err) {
+					console.log(`<font color="#FF6B6B">[CrossShard]</font> Failed to dispatch spawn request to ${targetShard}: ${err.message}`);
+				}
+			}
+		});
+	},
+
 	processSpawnRequests: function () {
 		/*  lvlPriority is an integer rating priority, e.g.:
 				01 - 10: Defense
@@ -894,6 +1166,38 @@
 
 		if (!isPulse_Spawn())
 			return;
+
+		// Master shard (shard0) processes cross-shard spawn requests
+		if (Game.shard.name === "shard0") {
+			this.processCrossShardSpawnRequests();
+		} else {
+			// Slave shards read dispatched requests from master
+			try {
+				let masterData = InterShardMemory.getRemote("shard0");
+				if (masterData) {
+					let parsed = JSON.parse(masterData);
+					let dispatched = _.get(parsed, ["dispatched_spawn_requests", Game.shard.name], []);
+
+					if (_.isArray(dispatched) && dispatched.length > 0) {
+						// Add dispatched requests to local spawn queue
+						_.each(dispatched, req => {
+							if (req)
+								Memory.hive.spawn_requests.push(req);
+						});
+
+						console.log(`<font color="#4ECDC4">[CrossShard]</font> Received ${dispatched.length} spawn requests from master shard0`);
+
+						// Clear dispatched requests from master ISM by notifying master
+						let localData = InterShardMemory.getLocal();
+						let localParsed = localData ? JSON.parse(localData) : {};
+						localParsed.clear_dispatched = true;
+						InterShardMemory.setLocal(JSON.stringify(localParsed));
+					}
+				}
+			} catch (err) {
+				console.log(`<font color="#FF6B6B">[CrossShard]</font> Failed to read dispatched spawn requests: ${err.message}`);
+			}
+		}
 
 		Stats_CPU.Start("Hive", "processSpawnRequests");
 
@@ -1002,6 +1306,38 @@
 					let r = Math.random() * 16 | 0, v = c == "x" ? r : (r & 0x3 | 0x8);
 					return v.toString(16);
 				});
+
+			// Check if creep needs to transfer to another shard
+			let listRoute = _.get(request.args, "list_route");
+			if (listRoute && _.isArray(listRoute) && listRoute.length > 0) {
+				let parsedRoute = this.parseRoute(listRoute, Game.shard.name);
+				let transitions = this.detectShardTransitions(parsedRoute);
+
+				// If there's a shard transition, create transfer intent
+				if (transitions.length > 0) {
+					let firstTransition = transitions[0];
+
+					// Find portal in the room
+					let portalRoom = Game.rooms[firstTransition.portalRoom];
+					if (portalRoom) {
+						let portal = _.head(portalRoom.find(FIND_STRUCTURES, {
+							filter: s => s.structureType === STRUCTURE_PORTAL
+								&& _.get(s, ["destination", "shard"]) === firstTransition.toShard
+						}));
+
+						if (portal) {
+							request.args.transfer_intent = {
+								origin_shard: Game.shard.name,
+								origin_room: bestSpawn.room.name,
+								destination_shard: firstTransition.toShard,
+								destination_room: firstTransition.toRoom,
+								portal_pos: { x: portal.pos.x, y: portal.pos.y, roomName: portal.pos.roomName }
+							};
+							request.args.shard_mission = _.get(request.args, "role", "worker");
+						}
+					}
+				}
+			}
 
 			// Optimize energy structures lookup - only if storage exists
 			let energies = null;

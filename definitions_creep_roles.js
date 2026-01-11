@@ -5,16 +5,51 @@
  global.Creep_Roles = {
 
 	moveToDestination: function (creep) {
-		if (creep.memory.room != null && creep.room.name != creep.memory.room) {
-			creep.travelToRoom(creep.memory.room, true);
+		// Use list_route if available (supports cross-shard travel), otherwise use room
+		if (creep.memory.room != null) {
+			// Extract base room name (strip shard prefix if present)
+			let targetRoom = creep.memory.room;
+			let baseRoom = targetRoom;
+			if (targetRoom.indexOf("/") >= 0)
+				baseRoom = targetRoom.split("/")[1];
+			
+			// Check if we're already at destination
+			if (creep.room.name == baseRoom)
+				return false;
+			
+			// Use list_route for travel if available (handles cross-shard routes)
+			// But DON'T use list_route if the actual destination is already on this shard
+			// (prevents trying to follow waypoints past the destination)
+			if (_.isArray(creep.memory.list_route) && creep.memory.list_route.length > 0) {
+				// Check if destination is in list_route - if so, use waypoint routing
+				let routeContainsDestination = _.any(creep.memory.list_route, entry => {
+					let roomToCheck = _.isString(entry) ? (entry.indexOf("/") >= 0 ? entry.split("/")[1] : entry) : entry;
+					return roomToCheck === baseRoom;
+				});
+				
+				if (routeContainsDestination) {
+					// Use waypoint routing with the full destination
+					creep.travelToRoom(targetRoom, true);
+				} else {
+					// Destination not in route - just go there directly
+					creep.travelToRoom(creep.memory.room, true);
+				}
+			} else {
+				creep.travelToRoom(creep.memory.room, true);
+			}
 			return true;
-		} else
-			return false;
+		}
+		return false;
 	},
 
 	goToRoom: function (creep, room_name, is_refueling) {
 		if (creep.room.name != room_name) {
-			creep.travelToRoom(room_name, is_refueling);
+			// Use list_route if available for multi-room travel (prevents getting stuck between rooms)
+			if (_.isArray(creep.memory.list_route) && creep.memory.list_route.length > 0) {
+				creep.travelToRoom(room_name, is_refueling, true);
+			} else {
+				creep.travelToRoom(room_name, is_refueling);
+			}
 			return true;
 		}
 		return false;
@@ -1747,58 +1782,60 @@
 
 		// Master-Slave Architecture: All shards report to shard0 master
 		if (creep.name.startsWith('colo:')) {
-			// Update local status to ISM for master shard0 to read
-			if (Game.time % 5 === 0) {
-				console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} updating status to master shard0 (tick ${Game.time})`);
-				
-				// Check if this is a transferred colonizer that needs memory restoration
-				if (!creep.memory.role) {
-					console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} has no role, attempting memory restoration`);
-					
-					// Check shard0's master ISM for transfer data
-					try {
-						let transferData = null;
-						if (typeof ShardMemory !== "undefined" && _.isFunction(_.get(ShardMemory, "getCreepTransfer")))
-							transferData = ShardMemory.getCreepTransfer('shard0', creep.name);
-						else {
-						let masterIsmData = InterShardMemory.getRemote('shard0');
-						if (masterIsmData) {
-							let parsed = JSON.parse(masterIsmData);
-								transferData = _.get(parsed, ["transfers", creep.name], null);
+			// CRITICAL: Check if this is a transferred colonizer that needs memory restoration
+			// Must run EVERY TICK, not just every 5 ticks, to catch recent transfers
+			if (!creep.memory.role) {
+				console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} has no role, attempting memory restoration`);
+			
+			// Check shard0's master ISM for transfer data
+			try {
+				let transferData = null;
+				let masterIsmData = InterShardMemory.getRemote('shard0');
+				if (masterIsmData) {
+					let parsed = JSON.parse(masterIsmData);
+					// Try both old "transfers" and new "creep_transfers" key names
+					transferData = _.get(parsed, ["creep_transfers", creep.name], null) 
+						|| _.get(parsed, ["transfers", creep.name], null);
+					console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} looking in ISM, found: ${transferData ? 'yes' : 'no'}`);
+				}
+				if (transferData) {
+						console.log(`<font color="#4ECDC4">[Colonizer]</font> Found transfer data for ${creep.name}: role=${transferData.role}, room=${transferData.room}`);
+						
+						// Restore memory
+						creep.memory.role = transferData.role;
+						creep.memory.room = transferData.room;
+						creep.memory.colony = transferData.colony;
+						creep.memory.level = transferData.level;
+						creep.memory.shard_mission = transferData.shard_mission;
+						creep.memory.list_route = transferData.list_route;
+						creep.memory.spawn_pos = transferData.spawn_pos;
+						creep.memory.layout_config = transferData.layout_config;
+						creep.memory.focus_defense = transferData.focus_defense;
+						creep.memory.transferred = true;
+						creep.memory.transfer_time = transferData.transfer_time;
+						creep.memory.global_status = 'restored';
+						creep.updateGlobalStatus('restored', {
+							note: 'memory restored',
+							target: {
+								shard: _.get(transferData, "destination_shard"),
+								room: _.get(transferData, "destination_room")
 							}
-						}
-						if (transferData) {
-								console.log(`<font color="#4ECDC4">[Colonizer]</font> Found transfer data for ${creep.name} in master ISM`);
-								
-								// Restore memory
-								creep.memory.role = transferData.role;
-								creep.memory.room = transferData.room;
-								creep.memory.colony = transferData.colony;
-								creep.memory.level = transferData.level;
-								creep.memory.shard_mission = transferData.shard_mission;
-								creep.memory.list_route = transferData.list_route;
-								creep.memory.spawn_pos = transferData.spawn_pos;
-								creep.memory.layout_config = transferData.layout_config;
-								creep.memory.focus_defense = transferData.focus_defense;
-								creep.memory.transferred = true;
-								creep.memory.transfer_time = transferData.transfer_time;
-								creep.memory.global_status = 'restored';
-								creep.updateGlobalStatus('restored', {
-									note: 'memory restored',
-									target: {
-										shard: _.get(transferData, "destination_shard"),
-										room: _.get(transferData, "destination_room")
-									}
-								});
-								
-								console.log(`<font color="#4ECDC4">[Colonizer]</font> Memory restored for ${creep.name}, mission: ${transferData.shard_mission}`);
-						}
-					} catch (e) {
-						console.log(`<font color="#FFA500">[Colonizer]</font> Error reading master ISM: ${e.message}`);
-					}
-				} else if (creep.memory.role && !creep.memory.global_status) {
-					// Creep has role but no global status - mark as restored
-					creep.memory.global_status = 'restored';
+						});
+						
+						console.log(`<font color="#4ECDC4">[Colonizer]</font> Memory restored for ${creep.name}: role=${creep.memory.role}, room=${creep.memory.room}`);
+				} else {
+						console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} not found in master ISM creep_transfers`);
+				}
+			} catch (e) {
+				console.log(`<font color="#FFA500">[Colonizer]</font> Error reading master ISM: ${e.message}`);
+			}
+		}
+		
+		// Update local status to ISM for master shard0 to read (every 5 ticks)
+		if (Game.time % 5 === 0) {
+			console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} updating status to master shard0 (tick ${Game.time})`);
+			
+			if (creep.memory.role && !creep.memory.global_status) {
 					creep.updateGlobalStatus('restored');
 					console.log(`<font color="#4ECDC4">[Colonizer]</font> ${creep.name} marked as restored`);
 				}
@@ -1820,45 +1857,104 @@
 			}
 		}
 		
+		// Clear the transferred flag if it exists (don't clean up waypoints - travelToRoom handles it)
+		if (creep.memory.transferred) {
+			delete creep.memory.transferred;
+		}
+		
+		// Initialize transfer_intent from list_route if needed for cross-shard travel
+		if (!creep.memory.transfer_intent && _.isArray(creep.memory.list_route) && creep.memory.list_route.length > 0) {
+			// Only set transfer_intent for the NEXT shard transition after current location
+			let currentShard = Game.shard.name;
+			let nextTransitionIndex = -1;
+			
+			// Find the FIRST shard transition ahead of current position
+			for (let i = 0; i < creep.memory.list_route.length; i++) {
+				let waypoint = creep.memory.list_route[i];
+				
+				// Check if this waypoint is on a different shard than current
+				if (waypoint.indexOf("/") >= 0) {
+					let parts = waypoint.split("/");
+					let waypointShard = parts[0];
+					
+					// Only set transfer_intent if destination is a different shard
+					if (waypointShard !== currentShard) {
+						nextTransitionIndex = i;
+						break;  // Stop at FIRST shard transition, don't scan further
+					}
+				}
+			}
+			
+			// Only create transfer_intent if there's a shard transition in our route
+			if (nextTransitionIndex >= 0) {
+				let destWaypoint = creep.memory.list_route[nextTransitionIndex];
+				let parts = destWaypoint.split("/");
+				let destShard = parts[0];
+				let destRoom = parts[1];
+				
+				// Find the portal room (previous waypoint before shard transition)
+				let portalRoom = nextTransitionIndex > 0 ? creep.memory.list_route[nextTransitionIndex - 1] : creep.room.name;
+				
+				// Find the correct portal in the portal room (must match destination shard/room)
+				let portal = null;
+				if (Game.rooms[portalRoom]) {
+					let portals = Game.rooms[portalRoom].find(FIND_STRUCTURES, {
+						filter: s => s.structureType === STRUCTURE_PORTAL
+					});
+					
+					// Find portal that goes to our destination shard and room
+					for (let p of portals) {
+						if (p.destination && p.destination.shard === destShard && p.destination.room === destRoom) {
+							portal = p;
+							break;  // Found correct portal, stop searching
+						}
+					}
+					
+					// Fallback: if no exact match, take first portal (for edge cases)
+					if (!portal && portals.length > 0) {
+						console.log(`<font color="#FFAA00">[Colonizer]</font> ${creep.name} no exact portal match for ${destShard}/${destRoom} in ${portalRoom}, using first available`);
+						portal = portals[0];
+					}
+				}
+				
+				if (portal) {
+					creep.memory.transfer_intent = {
+						destination_shard: destShard,
+						destination_room: destRoom,
+						portal_pos: { x: portal.pos.x, y: portal.pos.y, roomName: portal.pos.roomName }
+					};
+					console.log(`<font color="#4ECDC4">[Colonizer]</font> ${creep.name} detected shard transition to ${destShard}/${destRoom}, portal at ${portalRoom}`);
+				}
+			}
+		}
+		
 		// Check for transfer intent first - if transferring, move to portal and step on it
 		if (creep.memory.transfer_intent) {
 			let portalPos = creep.memory.transfer_intent.portal_pos;
 			
-			// Check if creep is at portal
-			if (creep.pos.x === portalPos.x && creep.pos.y === portalPos.y && creep.room.name === portalPos.roomName) {
-				// Creep is at portal, store transfer data in ISM and transfer
-				console.log(`<font color="#4ECDC4">[Colonizer]</font> ${creep.name} at portal, storing transfer data and transferring to ${creep.memory.transfer_intent.destination_shard}`);
-				
-				// Store colonizer data in InterShardMemory for restoration on destination shard
-				let transferData = {
-					creepId: creep.name,
-					role: creep.memory.role,
-					room: creep.memory.room,
-					colony: creep.memory.colony,
-					level: creep.memory.level,
-					shard_mission: creep.memory.shard_mission,
-					destination_shard: creep.memory.transfer_intent.destination_shard,
-					destination_room: creep.memory.transfer_intent.destination_room,
-					list_route: creep.memory.list_route,
-					spawn_pos: creep.memory.spawn_pos,
-					layout_config: creep.memory.layout_config,
-					focus_defense: creep.memory.focus_defense,
-					transfer_time: Game.time
-				};
-				
-				creep.memory.global_status = 'transferring';
-				creep.updateGlobalStatus('transferring', {
-					target: {
-						shard: _.get(creep.memory, ["transfer_intent", "destination_shard"]),
-						room: _.get(creep.memory, ["transfer_intent", "destination_room"])
-					},
-					portal: _.get(creep.memory, ["transfer_intent", "portal_pos"])
-				});
-				
-				// Store in InterShardMemory for destination shard
+			// Store colonizer data in InterShardMemory BEFORE attempting portal transfer
+			// This must happen before creep steps onto portal to ensure data persists
+			let transferData = {
+				creepId: creep.name,
+				role: creep.memory.role,
+				room: creep.memory.room,
+				colony: creep.memory.colony,
+				level: creep.memory.level,
+				shard_mission: creep.memory.shard_mission,
+				destination_shard: creep.memory.transfer_intent.destination_shard,
+				destination_room: creep.memory.transfer_intent.destination_room,
+				list_route: creep.memory.list_route,
+				spawn_pos: creep.memory.spawn_pos,
+				layout_config: creep.memory.layout_config,
+				focus_defense: creep.memory.focus_defense,
+				transfer_time: Game.time
+			};
+			
+			// Store in InterShardMemory for destination shard (only once)
+			if (!creep.memory.transfer_data_stored) {
 				let ismData = InterShardMemory.getLocal() ? JSON.parse(InterShardMemory.getLocal()) : {};
-				if (!ismData.transfers) ismData.transfers = {};
-				ismData.transfers[creep.name] = transferData;
+				if (!ismData.creep_transfers) ismData.creep_transfers = {};
+				ismData.creep_transfers[creep.name] = transferData;
 				
 				// Mark as global creep in ISM
 				if (!ismData.global_creeps) ismData.global_creeps = {};
@@ -1873,12 +1969,28 @@
 				InterShardMemory.setLocal(JSON.stringify(ismData));
 				
 				console.log(`<font color="#4ECDC4">[Colonizer]</font> Transfer data stored for ${creep.name}`);
+				creep.memory.transfer_data_stored = true;
+			}
+			
+			creep.memory.global_status = 'transferring';
+			creep.updateGlobalStatus('transferring', {
+				target: {
+					shard: _.get(creep.memory, ["transfer_intent", "destination_shard"]),
+					room: _.get(creep.memory, ["transfer_intent", "destination_room"])
+				},
+				portal: _.get(creep.memory, ["transfer_intent", "portal_pos"])
+			});
+			
+			// Check if creep is at portal
+			if (creep.pos.x === portalPos.x && creep.pos.y === portalPos.y && creep.room.name === portalPos.roomName) {
+				// Creep is at portal, transfer will happen automatically
+				console.log(`<font color="#4ECDC4">[Colonizer]</font> ${creep.name} at portal, transferring to ${creep.memory.transfer_intent.destination_shard}`);
 				
 				// Clear transfer intent - the transfer will happen automatically
 				delete creep.memory.transfer_intent;
 				return;
 			} else {
-				// Creep is not at portal, move directly to it using moveTo
+				// Creep is not at portal, move to it
 				console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} moving to portal at ${portalPos.x},${portalPos.y} in ${portalPos.roomName}`);
 				
 				// Check if we're in the correct room first
@@ -1889,10 +2001,23 @@
 					return;
 				}
 				
-				// We're in the correct room, move to the portal position
-				let moveResult = creep.moveTo(portalPos.x, portalPos.y);
-				console.log(`<font color="#FFA500">[Colonizer]</font> Move result: ${moveResult}`);
-				return;
+				// We're in the correct room, check if we're adjacent to portal
+				let range = creep.pos.getRangeTo(portalPos.x, portalPos.y);
+				if (range === 0) {
+					// Already on portal - shouldn't happen but handle it
+					console.log(`<font color="#4ECDC4">[Colonizer]</font> ${creep.name} already on portal`);
+					return;
+				} else if (range === 1) {
+					// Adjacent to portal - move onto it
+					let moveResult = creep.move(creep.pos.getDirectionTo(portalPos.x, portalPos.y));
+					console.log(`<font color="#4ECDC4">[Colonizer]</font> ${creep.name} stepping onto portal, result: ${moveResult}`);
+					return;
+				} else {
+					// Not adjacent, path to it
+					let moveResult = creep.moveTo(portalPos.x, portalPos.y);
+					console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} pathfinding to portal (range ${range}), result: ${moveResult}`);
+					return;
+				}
 			}
 		}
 

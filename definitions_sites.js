@@ -2590,17 +2590,24 @@
 
 				Stats_CPU.Start(rmColony, `Colonization-${rmTarget}-listCreeps`);
 				let listCreeps = _.filter(Game.creeps, c => {
-					if (c.memory.colony != rmColony)
+					// Accept both normal colonizers and colonizer-named creeps that may not have role restored yet
+					if (_.get(c, ["memory", "role"]) !== "colonizer" && !c.name.startsWith('colo:'))
 						return false;
 
-					let targetKey = _.get(c, ["memory", "target_key"]);
-					return targetKey == rmTarget || c.memory.room == rmTarget || c.memory.room == rmTargetBase;
+					const colonyMatches = _.get(c, ["memory", "colony"]) == null || _.get(c, ["memory", "colony"]) == rmColony;
+					const targetKey = _.get(c, ["memory", "target_key"]);
+					const memRoom = _.get(c, ["memory", "room"]);
+					const targetMatches = (targetKey == rmTarget || memRoom == rmTarget
+						|| targetKey == rmTargetBase || memRoom == rmTargetBase);
+					// For transferred creeps with empty memory, match by creep name pattern
+					const isTransferred = !_.get(c, ["memory", "role"]) && c.name.startsWith('colo:');
+					return (isTransferred || (colonyMatches && targetMatches));
 				});
 				Stats_CPU.End(rmColony, `Colonization-${rmTarget}-listCreeps`);
 
 				if (isPulse_Spawn()) {
 					Stats_CPU.Start(rmColony, `Colonization-${rmTarget}-runPopulation`);
-					this.runPopulation(rmColony, rmTarget, listCreeps);
+					this.runPopulation(rmColony, rmTarget, listCreeps, listRoute);
 					Stats_CPU.End(rmColony, `Colonization-${rmTarget}-runPopulation`);
 				}
 
@@ -2609,26 +2616,33 @@
 				Stats_CPU.End(rmColony, `Colonization-${rmTarget}-runCreeps`);
 			},
 
-			runPopulation: function (rmColony, rmTarget, listCreeps) {
+			runPopulation: function (rmColony, rmTarget, listCreeps, listRoute) {
 				const rmTargetBase = _.isString(rmTarget) && rmTarget.indexOf("/") >= 0 ? rmTarget.split("/")[1] : rmTarget;
 				let popActual = new Object();
-				_.set(popActual, "colonizer", _.filter(listCreeps, c => c.memory.role == "colonizer").length);
+			// Count ACTIVE colonizers only - exclude those in transit (transferring status)
+			// This prevents spawning replacements while a colonizer is crossing shards
+			_.set(popActual, "colonizer", _.filter(listCreeps, c => (c.memory.role == "colonizer" || c.name.startsWith('colo:')) && c.memory.global_status !== 'transferring').length);
 
-				let popTarget = _.cloneDeep(Population_Colonization);
+			let popTarget = _.cloneDeep(Population_Colonization);
 
-				// Tally population levels for level scaling and statistics
-				Control.populationTally(rmColony,
-					_.sum(popTarget, p => { return _.get(p, "amount", 0); }),
-					_.sum(popActual));
+			// Tally population levels for level scaling and statistics
+			Control.populationTally(rmColony,
+				_.sum(popTarget, p => { return _.get(p, "amount", 0); }),
+				_.sum(popActual));
 
-				if (_.get(popActual, "colonizer", 0) < _.get(popTarget, ["colonizer", "amount"], 0)) {
-					Memory["hive"]["spawn_requests"].push({
-						room: rmColony, listRooms: null,
-						priority: 21,
-						level: _.get(popTarget, ["colonizer", "level"], 6),
+			if (_.get(popActual, "colonizer", 0) < _.get(popTarget, ["colonizer", "amount"], 0)) {
+				Memory["hive"]["spawn_requests"].push({
 						scale: _.get(popTarget, ["colonizer", "scale"], false),
 						body: _.get(popTarget, ["colonizer", "body"], "reserver_at"),
-						name: null, args: { role: "colonizer", room: rmTargetBase, target_key: rmTarget, colony: rmColony }
+						name: null,
+						args: {
+							role: "colonizer",
+							room: rmTarget,              // keep shard prefix
+							target_key: rmTarget,        // full shard/room for cross-shard logic
+							colony: rmColony,
+							list_route: listRoute || [], // waypoints/portals
+							shard_mission: "colonization"
+						}
 					});
 				}
 			},
@@ -2636,13 +2650,21 @@
 			runCreeps: function (rmColony, rmTarget, listCreeps, listRoute) {
 				const rmTargetBase = _.isString(rmTarget) && rmTarget.indexOf("/") >= 0 ? rmTarget.split("/")[1] : rmTarget;
 				_.each(listCreeps, creep => {
-					if (!_.get(creep.memory, "target_key"))
+						// Backfill colony if missing so future filters include this creep
+						if (!_.get(creep, ["memory", "colony"]))
+							creep.memory.colony = rmColony;
+					// Ensure target_key retains shard prefix for cross-shard missions
+					if (!_.get(creep.memory, "target_key") || creep.memory.target_key === rmTargetBase)
 						creep.memory.target_key = rmTarget;
-					if (rmTargetBase && creep.memory.room !== rmTargetBase)
-						creep.memory.room = rmTargetBase;
-					_.set(creep, ["memory", "list_route"], listRoute);
+					// Always use full shard/room for destination when provided
+					if (rmTarget && creep.memory.room !== rmTarget)
+						creep.memory.room = rmTarget;  // Use full shard/room format
+						if (listRoute && (!creep.memory.list_route || creep.memory.list_route.length !== listRoute.length))
+						creep.memory.list_route = listRoute;
 
-					if (creep.memory.role == "colonizer") {
+					// Call Colonizer role for any colonizer creep, even if memory.role is undefined
+					// This ensures transferred colonizers get memory restoration
+					if (creep.memory.role == "colonizer" || creep.name.startsWith('colo:')) {
 						Creep_Roles.Colonizer(creep);
 					}
 				});

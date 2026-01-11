@@ -6,6 +6,12 @@
 	if (this.fatigue > 0)
 		return ERR_TIRED;
 
+	// If we just changed rooms, clear any stale pathing state so we recompute for the new room
+	let prevRoom = _.get(this, ["memory", "path", "last_room"]);
+	if (prevRoom && prevRoom !== this.room.name)
+		this.travelClear();
+	_.set(this, ["memory", "path", "last_room"], this.room.name);
+
 	let pos_dest;
 	if (_.get(dest, "x") != null && _.get(dest, "y") != null && _.get(dest, "roomName") != null)
 		pos_dest = new RoomPosition(dest.x, dest.y, dest.roomName);
@@ -18,7 +24,9 @@
 		return OK;
 
 	// Only request a new path every X ticks (different from reusePath... this may be different task even)
-	if (_.get(this, ["memory", "path", "travel_req"], 0) > (Game.time - Control.moveRequestPath(this)))
+	// If we do not have a cached path, force recompute immediately so we do not spin on null.
+	let hasCachedPath = _.isString(_.get(this, ["memory", "path", "path_str"])) && _.get(this, ["memory", "path", "path_str"]).length > 0;
+	if (hasCachedPath && _.get(this, ["memory", "path", "travel_req"], 0) > (Game.time - Control.moveRequestPath(this)))
 		return this.travelByPath();
 	else
 		_.set(this, ["memory", "path", "travel_req"], Game.time);
@@ -33,6 +41,8 @@
 
 		if (_.get(pos_dest, "roomName") == this.room.name) {
 			// If the creep's destination is in the same room as the creep, prevent exiting the room to path
+			// Allow edge tiles when the destination itself is on the border (needed for exit tiles)
+			let destIsBorder = (pos_dest.x === 0 || pos_dest.x === 49 || pos_dest.y === 0 || pos_dest.y === 49);
 			path_array = this.pos.findPathTo(pos_dest, {
 				maxOps: Control.moveMaxOps(), reusePath: Control.moveReusePath(),
 				ignoreCreeps: ignore_creeps, costCallback: function (roomName, costMatrix) {
@@ -44,12 +54,14 @@
 						costMatrix.set(p.x, p.y, 255);
 					});
 
-					// Set all edge tiles as impassable...
-					for (let i = 0; i < 50; i++) {
-						costMatrix.set(0, i, 255);
-						costMatrix.set(i, 0, 255);
-						costMatrix.set(49, i, 255);
-						costMatrix.set(i, 49, 255);
+					// Set all edge tiles as impassable unless destination is on the border
+					if (!destIsBorder) {
+						for (let i = 0; i < 50; i++) {
+							costMatrix.set(0, i, 255);
+							costMatrix.set(i, 0, 255);
+							costMatrix.set(49, i, 255);
+							costMatrix.set(i, 49, 255);
+						}
 					}
 				}
 			});
@@ -160,111 +172,146 @@ Creep.prototype.travelToRoom = function travelToRoom(tgtRoom, forward, portalCal
 	}).call(this, list_route);
 
 	if (parsedRoute.length > 0) {
-		if (forward === true) {
-			for (let i = 1; i < parsedRoute.length; i++) {
-				if (parsedRoute[i - 1].shard !== Game.shard.name)
-					continue;
-				if (this.room.name === parsedRoute[i - 1].roomName) {
-					// Check for portal to next room in the route
-					let portal = this.pos.findClosestByRange(FIND_STRUCTURES, {
-						filter: (structure) => {
-							if (structure.structureType != STRUCTURE_PORTAL)
-								return false;
-							if (_.get(structure, ["destination", "roomName"]) != parsedRoute[i].roomName)
-								return false;
-							if (_.get(structure, ["destination", "shard"]) && _.get(structure, ["destination", "shard"]) != parsedRoute[i].shard)
-								return false;
-							return true;
-						}
-					});
-					if (portal) {
-						// Primary-shard mission authority: mark transfer intent for any creep
-						if (parsedRoute[i] && parsedRoute[i].shard && parsedRoute[i].shard !== Game.shard.name && typeof ShardMemory !== "undefined" && _.isFunction(_.get(ShardMemory, "markTransferStart"))) {
-							let missionData = _.get(this, ["memory", "global", "mission_data"], {});
-							ShardMemory.markTransferStart(this.name, {
-								destination_shard: parsedRoute[i].shard,
-								destination_room: parsedRoute[i].roomName,
-								portal: { x: portal.pos.x, y: portal.pos.y, roomName: portal.pos.roomName, shard: Game.shard.name },
-								role: _.get(this, ["memory", "role"]),
-								mission: _.get(missionData, "mission") || _.get(this, ["memory", "shard_mission"]) || _.get(this, ["memory", "role"]) || "unknown"
-							});
-						}
-						if (_.isFunction(portalCallback))
-							portalCallback.call(this, portal, parsedRoute[i]);
-						else if (parsedRoute[i] && parsedRoute[i].shard && parsedRoute[i].shard !== Game.shard.name && _.isFunction(this._recordTransferSnapshot))
-							this._recordTransferSnapshot(portal.pos, parsedRoute[i].shard, parsedRoute[i].roomName);
-						_.set(this, ["memory", "path", "portal"], portal.id);
-						let result = this.travel(portal.pos);
-						if (result == OK) {
-							return OK;
-						} else {
-							if (_.isFunction(portalCallback))
-								portalCallback.call(this, portal, parsedRoute[i]);
-							else if (parsedRoute[i] && parsedRoute[i].shard && parsedRoute[i].shard !== Game.shard.name && _.isFunction(this._recordTransferSnapshot))
-								this._recordTransferSnapshot(portal.pos, parsedRoute[i].shard, parsedRoute[i].roomName);
-							// Fallback to moveTo if travel fails
-							result = this.moveTo(portal.pos);
-							if (result == OK) {
-								return OK;
-							}
-						}
-					}
-					// Attempt to travel to the exit tile of the target room
-					let result = this.travelToExitTile(parsedRoute[i].roomName);
+		// Shared helpers
+		let tgtRoomBase = tgtRoom.indexOf("/") >= 0 ? tgtRoom.split("/")[1] : tgtRoom;
+		let areRoomsAdjacent = (room1, room2) => {
+			let exits = Game.map.describeExits(room1);
+			if (!exits) return false;
+			for (let dir in exits) {
+				if (exits[dir] === room2)
+					return true;
+			}
+			return false;
+		};
+		let moveTowardRoom = (roomName) => {
+			if (areRoomsAdjacent(this.room.name, roomName)) {
+				let route = Game.map.findRoute(this.room.name, roomName);
+				if (route !== ERR_NO_PATH && route.length > 0) {
+					let nextRoom = route[0].room;
+					let result = this.travelToExitTile(nextRoom);
 					if (result == OK)
 						return OK;
-					else
-						return this.travel(new RoomPosition(25, 25, parsedRoute[i].roomName));
+					let exitTiles = this.room.find(route[0].exit);
+					let exit = this.pos.findClosestByPath(exitTiles);
+					if (exit)
+						return this.travel(new RoomPosition(exit.x, exit.y, this.room.name));
+				}
+			} else {
+				let portals = this.room.find(FIND_STRUCTURES, {
+					filter: (structure) => structure.structureType == STRUCTURE_PORTAL && _.get(structure, ["destination", "roomName"]) === roomName
+				});
+				if (portals.length > 0) {
+					let closestPortal = this.pos.findClosestByRange(portals);
+					if (closestPortal) {
+						let result = this.travel(closestPortal.pos);
+						if (result == OK)
+							return OK;
+						// If pathing failed (null path, blocked edge, etc.) fall back to a direct move so we still enter
+						result = this.moveTo(closestPortal.pos);
+						if (result == OK)
+							return OK;
+					}
+				}
+				let route = Game.map.findRoute(this.room.name, roomName);
+				if (route !== ERR_NO_PATH && route.length > 0) {
+					let nextRoom = route[0].room;
+					let result = this.travelToExitTile(nextRoom);
+					if (result == OK)
+						return OK;
+					let exitTiles = this.room.find(route[0].exit);
+					let exit = this.pos.findClosestByPath(exitTiles);
+					if (exit)
+						return this.travel(new RoomPosition(exit.x, exit.y, this.room.name));
 				}
 			}
-		} else if (forward === false) {
-			for (let i = parsedRoute.length - 2; i >= 0; i--) {
-				if (parsedRoute[i + 1].shard !== Game.shard.name)
-					continue;
-				if (this.room.name === parsedRoute[i + 1].roomName) {
-					// Check for portal to previous room in the route
-					let portal = this.pos.findClosestByRange(FIND_STRUCTURES, {
-						filter: (structure) => {
-							if (structure.structureType != STRUCTURE_PORTAL)
-								return false;
-							if (_.get(structure, ["destination", "roomName"]) != parsedRoute[i].roomName)
-								return false;
-							if (_.get(structure, ["destination", "shard"]) && _.get(structure, ["destination", "shard"]) != parsedRoute[i].shard)
-								return false;
-							return true;
-						}
-					});
-					if (portal) {
-						// Primary-shard mission authority: mark transfer intent for any creep (reverse traversal)
-						if (parsedRoute[i] && parsedRoute[i].shard && parsedRoute[i].shard !== Game.shard.name && typeof ShardMemory !== "undefined" && _.isFunction(_.get(ShardMemory, "markTransferStart"))) {
-							let missionData = _.get(this, ["memory", "global", "mission_data"], {});
-							ShardMemory.markTransferStart(this.name, {
-								destination_shard: parsedRoute[i].shard,
-								destination_room: parsedRoute[i].roomName,
-								portal: { x: portal.pos.x, y: portal.pos.y, roomName: portal.pos.roomName, shard: Game.shard.name },
-								role: _.get(this, ["memory", "role"]),
-								mission: _.get(missionData, "mission") || _.get(this, ["memory", "shard_mission"]) || _.get(this, ["memory", "role"]) || "unknown"
-							});
-						}
-						_.set(this, ["memory", "path", "portal"], portal.id);
-						let result = this.travel(portal.pos);
-						if (result == OK) {
-							return OK;
-						} else {
-							// Fallback to moveTo if travel fails
-							result = this.moveTo(portal.pos);
-							if (result == OK) {
-								return OK;
-							}
-						}
-					}
-					// Attempt to travel to the exit tile of the target room
-					let result = this.travelToExitTile(parsedRoute[i].roomName);
+			return this.travel(new RoomPosition(25, 25, roomName));
+		};
+
+		let findPortalToHop = (target) => {
+			return this.pos.findClosestByRange(FIND_STRUCTURES, {
+				filter: (structure) => {
+					if (structure.structureType != STRUCTURE_PORTAL)
+						return false;
+					if (_.get(structure, ["destination", "roomName"]) != target.roomName)
+						return false;
+					if (_.get(structure, ["destination", "shard"]) && _.get(structure, ["destination", "shard"]) != target.shard)
+						return false;
+					return true;
+				}
+			});
+		};
+
+		// Identify where we are in the route (by shard + room)
+		let currentIndex = _.findIndex(parsedRoute, r => r.shard === Game.shard.name && r.roomName === this.room.name);
+		let shardRoute = _.filter(parsedRoute, r => r.shard === Game.shard.name);
+
+		// Already at final destination room
+		if (this.room.name === tgtRoomBase)
+			return OK;
+
+		if (forward === true) {
+			// Not on any waypoint for this shard: head to the first one
+			if (currentIndex === -1) {
+				if (shardRoute.length > 0)
+					return moveTowardRoom(shardRoute[0].roomName);
+				// No waypoint on this shard; aim for final room
+				return moveTowardRoom(tgtRoomBase);
+			}
+
+			// If current is the last hop in the full route
+			if (currentIndex === parsedRoute.length - 1 || (parsedRoute[currentIndex + 1] && parsedRoute[currentIndex + 1].shard !== Game.shard.name && shardRoute.length === 1)) {
+				return moveTowardRoom(tgtRoomBase);
+			}
+
+			let nextHop = parsedRoute[currentIndex + 1];
+			// If next hop is same shard, walk/portal to it; if different shard, require portal
+			if (nextHop.shard === Game.shard.name) {
+				return moveTowardRoom(nextHop.roomName);
+			} else {
+				let portal = findPortalToHop(nextHop);
+				if (portal) {
+					if (_.isFunction(portalCallback))
+						portalCallback.call(this, portal, nextHop);
+					else if (_.isFunction(this._recordTransferSnapshot))
+						this._recordTransferSnapshot(portal.pos, nextHop.shard, nextHop.roomName);
+					_.set(this, ["memory", "path", "portal"], portal.id);
+					let result = this.travel(portal.pos);
 					if (result == OK)
 						return OK;
-					else
-						return this.travel(new RoomPosition(25, 25, parsedRoute[i].roomName));
+					result = this.moveTo(portal.pos);
+					if (result == OK)
+						return OK;
 				}
+				return moveTowardRoom(nextHop.roomName);
+			}
+		} else if (forward === false) {
+			// Reverse traversal
+			if (currentIndex === -1) {
+				if (shardRoute.length > 0)
+					return moveTowardRoom(_.last(shardRoute).roomName);
+				return moveTowardRoom(tgtRoomBase);
+			}
+
+			if (currentIndex === 0)
+				return moveTowardRoom(tgtRoomBase);
+
+			let prevHop = parsedRoute[currentIndex - 1];
+			if (prevHop.shard === Game.shard.name) {
+				return moveTowardRoom(prevHop.roomName);
+			} else {
+				let portal = findPortalToHop(prevHop);
+				if (portal) {
+					if (_.isFunction(portalCallback))
+						portalCallback.call(this, portal, prevHop);
+					_.set(this, ["memory", "path", "portal"], portal.id);
+					let result = this.travel(portal.pos);
+					if (result == OK)
+						return OK;
+					result = this.moveTo(portal.pos);
+					if (result == OK)
+						return OK;
+				}
+				return moveTowardRoom(prevHop.roomName);
 			}
 		}
 	}
