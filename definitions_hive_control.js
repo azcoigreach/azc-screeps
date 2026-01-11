@@ -563,6 +563,7 @@
 			} catch (e) {
 				console.log(`<font color="#FFA500">[Colonizer]</font> Error restoring ${creep.name}: ${e.message}`);
 			}
+		}
 
 			// Transferred colonizers may not have role set yet; set it now
 			if (role !== "colonizer")
