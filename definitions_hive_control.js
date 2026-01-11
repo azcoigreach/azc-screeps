@@ -508,10 +508,10 @@
 		if (!creeps)
 			return;
 
-		// Debug: Check if this function is even running
+		// Only log colonizer detection once per minute to reduce console spam
 		let colonizer_creeps = _.filter(creeps, c => c && (c.memory.role === "colonizer" || (typeof c.name === "string" && c.name.indexOf("colo:") === 0)));
-		if (colonizer_creeps.length > 0) {
-			console.log(`<font color="#FF00FF">[DEBUG]</font> runGlobalColonizers running on shard ${Game.shard.name}, found ${colonizer_creeps.length} colonizer-like creeps`);
+		if (colonizer_creeps.length > 0 && Game.time % 50 === 0) {
+			console.log(`<font color="#4ECDC4">[Colonizers]</font> ${colonizer_creeps.length} active on ${Game.shard.name}`);
 		}
 
 		_.each(creeps, creep => {
@@ -535,36 +535,33 @@
 			}
 
 			if (needsRestoration) {
-				console.log(`<font color="#FFA500">[Colonizer]</font> Global handler attempting restoration for ${creep.name}`);
-				try {
-					let transferData = null;
-					let masterIsmData = InterShardMemory.getRemote('shard0');
-					if (masterIsmData) {
-						let parsed = JSON.parse(masterIsmData);
-						transferData = _.get(parsed, ["creep_transfers", creep.name], null) 
-							|| _.get(parsed, ["transfers", creep.name], null);
-						console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} ISM check: found=${!!transferData}`);
-					}
-					if (transferData) {
-						// Restore all memory fields from transfer data
-						creep.memory.role = transferData.role;
-						creep.memory.room = transferData.room;
-						creep.memory.colony = transferData.colony;
-						creep.memory.level = transferData.level;
-						creep.memory.shard_mission = transferData.shard_mission;
-						creep.memory.list_route = transferData.list_route;
-						creep.memory.spawn_pos = transferData.spawn_pos;
-						creep.memory.layout_config = transferData.layout_config;
-						creep.memory.focus_defense = transferData.focus_defense;
-						creep.memory.transferred = true;
-						creep.memory.transfer_time = transferData.transfer_time;
-						creep.memory.global_status = 'restored';
-						console.log(`<font color="#4ECDC4">[Colonizer]</font> Global handler restored ${creep.name}: role=${creep.memory.role}, room=${creep.memory.room}`);
-						role = creep.memory.role; // Update local role variable
-					}
-				} catch (e) {
-					console.log(`<font color="#FFA500">[Colonizer]</font> Error restoring ${creep.name} from ISM: ${e.message}`);
+			try {
+				let transferData = null;
+				let masterIsmData = InterShardMemory.getRemote('shard0');
+				if (masterIsmData) {
+					let parsed = JSON.parse(masterIsmData);
+					transferData = _.get(parsed, ["creep_transfers", creep.name], null) 
+						|| _.get(parsed, ["transfers", creep.name], null);
 				}
+				if (transferData) {
+					// Restore all memory fields from transfer data
+					creep.memory.role = transferData.role;
+					creep.memory.room = transferData.room;
+					creep.memory.colony = transferData.colony;
+					creep.memory.level = transferData.level;
+					creep.memory.shard_mission = transferData.shard_mission;
+					creep.memory.list_route = transferData.list_route;
+					creep.memory.spawn_pos = transferData.spawn_pos;
+					creep.memory.layout_config = transferData.layout_config;
+					creep.memory.focus_defense = transferData.focus_defense;
+					creep.memory.transferred = true;
+					creep.memory.transfer_time = transferData.transfer_time;
+					creep.memory.global_status = 'restored';
+					console.log(`<font color="#4ECDC4">[Colonizer]</font> ${creep.name} restored on ${creep.memory.room}`);
+					role = creep.memory.role; // Update local role variable
+				}
+			} catch (e) {
+				console.log(`<font color="#FFA500">[Colonizer]</font> Error restoring ${creep.name}: ${e.message}`);
 			}
 
 			// Transferred colonizers may not have role set yet; set it now

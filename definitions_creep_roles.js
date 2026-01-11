@@ -1833,28 +1833,24 @@
 		
 		// Update local status to ISM for master shard0 to read (every 5 ticks)
 		if (Game.time % 5 === 0) {
-			console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} updating status to master shard0 (tick ${Game.time})`);
-			
 			if (creep.memory.role && !creep.memory.global_status) {
-					creep.updateGlobalStatus('restored');
-					console.log(`<font color="#4ECDC4">[Colonizer]</font> ${creep.name} marked as restored`);
-				}
-				
-				// Report status to master shard0 via local ISM
-				let ismData = InterShardMemory.getLocal() ? JSON.parse(InterShardMemory.getLocal()) : {};
-				if (!ismData.slave_reports) ismData.slave_reports = {};
-				let globalStatus = _.get(creep, ["memory", "global", "status"], creep.memory.global_status || 'active');
-				ismData.slave_reports[creep.name] = {
-					status: globalStatus,
-					shard: Game.shard.name,
-					room: creep.room.name,
-					last_update: Game.time,
-					ticks_to_live: creep.ticksToLive,
-					mission: creep.memory.shard_mission
-				};
-				InterShardMemory.setLocal(JSON.stringify(ismData));
-				console.log(`<font color="#4ECDC4">[Colonizer]</font> ${creep.name} status reported to master`);
+				creep.updateGlobalStatus('restored');
 			}
+			
+			// Report status to master shard0 via local ISM
+			let ismData = InterShardMemory.getLocal() ? JSON.parse(InterShardMemory.getLocal()) : {};
+			if (!ismData.slave_reports) ismData.slave_reports = {};
+			let globalStatus = _.get(creep, ["memory", "global", "status"], creep.memory.global_status || 'active');
+			ismData.slave_reports[creep.name] = {
+				status: globalStatus,
+				shard: Game.shard.name,
+				room: creep.room.name,
+				last_update: Game.time,
+				ticks_to_live: creep.ticksToLive,
+				mission: creep.memory.shard_mission
+			};
+			InterShardMemory.setLocal(JSON.stringify(ismData));
+		}
 		}
 		
 		// Clear the transferred flag if it exists (don't clean up waypoints - travelToRoom handles it)
@@ -1991,12 +1987,10 @@
 				return;
 			} else {
 				// Creep is not at portal, move to it
-				console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} moving to portal at ${portalPos.x},${portalPos.y} in ${portalPos.roomName}`);
 				
 				// Check if we're in the correct room first
 				if (creep.room.name !== portalPos.roomName) {
 					// Need to travel to the portal room first
-					console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} needs to travel to room ${portalPos.roomName} first`);
 					creep.travelToRoom(portalPos.roomName);
 					return;
 				}
@@ -2005,17 +1999,17 @@
 				let range = creep.pos.getRangeTo(portalPos.x, portalPos.y);
 				if (range === 0) {
 					// Already on portal - shouldn't happen but handle it
-					console.log(`<font color="#4ECDC4">[Colonizer]</font> ${creep.name} already on portal`);
 					return;
 				} else if (range === 1) {
 					// Adjacent to portal - move onto it
 					let moveResult = creep.move(creep.pos.getDirectionTo(portalPos.x, portalPos.y));
-					console.log(`<font color="#4ECDC4">[Colonizer]</font> ${creep.name} stepping onto portal, result: ${moveResult}`);
+					if (moveResult === OK) {
+						console.log(`<font color="#4ECDC4">[Colonizer]</font> ${creep.name} crossing portal`);
+					}
 					return;
 				} else {
 					// Not adjacent, path to it
-					let moveResult = creep.moveTo(portalPos.x, portalPos.y);
-					console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} pathfinding to portal (range ${range}), result: ${moveResult}`);
+					creep.moveTo(portalPos.x, portalPos.y);
 					return;
 				}
 			}
