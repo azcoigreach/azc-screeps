@@ -1308,6 +1308,199 @@
 		}
 	},
 
+	Portal_Scout: function (creep) {
+		// Phase 3 Portal Testing Role
+		
+		// If in test mode and has portal target, use cross-shard travel
+		if (creep.memory.test_mode && creep.memory.portal_target_shard) {
+			let currentShard = Game.shard ? Game.shard.name : "sim";
+			
+			// Check if we're already on the target shard
+			if (currentShard === creep.memory.portal_target_shard) {
+				console.log(`<font color="#00FF00">[Scout]</font> ${creep.name} successfully arrived on ${currentShard}!`);
+				
+				// Move to target room on this shard
+				if (creep.room.name !== creep.memory.portal_target_room) {
+					let targetPos = new RoomPosition(25, 25, creep.memory.portal_target_room);
+					creep.travel(targetPos);
+				} else {
+					console.log(`<font color="#00FF00">[Scout]</font> ${creep.name} reached destination room ${creep.room.name}!`);
+					// Mission complete - suicide or wander
+					creep.say("✓Portal!");
+				}
+			} else {
+				// Use Phase 3 cross-shard travel
+				let result = creep.travelToShard(
+					creep.memory.portal_target_shard,
+					creep.memory.portal_target_room
+				);
+				
+				if (result === ERR_NO_PATH) {
+					console.log(`<font color="#FF0000">[Scout]</font> ${creep.name} cannot find portal route`);
+					creep.say("No portal");
+				} else {
+					creep.say("→Portal");
+				}
+			}
+			return;
+		}
+		
+		// Normal exploration mode - travel toward target room
+		if (creep.memory.target_room) {
+			if (creep.room.name !== creep.memory.target_room) {
+				// Use simple travel method to move toward target room
+				let targetPos = new RoomPosition(25, 25, creep.memory.target_room);
+				creep.travel(targetPos);
+				creep.say("Exploring");
+				
+				// Report if portals found in current room
+				let portals = creep.room.find(FIND_STRUCTURES, {
+					filter: s => s.structureType === STRUCTURE_PORTAL
+				});
+				
+				if (portals.length > 0) {
+					// Report portals to main portal system
+					let currentShard = Game.shard ? Game.shard.name : "sim";
+					
+					// Initialize portal storage in memory
+					if (!_.get(Memory, ["shard", "portals"])) {
+						_.set(Memory, ["shard", "portals"], {});
+					}
+					
+					_.each(portals, portal => {
+						let dest = portal.destination;
+						let destShard = dest.shard || currentShard;
+						let destRoom = dest.roomName || dest.room || "unknown";
+						
+						// Store portal in main portal system
+						let portalId = `${creep.room.name}_${portal.pos.x}_${portal.pos.y}`;
+						_.set(Memory, ["shard", "portals", portalId], {
+							pos: {
+								x: portal.pos.x,
+								y: portal.pos.y,
+								roomName: creep.room.name
+							},
+							destination: {
+								shard: destShard,
+								room: destRoom
+							},
+							discovered: Game.time,
+							discoveredBy: "scout"
+						});
+					});
+				}
+			} else {
+				// Reached target room - explore around it
+				
+				// Move to center of current room to scan for portals
+				if (creep.pos.x < 20 || creep.pos.x > 30 || creep.pos.y < 20 || creep.pos.y > 30) {
+					creep.travel(new RoomPosition(25, 25, creep.room.name));
+					creep.say("Moving to center");
+				} else {
+					creep.say("Scanning");
+					
+					// Look for portals in current room
+					let portals = creep.room.find(FIND_STRUCTURES, {
+						filter: s => s.structureType === STRUCTURE_PORTAL
+					});
+					
+					if (portals.length > 0) {
+						// Report portals to main portal system
+						let currentShard = Game.shard ? Game.shard.name : "sim";
+						
+						// Initialize portal storage in memory
+						if (!_.get(Memory, ["shard", "portals"])) {
+							_.set(Memory, ["shard", "portals"], {});
+						}
+						
+						_.each(portals, portal => {
+							let dest = portal.destination;
+							let destShard = dest.shard || currentShard;
+							let destRoom = dest.roomName || dest.room || "unknown";
+							
+							// Store portal in main portal system
+							let portalId = `${creep.room.name}_${portal.pos.x}_${portal.pos.y}`;
+							_.set(Memory, ["shard", "portals", portalId], {
+								pos: {
+									x: portal.pos.x,
+									y: portal.pos.y,
+									roomName: creep.room.name
+								},
+								destination: {
+									shard: destShard,
+									room: destRoom
+								},
+								discovered: Game.time,
+								discoveredBy: "scout"
+							});
+						});
+						
+						creep.say(`Found ${portals.length}!`);
+						
+						// Auto-test: Try to traverse to shard3 if we find a portal to it
+						if (!creep.memory.auto_test_attempted) {
+							let shard3Portal = _.find(portals, p => p.destination.shard === "shard3");
+							if (shard3Portal && currentShard !== "shard3") {
+								console.log(`<font color="#00FFFF">[Scout]</font> ${creep.name} auto-testing portal traversal to shard3!`);
+								creep.memory.auto_test_attempted = true;
+								creep.memory.test_mode = true;
+								creep.memory.portal_target_shard = "shard3";
+								creep.memory.portal_target_room = "W50N50";
+								creep.say("Testing!");
+							}
+						}
+						
+						// Clear target room so scout continues exploring
+						creep.memory.target_room = undefined;
+					}
+				}
+			}
+		} else {
+			// No target - pick a new room to explore
+			let exploredRooms = _.get(creep.memory, "explored_rooms", []);
+			let currentRoom = creep.room.name;
+			
+			// Mark current room as explored
+			if (!exploredRooms.includes(currentRoom)) {
+				exploredRooms.push(currentRoom);
+				creep.memory.explored_rooms = exploredRooms;
+			}
+			
+			// Find adjacent rooms we haven't explored
+			let exits = Game.map.describeExits(currentRoom);
+			let unexploredRooms = [];
+			
+			_.each(exits, (roomName, direction) => {
+				if (roomName && !exploredRooms.includes(roomName)) {
+					unexploredRooms.push(roomName);
+				}
+			});
+			
+			if (unexploredRooms.length > 0) {
+				// Pick a random unexplored room
+				let targetRoom = unexploredRooms[Math.floor(Math.random() * unexploredRooms.length)];
+				creep.memory.target_room = targetRoom;
+				creep.say("New area!");
+			} else {
+				// All adjacent rooms explored, pick a random direction
+				let directions = ["north", "south", "east", "west"];
+				let randomDir = directions[Math.floor(Math.random() * directions.length)];
+				let targetRoom = exits[randomDir];
+				
+				if (targetRoom) {
+					creep.memory.target_room = targetRoom;
+					creep.say("Random!");
+				} else {
+					creep.say("Wandering");
+					// Just wander around current room
+					if (creep.pos.isEdge()) {
+						creep.travel(new RoomPosition(25, 25, creep.room.name));
+					}
+				}
+			}
+		}
+	},
+
 	Worker: function (creep, isSafe) {
 		let nonEnergyCarry = _.sum(creep.carry) - _.get(creep.carry, "energy", 0);
 		if (nonEnergyCarry > 0) {
@@ -1337,9 +1530,12 @@
 		}
 
 		// Always prioritize picking up dropped commodities if there is free carry capacity
+		// Exclude base resources (H, O, U, L, K, Z, X) and boosts that are typically used in labs
+		const excludedResources = ["energy", "H", "O", "U", "L", "K", "Z", "X"];
+		
 		if (_.sum(creep.carry) < creep.carryCapacity) {
 			let dropped = creep.room.find(FIND_DROPPED_RESOURCES, {
-				filter: r => r.resourceType !== "energy"
+				filter: r => !excludedResources.includes(r.resourceType) && r.amount > 50
 			});
 			if (dropped.length > 0) {
 				let closest = creep.pos.findClosestByPath(dropped);
@@ -1408,12 +1604,13 @@
 					// Priority 1: Build critical RCL progression structures
 					creep.memory.task = creep.memory.task || creep.getTask_Build();
 					
-					// Priority 2: Repair critical structures (walls, ramparts)
+					// Priority 2: Repair critical AND maintenance (ramparts/walls to target HP)
+					// In early game, complete rampart repairs to avoid constant task switching
 					creep.memory.task = creep.memory.task || creep.getTask_Repair(true);
+					creep.memory.task = creep.memory.task || creep.getTask_Repair(false);
 					
 					// Priority 3: Other tasks needed for room progression
 					creep.memory.task = creep.memory.task || creep.getTask_Sign();
-					creep.memory.task = creep.memory.task || creep.getTask_Repair(false);
 					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral");
 
 					// Final fallback: always contribute to controller upgrades when idle
@@ -1498,8 +1695,11 @@
 
 			} else if (creep.memory.role == "miner" || creep.memory.role == "carrier") {
 					creep.memory.task = creep.memory.task || creep.getTask_Pickup("energy");
+					
+					// PRIORITY 3: Withdraw from link (efficient transfer point)
 					creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Link(15);
 
+					// PRIORITY 4: Withdraw from containers/storage (only if can't mine)
 					let energy_level = _.get(Memory, ["rooms", creep.room.name, "survey", "energy_level"]);
 					if (energy_level == CRITICAL || energy_level == LOW
 						|| _.get(Memory, ["sites", "mining", creep.memory.room, "store_percent"], 0) > 0.25) {
@@ -1510,9 +1710,10 @@
 						creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Container("energy", true);
 					}
 
-					if (creep.hasPart("work") > 0)
-						creep.memory.task = creep.memory.task || creep.getTask_Mine();
+					// PRIORITY 5: Pick up minerals if available
 					creep.memory.task = creep.memory.task || creep.getTask_Pickup("mineral");
+					
+					// PRIORITY 6: Wait as last resort
 					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 				}
 
@@ -1529,6 +1730,7 @@
 				if (this.goToRoom(creep, creep.memory.colony, false))
 					return;
 
+				// PRIORITY 1: Fill spawns and extensions (critical for spawning)
 				if (creep.room.energyAvailable < creep.room.energyCapacityAvailable * 0.75) {
 					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Spawns();
 					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Towers();
@@ -1536,10 +1738,26 @@
 					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Towers();
 					creep.memory.task = creep.memory.task || creep.getTask_Deposit_Spawns();
 				}
+				
+				// PRIORITY 2: Deposit to links for distribution
 				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Link();
+				
+				// PRIORITY 3: Deposit minerals to storage
 				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral");
-				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("energy");
+				
+				// PRIORITY 4: If spawns/extensions/towers are full, deposit to containers near sources
+				// (This is the fallback behavior for miners when spawns are full)
 				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Container("energy");
+				
+				// PRIORITY 5: Deposit to storage (if available)
+				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("energy");
+				
+				// PRIORITY 6: If nowhere to deposit energy, upgrade controller
+				// This accelerates RCL progression when energy backs up
+				if (creep.carry["energy"] > 0 && creep.hasPart("work") > 0)
+					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
+				
+				// PRIORITY 7: Wait as last resort
 				creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 
 				creep.runTask(creep);
@@ -1557,9 +1775,12 @@
 
 	Courier: function (creep) {
 		// Always prioritize picking up dropped commodities if there is free carry capacity
+		// Exclude base resources (H, O, U, L, K, Z, X) and boosts that are typically used in labs
+		const excludedResources = ["energy", "H", "O", "U", "L", "K", "Z", "X"];
+		
 		if (_.sum(creep.carry) < creep.carryCapacity) {
 			let dropped = creep.room.find(FIND_DROPPED_RESOURCES, {
-				filter: r => r.resourceType !== "energy"
+				filter: r => !excludedResources.includes(r.resourceType) && r.amount > 50
 			});
 			if (dropped.length > 0) {
 				let closest = creep.pos.findClosestByPath(dropped);

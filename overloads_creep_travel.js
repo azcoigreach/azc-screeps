@@ -316,9 +316,18 @@ Creep.prototype.travelToRoom = function travelToRoom(tgtRoom, forward, portalCal
 		}
 	}
 
-	// Check for portals in the current room leading to the target room
+	// Check for portals in the current room leading to the target room (same-shard only)
+	// Multi-shard aware: Uses new portal detection system from Phase 1
+	// Cross-shard portals are stored in Memory.shard.portals and handled by Phase 3
+	let currentShard = Game.shard ? Game.shard.name : "sim";
 	let portals = this.room.find(FIND_STRUCTURES, {
-		filter: (structure) => structure.structureType == STRUCTURE_PORTAL
+		filter: (structure) => {
+			if (structure.structureType !== STRUCTURE_PORTAL) return false;
+			
+			// Only use same-shard portals for automatic pathfinding
+			let destShard = structure.destination.shard || currentShard;
+			return destShard === currentShard;
+		}
 	});
 
 	if (portals.length > 0) {
@@ -492,4 +501,142 @@ Creep.prototype.moveFromSource = function moveFromSource() {
 	if (sources != null && sources.length > 0) {
 		this.moveFrom(sources[0]);
 	}
+};
+
+/* ***********************************************************
+ * Phase 3: Cross-Shard Travel Methods
+ * *********************************************************** */
+
+/**
+ * Travel to a room on another shard via portal
+ * @param {string} targetShard - Destination shard name
+ * @param {string} targetRoom - Destination room name
+ * @returns {number} - ERR_* code or OK
+ */
+Creep.prototype.travelToShard = function(targetShard, targetRoom) {
+	if (!Game.shard) {
+		return ERR_INVALID_ARGS;
+	}
+
+	let currentShard = Game.shard.name;
+
+	// Already on target shard, use regular travel
+	if (currentShard === targetShard) {
+		return this.travelToRoom(targetRoom);
+	}
+
+	// Check if we're already tracking this transfer
+	let existingTransfer = _.find(
+		_.get(Memory, ["shard", "operations", "creep_transfers"], []),
+		t => t.creep_name === this.name && t.status === "traveling"
+	);
+
+	if (existingTransfer) {
+		// Transfer already registered, continue to portal
+		let route = Portals.getPortalRoute(this.room.name, targetShard, targetRoom);
+		if (!route) {
+			console.log(`<font color="#FF0000">[Creep]</font> ${this.name}: No portal route to ${targetShard}`);
+			return ERR_NO_PATH;
+		}
+
+		return this.travelToPortal(route);
+	}
+
+	// Find portal route
+	let route = Portals.getPortalRoute(this.room.name, targetShard, targetRoom);
+	
+	if (!route) {
+		console.log(`<font color="#FF0000">[Creep]</font> ${this.name}: No portal route found to ${targetShard}`);
+		return ERR_NO_PATH;
+	}
+
+	// Register expected arrival
+	Portals.expectArrival(
+		this.name,
+		targetShard,
+		targetRoom,
+		Game.time + route.estimatedTravelTime,
+		this.memory
+	);
+
+	// Travel to portal
+	return this.travelToPortal(route);
+};
+
+/**
+ * Travel to a specific portal (internal method)
+ * @param {object} route - Route object from Portals.getPortalRoute()
+ * @returns {number} - ERR_* code or OK
+ */
+Creep.prototype.travelToPortal = function(route) {
+	if (!route || !route.portal) {
+		return ERR_INVALID_ARGS;
+	}
+
+	let portal = route.portal;
+	let portalPos = new RoomPosition(portal.pos.x, portal.pos.y, portal.pos.roomName);
+
+	// Check if portal is in current room
+	if (this.room.name === portal.pos.roomName) {
+		// Find the actual portal structure
+		let portalStructure = this.pos.findClosestByRange(FIND_STRUCTURES, {
+			filter: s => s.structureType === STRUCTURE_PORTAL &&
+			             s.pos.x === portal.pos.x &&
+			             s.pos.y === portal.pos.y
+		});
+
+		if (portalStructure) {
+			// Check if adjacent to portal
+			if (this.pos.isNearTo(portalStructure)) {
+				// Move into portal
+				let result = this.moveTo(portalStructure);
+				if (result === OK) {
+					console.log(`<font color="#00FFFF">[Creep]</font> ${this.name} entering portal to ${route.destShard}`);
+				}
+				return result;
+			} else {
+				// Travel to portal
+				return this.travel(portalStructure.pos);
+			}
+		} else {
+			// Portal not found - may have decayed
+			console.log(`<font color="#FF0000">[Creep]</font> ${this.name}: Portal at ${portal.pos.roomName} not found!`);
+			return ERR_NO_PATH;
+		}
+	} else {
+		// Travel to portal room
+		return this.travelToRoom(portal.pos.roomName);
+	}
+};
+
+/**
+ * Check if creep is currently traveling to another shard
+ * @returns {object|null} - Transfer object or null
+ */
+Creep.prototype.isTransferringShards = function() {
+	return _.find(
+		_.get(Memory, ["shard", "operations", "creep_transfers"], []),
+		t => t.creep_name === this.name && t.status === "traveling"
+	);
+};
+
+/**
+ * Cancel a pending shard transfer
+ * @returns {boolean} - True if transfer was canceled
+ */
+Creep.prototype.cancelShardTransfer = function() {
+	let transfers = _.get(Memory, ["shard", "operations", "creep_transfers"], []);
+	let beforeLength = transfers.length;
+	
+	Memory.shard.operations.creep_transfers = _.filter(transfers, 
+		t => t.creep_name !== this.name
+	);
+	
+	let canceled = beforeLength > Memory.shard.operations.creep_transfers.length;
+	
+	if (canceled) {
+		console.log(`<font color="#FF6600">[Creep]</font> ${this.name}: Canceled shard transfer`);
+	}
+	
+	return canceled;
 };
