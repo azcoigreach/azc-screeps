@@ -67,15 +67,228 @@
 		return minOps + Math.floor((1 - (Game.cpu.bucket / 10000)) * range);
 	},
 
+	_globalCreepStateCacheTick: 0,
+	_globalCreepStateCache: null,
+
+	getGlobalCreepState: function () {
+		if (typeof ShardMemory === "undefined")
+			return null;
+
+		if (this._globalCreepStateCache && this._globalCreepStateCacheTick === Game.time)
+			return this._globalCreepStateCache;
+
+		let state = {
+			payloads: {},
+			shards: _.get(ShardMemory, "KNOWN_SHARDS", [])
+		};
+
+		try {
+			state.payloads[Game.shard.name] = ShardMemory.getLocalPayload();
+		} catch (err) {
+			console.log(`<font color="#FF6B6B">[InterShard]</font> Failed to read local payload: ${err.message}`);
+		}
+
+		_.each(state.shards, shard => {
+			if (shard === Game.shard.name)
+				return;
+			try {
+				let payload = ShardMemory.readRemote(shard);
+				if (payload)
+					state.payloads[shard] = payload;
+			} catch (err) {
+				console.log(`<font color="#FF6B6B">[InterShard]</font> Failed to read remote payload ${shard}: ${err.message}`);
+			}
+		});
+
+		this._globalCreepStateCache = state;
+		this._globalCreepStateCacheTick = Game.time;
+		return state;
+	},
+
+	isCreepTrackedGlobally: function (name, state) {
+		if (!name || !state || !state.payloads)
+			return false;
+
+		const TTL_GRACE_TICKS = 5;
+		const DESCRIPTOR_STALE_TICKS = 50; // Reduced from 150 for faster dead detection
+		const COMPLETION_GRACE_TICKS = 200;
+		const TRANSFER_GRACE_TICKS = 100; // Reduced from 200 for faster dead detection
+		const HANDSHAKE_PENDING_TICKS = 75;
+		const HANDSHAKE_ACK_TICKS = 150;
+
+		for (let shardName in state.payloads) {
+			let payload = state.payloads[shardName];
+			if (!payload)
+				continue;
+
+			let descriptor = _.get(payload, ["global", "creeps", name]);
+			if (descriptor) {
+				let status = _.get(descriptor, "status", "active");
+				if (status === "dead") {
+					// Explicitly marked as dead
+					return false;
+				}
+				
+				let ttl = _.get(descriptor, "ttl", 0);
+				let lastUpdate = _.get(descriptor, "last_update", Game.time);
+				let age = Game.time - lastUpdate;
+				
+				// If TTL is very low and update is stale, likely dead
+				if (ttl <= TTL_GRACE_TICKS && age > DESCRIPTOR_STALE_TICKS) {
+					return false;
+				}
+				
+				// If status is active but update is very stale, likely dead
+				if (status === "active" && age > DESCRIPTOR_STALE_TICKS) {
+					return false;
+				}
+				
+				// If transferring but update is stale, likely dead
+				if (status === "transferring" && age > TRANSFER_GRACE_TICKS) {
+					return false;
+				}
+				
+				// Check if descriptor is actually valid (not stale)
+				// Only return true if we have a valid descriptor
+				if (ttl > TTL_GRACE_TICKS && age <= DESCRIPTOR_STALE_TICKS) {
+					return true; // Valid descriptor with good TTL and recent update
+				}
+				if (age <= DESCRIPTOR_STALE_TICKS && status !== "transferring") {
+					return true; // Recent update, not transferring
+				}
+				if (status === "transferring" && age <= TRANSFER_GRACE_TICKS) {
+					return true; // Valid transferring descriptor
+				}
+				// If we get here, descriptor exists but is stale - continue checking other shards
+			}
+
+			let handshake = _.get(payload, "handshake");
+			if (handshake) {
+				let pending = _.get(handshake, ["pending", name]);
+				if (pending) {
+					let ts = _.get(pending, "transfer_time", _.get(pending, "updated", Game.time));
+					if ((Game.time - ts) <= HANDSHAKE_PENDING_TICKS)
+						return true;
+				}
+
+				let acknowledgement = _.get(handshake, ["acknowledgements", name]);
+				if (acknowledgement) {
+					let ts = _.get(acknowledgement, "updated", Game.time);
+					if ((Game.time - ts) <= HANDSHAKE_ACK_TICKS)
+						return true;
+				}
+
+				let completion = _.get(handshake, ["completions", name]);
+				if (completion && (Game.time - _.get(completion, "updated", Game.time)) <= COMPLETION_GRACE_TICKS)
+					return true;
+			}
+
+			let transfer = _.get(payload, ["creep_transfers", name]) || _.get(payload, ["transfers", name]);
+			if (transfer) {
+				let transferTime = _.get(transfer, "transfer_time", Game.time);
+				if ((Game.time - transferTime) <= TRANSFER_GRACE_TICKS)
+					return true;
+			}
+		}
+
+		return false;
+	},
+
+	_extractColonyFromRequestId: function (requestId) {
+		if (!requestId || !_.isString(requestId))
+			return null;
+		let parts = requestId.split(":");
+		if (parts.length < 2)
+			return null;
+		let colonyPart = parts[1];
+		let colonyParts = colonyPart.split("/");
+		return colonyParts.length === 2 ? colonyParts[1] : colonyPart;
+	},
+
+	registerRemoteMissionCreep: function (creepName, lastSeen) {
+		let creepMem = _.get(Memory, ["creeps", creepName]);
+		if (!creepMem)
+			return;
+
+		let requestId = _.get(creepMem, "scout_request_id");
+		if (!requestId)
+			return;
+
+		let colony = _.get(creepMem, "colony") || this._extractColonyFromRequestId(requestId);
+		if (!colony)
+			return;
+
+		let colonyRoom = colony;
+		if (_.isString(colonyRoom) && colonyRoom.indexOf("/") >= 0)
+			colonyRoom = colonyRoom.split("/").pop();
+
+		let requests = _.get(Memory, ["rooms", colonyRoom, "scout_requests"]);
+		if (!_.isArray(requests))
+			return;
+
+		for (let i = 0; i < requests.length; i++) {
+			let req = requests[i];
+			if (!req || req.id !== requestId)
+				continue;
+
+			if (!_.isObject(req.remote_creeps))
+				req.remote_creeps = {};
+			req.remote_creeps[creepName] = lastSeen || Game.time;
+			break;
+		}
+	},
+
+	unregisterRemoteMissionCreep: function (creepName) {
+		let creepMem = _.get(Memory, ["creeps", creepName]);
+		let requestId = creepMem ? _.get(creepMem, "scout_request_id") : null;
+		let colony = creepMem ? _.get(creepMem, "colony") : null;
+		if (!requestId)
+			return;
+		if (!colony)
+			colony = this._extractColonyFromRequestId(requestId);
+		if (!colony)
+			return;
+
+		let colonyRoom = colony;
+		if (_.isString(colonyRoom) && colonyRoom.indexOf("/") >= 0)
+			colonyRoom = colonyRoom.split("/").pop();
+
+		let requests = _.get(Memory, ["rooms", colonyRoom, "scout_requests"]);
+		if (!_.isArray(requests))
+			return;
+
+		for (let i = 0; i < requests.length; i++) {
+			let req = requests[i];
+			if (!req || req.id !== requestId)
+				continue;
+			if (_.isObject(req.remote_creeps) && _.has(req.remote_creeps, creepName))
+				delete req.remote_creeps[creepName];
+			break;
+		}
+	},
+
 	clearDeadMemory: function () {
 		if (!isPulse_Short())
 			return;
 
+		let deadCreeps = [];
+		let globalState = this.getGlobalCreepState();
+
 		if (_.has(Memory, "creeps"))
 			_.each(Object.keys(Memory.creeps), c => {
-				if (!_.has(Game, ["creeps", c])) {
-					delete Memory.creeps[c];
+				if (_.has(Game, ["creeps", c]))
+					return;
+
+				if (this.isCreepTrackedGlobally(c, globalState)) {
+					this.registerRemoteMissionCreep(c, Game.time);
+					_.set(Memory, ["creeps", c, "_global_remote"], true);
+					_.set(Memory, ["creeps", c, "_global_lastSeen"], Game.time);
+					return;
 				}
+
+				this.unregisterRemoteMissionCreep(c);
+				delete Memory.creeps[c];
+				deadCreeps.push(c);
 			});
 
 		if (_.has(Memory, "rooms"))
@@ -83,6 +296,97 @@
 				if (!_.has(Game, ["rooms", r]))
 					delete Memory.rooms[r];
 			});
+
+		if (deadCreeps.length > 0) {
+			if (typeof ShardMemory !== "undefined" && _.isFunction(_.get(ShardMemory, "removeGlobalCreep"))) {
+				_.each(deadCreeps, name => {
+					try {
+						ShardMemory.removeGlobalCreep(name, "dead");
+					} catch (err) {
+						console.log(`<font color="#FF944E">[Shard]</font> Failed to unregister ${name}: ${err.message}`);
+					}
+				});
+			}
+
+			try {
+				let raw = InterShardMemory.getLocal();
+				if (raw) {
+					let payload = JSON.parse(raw);
+					let changed = false;
+
+					_.each(deadCreeps, name => {
+						if (_.has(payload, ["global_creeps", name])) {
+							delete payload.global_creeps[name];
+							changed = true;
+						}
+						if (_.has(payload, ["creep_transfers", name])) {
+							let transferEntry = _.get(payload, ["creep_transfers", name]);
+							let destinationShard = _.get(transferEntry, "destination_shard");
+							let transferTime = _.get(transferEntry, "transfer_time", 0);
+							let recentTransfer = (Game.time - transferTime) <= 200;
+							let crossShard = destinationShard && destinationShard !== Game.shard.name;
+							if (!(crossShard && recentTransfer)) {
+								if (Memory && _.get(Memory, ["hive", "ism", "debug_transfers"])) {
+									console.log(`<font color="#9B5DE5">[InterShard]</font> clearDeadMemory removing transfer ${name}; crossShard=${crossShard} destination=${destinationShard} transferTime=${transferTime} recent=${recentTransfer}`);
+								}
+								delete payload.creep_transfers[name];
+								changed = true;
+							}
+						}
+						if (_.has(payload, ["transfers", name])) {
+							let transferEntry = _.get(payload, ["transfers", name]);
+							let destinationShard = _.get(transferEntry, "destination_shard");
+							let transferTime = _.get(transferEntry, "transfer_time", 0);
+							let recentTransfer = (Game.time - transferTime) <= 200;
+							let crossShard = destinationShard && destinationShard !== Game.shard.name;
+							if (!(crossShard && recentTransfer)) {
+								delete payload.transfers[name];
+								changed = true;
+							}
+						}
+					});
+
+					if (changed)
+						InterShardMemory.setLocal(JSON.stringify(payload));
+				}
+			} catch (err) {
+				console.log(`<font color="#FF944E">[Shard]</font> Failed to prune ISM for dead creeps: ${err.message}`);
+			}
+
+			let manifest = _.get(Memory, ["hive", "ism", "global", "local_manifest"]);
+			if (_.isObject(manifest)) {
+				_.each(deadCreeps, name => {
+					if (_.has(manifest, name))
+						delete manifest[name];
+				});
+				_.set(Memory, ["hive", "ism", "global", "local_manifest"], manifest);
+			}
+
+			_.each(_.keys(_.get(Memory, "rooms", {})), roomName => {
+				let requests = _.get(Memory, ["rooms", roomName, "scout_requests"]);
+				if (!_.isArray(requests) || requests.length === 0)
+					return;
+
+				let updated = [];
+				for (let i = 0; i < requests.length; i++) {
+					let req = requests[i];
+					if (!req)
+						continue;
+
+					if (_.isArray(req.creeps))
+						req.creeps = _.filter(req.creeps, name => _.has(Game.creeps, name));
+
+					if (!req.respawn && req.spawned_total >= _.get(req, "count", 1) && (_.isArray(req.creeps) && req.creeps.length === 0)) {
+						req._completed = true;
+					}
+
+					if (req._completed !== true)
+						updated.push(req);
+				}
+
+				_.set(Memory, ["rooms", roomName, "scout_requests"], updated);
+			});
+		}
 	},
 
 	initMemory: function () {
@@ -153,11 +457,20 @@
 		this.setPulse("defense", 8, 16);
 		this.setPulse("short", 19, 120);
 		this.setPulse("mid", 39, 180);
-		this.setPulse("long", 99, 400);
-		this.setPulse("spawn", 29, 60);
-		this.setPulse("lab", 1999, 2000);
-		this.setPulse("factory", 199, 400); // Factory assignments every 199-400 ticks
-		this.setPulse("blueprint", 19, 100); // Much faster blueprint for early game building
+	this.setPulse("long", 99, 400);
+	this.setPulse("spawn", 29, 60);
+	this.setPulse("lab", 1999, 2000);
+	this.setPulse("factory", 199, 400); // Factory assignments every 199-400 ticks
+	this.setPulse("blueprint", 19, 100); // Much faster blueprint for early game building
+	this.setPulse("intershard", 3, 10); // Fast intershard communication for handshakes and transfers
+
+		if (_.get(Memory, ["rooms"]) == null) _.set(Memory, ["rooms"], new Object());
+		if (_.get(Memory, ["hive", "allies"]) == null) _.set(Memory, ["hive", "allies"], new Array());
+		if (_.get(Memory, ["hive", "pulses"]) == null) _.set(Memory, ["hive", "pulses"], new Object());
+		if (_.get(Memory, ["sites", "mining"]) == null) _.set(Memory, ["sites", "mining"], new Object());
+		if (_.get(Memory, ["sites", "colonization"]) == null) _.set(Memory, ["sites", "colonization"], new Object());
+		if (_.get(Memory, ["sites", "combat"]) == null) _.set(Memory, ["sites", "combat"], new Object());
+		if (_.get(Memory, ["hive", "ism"]) == null) _.set(Memory, ["hive", "ism"], new Object());
 
 		for (let r in Game["rooms"])
 			_.set(Memory, ["rooms", r, "population"], null);
@@ -187,6 +500,8 @@
 
 				if (room.controller.level >= 6)
 					Sites.Industry(room.name);
+
+				this.runScoutRequests(room.name);
 			}
 		});
 
@@ -195,11 +510,19 @@
 			if (_.get(mining, [req, "colony"]) != null)
 				Sites.Mining(_.get(mining, [req, "colony"]), req);
 		});
+
+		this.runGlobalScouts();
+		this.runGlobalColonizers();
 	},
 
 	runColonizations: function () {
-		_.each(_.get(Memory, ["sites", "colonization"]), req => {
-			Sites.Colonization(_.get(req, "from"), _.get(req, "target"));
+		let colonizations = _.get(Memory, ["sites", "colonization"]);
+		_.each(colonizations, (req, key) => {
+			if (!req)
+				return;
+			// Use full shard-aware target if provided; fallback to key
+			let targetRoom = _.get(req, "target") || key;
+			Sites.Colonization(_.get(req, "from"), targetRoom);
 		});
 	},
 
@@ -213,10 +536,668 @@
 			Sites.HighwayMining(highway_id);
 	},
 
+	runGlobalScouts: function () {
+		let creeps = _.get(Game, "creeps");
+		if (!creeps)
+			return;
+
+		_.each(creeps, creep => {
+			if (!creep)
+				return;
+
+			let role = _.get(creep, ["memory", "role"]);
+			let looksLikeScout = role === "scout"
+				|| (typeof creep.name === "string" && creep.name.indexOf("scou:") === 0)
+				|| _.has(creep.memory, "scout_request_id");
+
+			if (!looksLikeScout)
+				return;
+
+			if (role !== "scout")
+				_.set(creep, ["memory", "role"], "scout");
+
+			if (_.get(creep.memory, "_last_scout_run") === Game.time)
+				return;
+
+			Creep_Roles.Scout(creep);
+		});
+	},
+
+	runGlobalColonizers: function () {
+		let creeps = _.get(Game, "creeps");
+		if (!creeps)
+			return;
+
+		// Only log colonizer detection once per minute to reduce console spam
+		let colonizer_creeps = _.filter(creeps, c => c && (c.memory.role === "colonizer" || (typeof c.name === "string" && c.name.indexOf("colo:") === 0)));
+		if (colonizer_creeps.length > 0 && Game.time % 50 === 0) {
+			console.log(`<font color="#4ECDC4">[Colonizers]</font> ${colonizer_creeps.length} active on ${Game.shard.name}`);
+		}
+
+		_.each(creeps, creep => {
+			if (!creep)
+				return;
+
+			let role = _.get(creep, ["memory", "role"]);
+			let looksLikeColonizer = role === "colonizer"
+				|| (typeof creep.name === "string" && creep.name.indexOf("colo:") === 0);
+
+			if (!looksLikeColonizer)
+				return;
+
+			// For transferred colonizers, attempt memory restoration from ISM BEFORE setting role
+			// Check if this creep needs restoration: either has no role OR is a transferred creep without room field
+			let needsRestoration = !role && creep.name.startsWith('colo:');
+			if (!needsRestoration && creep.memory.role === "colonizer" && !creep.memory.room && creep.name.startsWith('colo:')) {
+				// Transferred creep with role set but missing room - definitely needs ISM restoration
+				needsRestoration = true;
+				console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} detected as transferred (role set, room missing)`);
+			}
+
+			if (needsRestoration) {
+			try {
+				let transferData = null;
+				let masterIsmData = InterShardMemory.getRemote('shard0');
+				if (masterIsmData) {
+					let parsed = JSON.parse(masterIsmData);
+					transferData = _.get(parsed, ["creep_transfers", creep.name], null) 
+						|| _.get(parsed, ["transfers", creep.name], null);
+				}
+				if (transferData) {
+					// Restore all memory fields from transfer data
+					creep.memory.role = transferData.role;
+					creep.memory.room = transferData.room;
+					creep.memory.colony = transferData.colony;
+					creep.memory.level = transferData.level;
+					creep.memory.shard_mission = transferData.shard_mission;
+					creep.memory.list_route = transferData.list_route;
+					creep.memory.spawn_pos = transferData.spawn_pos;
+					creep.memory.layout_config = transferData.layout_config;
+					creep.memory.focus_defense = transferData.focus_defense;
+					creep.memory.transferred = true;
+					creep.memory.transfer_time = transferData.transfer_time;
+					creep.memory.global_status = 'restored';
+					console.log(`<font color="#4ECDC4">[Colonizer]</font> ${creep.name} restored on ${creep.memory.room}`);
+					role = creep.memory.role; // Update local role variable
+				}
+			} catch (e) {
+				console.log(`<font color="#FFA500">[Colonizer]</font> Error restoring ${creep.name}: ${e.message}`);
+			}
+		}
+
+			// Transferred colonizers may not have role set yet; set it now
+			if (role !== "colonizer")
+				_.set(creep, ["memory", "role"], "colonizer");
+
+			// Ensure we don't run multiple times per tick
+			if (_.get(creep.memory, "_last_colonizer_run") === Game.time)
+				return;
+
+			creep.memory._last_colonizer_run = Game.time;
+			Creep_Roles.Colonizer(creep);
+		});
+	},
+
+	runScoutRequests: function (rmColony) {
+		let requests = _.get(Memory, ["rooms", rmColony, "scout_requests"]);
+		if (!_.isArray(requests) || requests.length == 0)
+			return;
+
+		let globalState = this.getGlobalCreepState();
+
+		let listSpawnRooms = _.get(Memory, ["rooms", rmColony, "spawn_assist", "rooms"]);
+		let globalSpawnQueue = _.get(Memory, ["hive", "spawn_requests"], []);
+
+		// Compact and sanitize requests
+		requests = _.filter(requests, req => req != null);
+
+		_.each(requests, request => {
+			request.count = Math.max(1, _.get(request, "count", 1));
+			request.respawn = _.get(request, "respawn", true) !== false;
+			request.wait_for_full_rally = _.get(request, "wait_for_full_rally", true) !== false;
+			request.spawned_total = _.get(request, "spawned_total", 0);
+			request.patrol_mode = _.includes(["station", "loop"], request.patrol_mode) ? request.patrol_mode : "station";
+			request.colony_shard = _.get(request, "colony_shard", Game.shard.name);
+			request.spawn_rooms = request.spawn_rooms || listSpawnRooms;
+			if (_.isArray(request.portals) && request.portals.length == 0)
+				delete request.portals;
+			let existingNames = _.get(request, "creeps", []);
+			if (!_.isArray(existingNames))
+				existingNames = [];
+			request.creeps = _.filter(existingNames, name => _.has(Game.creeps, name));
+			request._remote_pruned = request._remote_pruned || 0;
+
+			if (!_.isObject(request.remote_creeps))
+				request.remote_creeps = {};
+
+			// Discover creeps attached via memory but not yet tracked
+			_.each(Game.creeps, creep => {
+				if (_.get(creep, ["memory", "scout_request_id"]) === request.id) {
+					if (!_.includes(request.creeps, creep.name))
+						request.creeps.push(creep.name);
+					if (_.has(request.remote_creeps, creep.name))
+						delete request.remote_creeps[creep.name];
+				}
+			});
+
+			let creeps = _.map(request.creeps, name => Game.creeps[name]).filter(Boolean);
+			request.creeps = _.map(creeps, c => c.name);
+
+			let remoteNames = [];
+			if (_.isObject(request.remote_creeps)) {
+				_.each(Object.keys(request.remote_creeps), name => {
+					// Check if creep exists locally first
+					if (Game.creeps[name]) {
+						// Creep is now local, remove from remote tracking
+						delete request.remote_creeps[name];
+						return;
+					}
+
+					// Since creep doesn't exist locally, check if it's actually tracked globally
+				// With lean ISM, global creeps are now stored in Memory.hive.ism.global_creeps
+				let stillPresent = false;
+				// Preserve existing timestamp - don't default to Game.time which causes "last seen 0 ticks ago"
+				let lastSeen = request.remote_creeps[name];
+				if (!lastSeen || lastSeen === Game.time) {
+					// If no timestamp or timestamp is current tick, use a reasonable default
+					// This handles edge cases where timestamp wasn't set properly
+					lastSeen = Game.time - 1;
+				}
+				
+				// Grace period for recently registered remote scouts (just transferred)
+				// Give them time for global state to update before marking as dead
+				let ageSinceRegistration = Game.time - lastSeen;
+				let TRANSFER_GRACE_PERIOD = 10; // Allow 10 ticks for global state to update
+				if (ageSinceRegistration <= TRANSFER_GRACE_PERIOD) {
+					// Recently registered - assume alive and give it time
+					stillPresent = true;
+				} else {
+					// Check lean ISM global creep registry
+					let globalCreeps = _.get(Memory, ["hive", "ism", "global_creeps"], {});
+					let descriptor = globalCreeps[name];
+					if (descriptor) {
+						let status = _.get(descriptor, "status", "active");
+						let lastUpdate = _.get(descriptor, "last_update", 0);
+						let age = Game.time - lastUpdate;
+						
+						// If descriptor is stale (> 100 ticks for transferring, > 50 for others), it's dead
+						let maxAge = (status === "transferring") ? 100 : 50;
+						if (age <= maxAge) {
+							stillPresent = true;
+						}
+					}
+					
+					// If not found in global registry, check for recent transfer in ISM payload
+					if (!stillPresent && globalState && globalState.payloads) {
+						for (let shardName in globalState.payloads) {
+							let payload = globalState.payloads[shardName];
+							if (payload) {
+								let transfer = _.get(payload, ["creep_transfers", name]);
+								if (transfer) {
+									let transferTime = _.get(transfer, "transfer_time", 0);
+									if ((Game.time - transferTime) <= 50) {
+										stillPresent = true;
+										break;
+									}
+								}
+							}
+						}
+					}
+				}
+				
+				if (stillPresent) {
+					// Scout is alive - preserve existing timestamp, don't reset it
+					// Only update timestamp if it's missing or extremely old (to track when we first saw it)
+					if (!request.remote_creeps[name]) {
+						request.remote_creeps[name] = Game.time;
+					}
+					remoteNames.push(name);
+				} else {
+					// Creep is dead or no longer tracked
+					let debugScouts = _.get(Memory, ["hive", "debug", "scout"], 0);
+					if (debugScouts >= 1) {
+						console.log(`<font color="#FF944E">[Scout]</font> Detected dead remote scout ${name} (last seen ${Game.time - lastSeen} ticks ago)`);
+					}
+					delete request.remote_creeps[name];
+					request._remote_pruned++;
+				}
+			});
+		}
+
+			let rallyReached = 0;
+			_.each(creeps, creep => {
+				if (creep.memory.scout_rally_reached)
+					rallyReached++;
+			});
+
+			let requiredCount = request.count;
+			let remoteCount = remoteNames.length;
+			let activeCount = creeps.length + remoteCount;
+			let effectiveRally = rallyReached + remoteCount;
+			let rallyReady = request.wait_for_full_rally ? (activeCount >= requiredCount && effectiveRally >= requiredCount) : true;
+			let release = request.wait_for_full_rally ? (rallyReady || request.rally_release === true) : true;
+			request.rally_ready = rallyReady;
+			request.rally_reached = rallyReached;
+			request.remote_count = remoteCount;
+			request.active = activeCount;
+			request.rally_release = release;
+			request.waiting = request.wait_for_full_rally ? !release : false;
+			request.last_update = Game.time;
+
+			// Update live creep memory with current mission directives
+			_.each(creeps, creep => {
+				creep.memory.rally_release = release;
+				creep.memory.patrol_mode = request.patrol_mode;
+				creep.memory.respawn_mission = request.respawn;
+				creep.memory.wait_for_full_rally = request.wait_for_full_rally;
+				creep.memory.rally_pos = request.rally_pos;
+				creep.memory.dest_pos = request.dest_pos;
+				creep.memory.colony_shard = request.colony_shard;
+				if (request.list_route)
+					creep.memory.list_route = _.clone(request.list_route);
+				if (request.transfer_intent)
+					creep.memory.transfer_intent = _.cloneDeep(request.transfer_intent);
+				if (request.portals)
+					creep.memory.portals = _.cloneDeep(request.portals);
+				if (request.global)
+					creep.memory.global = _.cloneDeep(request.global);
+			});
+
+			let pendingSpawn = _.some(globalSpawnQueue, req => _.get(req, ["args", "scout_request_id"]) == request.id);
+			let desiredActive = request.count;
+			let canSpawnMore = request.respawn || request.spawned_total < request.count;
+
+			let prunedRemoteOvershoot = request._remote_pruned > 0 && creeps.length === 0 && remoteCount === 0;
+
+			if (canSpawnMore && request.active < desiredActive && !pendingSpawn) {
+				let priority = _.get(request, ["custom", "priority"], 22);
+				let level = _.get(request, ["custom", "level"], 1);
+				let bodyName = _.get(request, ["custom", "body"], "scout");
+				let spawnRooms = request.spawn_rooms;
+
+				let args = {
+					role: "scout",
+					colony: rmColony,
+					room: _.get(request, ["dest_pos", "roomName"], rmColony),
+					scout_request_id: request.id,
+					dest_pos: request.dest_pos,
+					rally_pos: request.rally_pos,
+					patrol_mode: request.patrol_mode,
+					list_route: request.list_route,
+					transfer_intent: request.transfer_intent,
+					global: request.global,
+					scout_rally_reached: false,
+					wait_for_full_rally: request.wait_for_full_rally,
+					respawn_mission: request.respawn,
+					colony_shard: Game.shard.name
+				};
+
+				Memory.hive.spawn_requests.push({
+					room: rmColony,
+					listRooms: spawnRooms,
+					priority: priority,
+					level: level,
+					scale: false,
+					body: bodyName,
+					name: _.get(request, ["custom", "name"], null),
+					args: args
+				});
+
+				request.spawned_total = (request.spawned_total || 0) + 1;
+			}
+
+			// Flag completion for one-shot missions with no surviving creeps or pending spawns
+			if (prunedRemoteOvershoot) {
+				request.spawned_total = Math.max(0, (request.spawned_total || 0) - request._remote_pruned);
+				request._remote_pruned = 0;
+			}
+
+			if (!request.respawn && request.spawned_total >= request.count && creeps.length == 0 && remoteCount == 0 && !pendingSpawn)
+				request._completed = true;
+		});
+
+		requests = _.filter(requests, req => req != null && req._completed !== true);
+		_.set(Memory, ["rooms", rmColony, "scout_requests"], requests);
+	},
+
+	// Reusable inter-shard mission framework helpers
+	getPortalForDirection: function (creep, direction, missionData) {
+		// Helper to determine which portal to use based on mission direction
+		// direction: "to_dest" or "to_rally"
+		// missionData: object with dest_pos, rally_pos, transfer_intent, portals
+		if (!creep || !missionData)
+			return null;
+
+		let targetShard = null;
+		let targetRoom = null;
+
+		if (direction === "to_dest") {
+			targetShard = _.get(missionData, ["dest_pos", "shard"]);
+			targetRoom = _.get(missionData, ["dest_pos", "roomName"]);
+		} else if (direction === "to_rally") {
+			targetShard = _.get(missionData, ["rally_pos", "shard"]);
+			targetRoom = _.get(missionData, ["rally_pos", "roomName"]);
+		}
+
+		if (!targetShard || targetShard === Game.shard.name)
+			return null;
+
+		// Check portals array first
+		let portals = _.get(missionData, "portals", []);
+		if (_.isArray(portals)) {
+			for (let i = 0; i < portals.length; i++) {
+				let entry = portals[i];
+				if (!entry || !entry.from || !entry.to)
+					continue;
+				if (entry.from.shard === Game.shard.name && entry.to.shard === targetShard) {
+					if (!targetRoom || entry.to.roomName === targetRoom || !entry.to.roomName)
+						return entry;
+				}
+			}
+		}
+
+		// Check transfer_intent
+		let transferIntent = _.get(missionData, "transfer_intent");
+		if (_.isObject(transferIntent)) {
+			if (direction === "to_dest") {
+				let portalPos = _.get(transferIntent, "portal_pos");
+				if (portalPos && _.get(transferIntent, "destination_shard") === targetShard) {
+					return {
+						from: { shard: Game.shard.name, roomName: portalPos.roomName, pos: portalPos },
+						to: { shard: targetShard, roomName: targetRoom }
+					};
+				}
+			} else if (direction === "to_rally") {
+				let returnPortal = _.get(transferIntent, "return_portal");
+				if (returnPortal) {
+					let portalPos = _.get(returnPortal, "portal_pos");
+					if (portalPos && _.get(returnPortal, "destination_shard") === targetShard) {
+						return {
+							from: { shard: Game.shard.name, roomName: portalPos.roomName, pos: portalPos },
+							to: { shard: targetShard, roomName: targetRoom }
+						};
+					}
+				}
+			}
+		}
+
+		return null;
+	},
+
+	updateMissionState: function (creep, missionData) {
+		// Helper to update mission state for inter-shard operations
+		// Ensures mission data is persisted in global memory
+		if (!creep || !missionData)
+			return;
+
+		let missionCache = _.get(creep.memory, ["global", "mission_data"]);
+		if (!_.isObject(missionCache))
+			missionCache = {};
+
+		_.assign(missionCache, missionData);
+		_.set(creep.memory, ["global", "mission_data"], missionCache);
+
+		// Register authoritative mission on primary shard (Option A)
+		if (typeof ShardMemory !== "undefined" && _.isFunction(_.get(ShardMemory, "registerMission"))) {
+			ShardMemory.registerMission(creep.name, missionCache);
+		}
+
+		// Update global descriptor
+		if (typeof creep.ensureGlobal === "function") {
+			creep.ensureGlobal({
+				mission: _.get(missionCache, "mission", "scout"),
+				status: _.get(creep.memory, "global_status", "active"),
+				origin: _.get(missionCache, "origin"),
+				target: _.get(missionCache, "target")
+			});
+		}
+	},
+
+	trackRemoteMissionCreep: function (creepName, missionId, missionType) {
+		// Helper to track remote mission creeps (reusable for scouts, colonizers, etc.)
+		// missionType: "scout", "colonize", "resource", etc.
+		let creepMem = _.get(Memory, ["creeps", creepName]);
+		if (!creepMem)
+			return false;
+
+		let requestId = _.get(creepMem, missionType === "scout" ? "scout_request_id" : "mission_id");
+		if (!requestId || requestId !== missionId)
+			return false;
+
+		// Check if creep is tracked globally
+		let globalState = this.getGlobalCreepState();
+		return this.isCreepTrackedGlobally(creepName, globalState);
+	},
+
+	parseRoute: function (route, originShard) {
+		// Parses a route array and returns structured route with shard transitions
+		// Supports both "roomName" and "shard/roomName" formats
+		// Returns array of { shard, roomName } objects
+		if (!_.isArray(route))
+			return [];
+
+		let currentShard = originShard || Game.shard.name;
+		let parsed = [];
+
+		_.each(route, step => {
+			if (!step || !_.isString(step))
+				return;
+
+			let shard = currentShard;
+			let roomName = step;
+
+			// Check for shard prefix: "shard1/E29S14"
+			if (step.indexOf("/") >= 0) {
+				let parts = step.split("/");
+				if (parts.length === 2) {
+					shard = parts[0];
+					roomName = parts[1];
+					currentShard = shard; // Update current shard for subsequent steps
+				}
+			}
+
+			parsed.push({ shard: shard, roomName: roomName });
+		});
+
+		return parsed;
+	},
+
+	detectShardTransitions: function (route) {
+		// Detects shard transitions in a parsed route
+		// Returns array of { fromShard, fromRoom, toShard, toRoom, portalRoom }
+		if (!_.isArray(route) || route.length < 2)
+			return [];
+
+		let transitions = [];
+
+		for (let i = 0; i < route.length - 1; i++) {
+			let current = route[i];
+			let next = route[i + 1];
+
+			if (!current || !next)
+				continue;
+
+			// Check if shard changes
+			if (current.shard !== next.shard) {
+				transitions.push({
+					fromShard: current.shard,
+					fromRoom: current.roomName,
+					toShard: next.shard,
+					toRoom: next.roomName,
+					portalRoom: current.roomName // Portal is in the "from" room
+				});
+			}
+		}
+
+		return transitions;
+	},
+
+	deriveScoutRoute: function (origin, destination) {
+		if (origin == null || destination == null)
+			return origin ? [origin] : [];
+
+		if (origin === destination)
+			return [origin];
+
+		let route = [origin];
+		try {
+			let result = Game.map.findRoute(origin, destination);
+			if (_.isArray(result)) {
+				_.each(result, step => {
+					if (_.last(route) !== step.room)
+						route.push(step.room);
+				});
+			} else if (result === ERR_NO_PATH) {
+				route.push(destination);
+			}
+		} catch (error) {
+			console.log(`<font color=\"#FF944E\">[Scout]</font> Unable to derive route ${origin} -> ${destination}: ${error}`);
+			if (_.last(route) !== destination)
+				route.push(destination);
+		}
+
+		if (_.last(route) !== destination)
+			route.push(destination);
+
+		return _.uniq(route);
+	},
+
 	populationTally: function (rmName, popTarget, popActual) {
 		// Tallies the target population for a colony, to be used for spawn load balancing
 		_.set(Memory, ["rooms", rmName, "population", "target"], _.get(Memory, ["rooms", rmName, "population", "target"], 0) + popTarget);
 		_.set(Memory, ["rooms", rmName, "population", "actual"], _.get(Memory, ["rooms", rmName, "population", "actual"], 0) + popActual);
+	},
+
+	processCrossShardSpawnRequests: function () {
+		// Master shard (shard0) reads spawn requests from all slave shards
+		// and dispatches them to appropriate shards
+		if (Game.shard.name !== "shard0")
+			return;
+
+		let knownShards = _.get(Memory, ["hive", "ism", "known_shards"], ["shard0", "shard1", "shard2", "shard3"]);
+		let crossShardRequests = [];
+
+		// Check for clear requests from slave shards
+		try {
+			let localData = InterShardMemory.getLocal();
+			if (localData) {
+				let localParsed = JSON.parse(localData);
+				let dispatched = _.get(localParsed, "dispatched_spawn_requests", {});
+				
+				// Check each slave shard for clear requests
+				_.each(knownShards, shard => {
+					if (shard === "shard0")
+						return;
+					
+					try {
+						let slaveData = InterShardMemory.getRemote(shard);
+						if (slaveData) {
+							let slaveParsed = JSON.parse(slaveData);
+							if (_.get(slaveParsed, "clear_dispatched")) {
+								// Clear dispatched requests for this shard
+								if (dispatched[shard]) {
+									delete dispatched[shard];
+									console.log(`<font color="#4ECDC4">[CrossShard]</font> Cleared dispatched requests for ${shard}`);
+								}
+							}
+						}
+					} catch (err) {
+						// Ignore parse errors
+					}
+				});
+				
+				// Update local ISM with cleared dispatches
+				localParsed.dispatched_spawn_requests = dispatched;
+				InterShardMemory.setLocal(JSON.stringify(localParsed));
+			}
+		} catch (err) {
+			console.log(`<font color="#FF6B6B">[CrossShard]</font> Failed to process clear requests: ${err.message}`);
+		}
+
+		// Read spawn requests from all shards
+		_.each(knownShards, shard => {
+			if (shard === "shard0")
+				return; // Skip master shard (already in local memory)
+
+			try {
+				let remoteData = InterShardMemory.getRemote(shard);
+				if (!remoteData)
+					return;
+
+				let parsed = JSON.parse(remoteData);
+				let requests = _.get(parsed, "spawn_requests", []);
+
+				if (_.isArray(requests) && requests.length > 0) {
+					_.each(requests, req => {
+						if (!req)
+							return;
+
+						// Add source shard to request
+						req._sourceShard = shard;
+						crossShardRequests.push(req);
+					});
+				}
+			} catch (err) {
+				console.log(`<font color="#FF6B6B">[CrossShard]</font> Failed to read spawn requests from ${shard}: ${err.message}`);
+			}
+		});
+
+		// Process cross-shard requests
+		_.each(crossShardRequests, req => {
+			let listRooms = _.get(req, "listRooms", []);
+			let targetShard = null;
+			let targetRooms = [];
+
+			// Parse listRooms to find which shard can fulfill the request
+			_.each(listRooms, room => {
+				if (!room || !_.isString(room))
+					return;
+
+				let shard = Game.shard.name;
+				let roomName = room;
+
+				// Check for shard prefix
+				if (room.indexOf("/") >= 0) {
+					let parts = room.split("/");
+					if (parts.length === 2) {
+						shard = parts[0];
+						roomName = parts[1];
+					}
+				}
+
+				if (!targetShard)
+					targetShard = shard;
+
+				targetRooms.push({ shard: shard, room: roomName });
+			});
+
+			// If no target shard found, use source shard
+			if (!targetShard)
+				targetShard = req._sourceShard;
+
+			// Dispatch request to target shard
+			if (targetShard === "shard0") {
+				// Add to local spawn queue
+				Memory.hive.spawn_requests.push(req);
+			} else {
+				// Send to target shard via ISM
+				try {
+					let localData = InterShardMemory.getLocal();
+					let localParsed = localData ? JSON.parse(localData) : {};
+
+					if (!localParsed.dispatched_spawn_requests)
+						localParsed.dispatched_spawn_requests = {};
+					if (!localParsed.dispatched_spawn_requests[targetShard])
+						localParsed.dispatched_spawn_requests[targetShard] = [];
+
+					localParsed.dispatched_spawn_requests[targetShard].push(req);
+
+					InterShardMemory.setLocal(JSON.stringify(localParsed));
+				} catch (err) {
+					console.log(`<font color="#FF6B6B">[CrossShard]</font> Failed to dispatch spawn request to ${targetShard}: ${err.message}`);
+				}
+			}
+		});
 	},
 
 	processSpawnRequests: function () {
@@ -243,6 +1224,38 @@
 
 		if (!isPulse_Spawn())
 			return;
+
+		// Master shard (shard0) processes cross-shard spawn requests
+		if (Game.shard.name === "shard0") {
+			this.processCrossShardSpawnRequests();
+		} else {
+			// Slave shards read dispatched requests from master
+			try {
+				let masterData = InterShardMemory.getRemote("shard0");
+				if (masterData) {
+					let parsed = JSON.parse(masterData);
+					let dispatched = _.get(parsed, ["dispatched_spawn_requests", Game.shard.name], []);
+
+					if (_.isArray(dispatched) && dispatched.length > 0) {
+						// Add dispatched requests to local spawn queue
+						_.each(dispatched, req => {
+							if (req)
+								Memory.hive.spawn_requests.push(req);
+						});
+
+						console.log(`<font color="#4ECDC4">[CrossShard]</font> Received ${dispatched.length} spawn requests from master shard0`);
+
+						// Clear dispatched requests from master ISM by notifying master
+						let localData = InterShardMemory.getLocal();
+						let localParsed = localData ? JSON.parse(localData) : {};
+						localParsed.clear_dispatched = true;
+						InterShardMemory.setLocal(JSON.stringify(localParsed));
+					}
+				}
+			} catch (err) {
+				console.log(`<font color="#FF6B6B">[CrossShard]</font> Failed to read dispatched spawn requests: ${err.message}`);
+			}
+		}
 
 		Stats_CPU.Start("Hive", "processSpawnRequests");
 
@@ -351,6 +1364,38 @@
 					let r = Math.random() * 16 | 0, v = c == "x" ? r : (r & 0x3 | 0x8);
 					return v.toString(16);
 				});
+
+			// Check if creep needs to transfer to another shard
+			let listRoute = _.get(request.args, "list_route");
+			if (listRoute && _.isArray(listRoute) && listRoute.length > 0) {
+				let parsedRoute = this.parseRoute(listRoute, Game.shard.name);
+				let transitions = this.detectShardTransitions(parsedRoute);
+
+				// If there's a shard transition, create transfer intent
+				if (transitions.length > 0) {
+					let firstTransition = transitions[0];
+
+					// Find portal in the room
+					let portalRoom = Game.rooms[firstTransition.portalRoom];
+					if (portalRoom) {
+						let portal = _.head(portalRoom.find(FIND_STRUCTURES, {
+							filter: s => s.structureType === STRUCTURE_PORTAL
+								&& _.get(s, ["destination", "shard"]) === firstTransition.toShard
+						}));
+
+						if (portal) {
+							request.args.transfer_intent = {
+								origin_shard: Game.shard.name,
+								origin_room: bestSpawn.room.name,
+								destination_shard: firstTransition.toShard,
+								destination_room: firstTransition.toRoom,
+								portal_pos: { x: portal.pos.x, y: portal.pos.y, roomName: portal.pos.roomName }
+							};
+							request.args.shard_mission = _.get(request.args, "role", "worker");
+						}
+					}
+				}
+			}
 
 			// Optimize energy structures lookup - only if storage exists
 			let energies = null;
@@ -549,6 +1594,11 @@
 	},
 
 	generatePixels: function () {
+		if (!_.isObject(Memory.hive))
+			Memory.hive = {};
+		if (!_.isObject(Memory.hive.pixels))
+			Memory.hive.pixels = {};
+
 		// Get pixel generation settings from memory (defaults: enabled, 80% CPU threshold)
 		let pixelEnabled = _.get(Memory, ["hive", "pixels", "enabled"], true);
 		let cpuThreshold = _.get(Memory, ["hive", "pixels", "cpu_threshold"], 0.8);

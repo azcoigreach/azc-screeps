@@ -1,5 +1,77 @@
 # Command Reference
 
+## empire.scout
+
+Queue a scout mission with rally/destination points, optional spawn constraints, and cross-shard routing.
+
+```
+empire.scout(rmColony, rally_pos, dest_pos, options)
+```
+
+- `rmColony`: Colony room or `shard/room`.
+- `rally_pos`: `{ x, y, roomName, shard? }` or `RoomPosition`.
+- `dest_pos`: `{ x, y, roomName, shard? }` or `RoomPosition`.
+- A `shard` property is optional for same-shard patrols.
+- `options` (object):
+  - `count` (default `1`)
+  - `respawn` (default `true`)
+  - `waitForFullRally` (default `true`)
+  - `patrol_mode`: `'station'` or `'loop'` (default `'station'`)
+  - `listRoute`: array of room names, accepts shard-qualified entries.
+  - `spawnRooms`: string or array of spawn rooms (may include `shard/` prefix)
+  - `priority`: spawn priority (default `22`)
+  - `level`: scout level (passed to body config)
+  - `body`: name of custom body template (default `'scout'`)
+  - `transfer_intent`: inter-shard portal configuration `{ destination_shard, destination_room, portal_pos, return_portal, portals }`
+  - `global`: additional manifest data stored in ISM
+  - `rallyShard` / `destShard`: override inferred shard when the position lacks one
+
+### Example – single-shard loop patrol
+
+```
+empire.scout(
+  'shard0/E57N1',
+  { x: 25, y: 25, roomName: 'E57N0', shard: 'shard0' },
+  { x: 25, y: 25, roomName: 'E60N0', shard: 'shard0' },
+  {
+    count: 1,
+    level: 1,
+    patrol_mode: 'loop',
+    waitForFullRally: false,
+    spawnRooms: ['shard0/E57N1'],
+    listRoute: ['E57N0', 'E58N0', 'E59N0', 'E60N0']
+  }
+);
+```
+
+### Example – cross-shard portal loop
+
+```
+empire.scout(
+  'shard0/E48S21',
+  { x: 32, y: 32, roomName: 'E50S20', shard: 'shard0' },
+  { x: 36, y: 20, roomName: 'E30S10', shard: 'shard1' },
+  {
+    count: 3,
+    patrol_mode: 'loop',
+    waitForFullRally: false,
+    spawnRooms: ['shard0/E48S21', 'shard0/E52S21'],
+    listRoute: ['E48S21','E49S21','E49S20','E50S20','shard1/E30S10'],
+    transfer_intent: {
+      destination_shard: 'shard1',
+      destination_room: 'E30S10',
+      portal_pos: { x: 45, y: 24, roomName: 'E50S20', shard: 'shard0' },
+      return_portal: {
+        shard: 'shard1',
+        portal_pos: { x: 13, y: 20, roomName: 'E30S10', shard: 'shard1' },
+        destination_shard: 'shard0',
+        destination_room: 'E50S20'
+      }
+    }
+  }
+);
+```
+
 **Summary**: Alphabetical reference of all console commands with parameters, examples, and expected behavior.
 
 **When you need this**: Quick lookup for command syntax, discovering available commands, or verifying parameters.
@@ -14,6 +86,7 @@
 - **Copy-Paste Ready**: All examples can be copied directly to console
 - **Parameters**: Required parameters in `angle brackets`, optional in `[square brackets]`
 - **Quick Search**: Use Ctrl+F / Cmd+F to find specific commands
+- **Console Syntax**: Screeps console uses ES5 – avoid optional chaining (`?.`) or other newer language features; guard with `&&`/`if` instead.
 
 ---
 

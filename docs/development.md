@@ -637,6 +637,251 @@ resources.system_status()     // Overall system health
 - **Console commands**: `definitions_console_commands.js` line 1994
 - **Documentation**: `PIXEL_GENERATION.md`
 
+## Inter-Shard Coordination System
+
+The multi-shard framework is responsible for synchronizing mission data, inter-shard requests, and global creep tracking across shards. The system is intentionally passive when disabled so that legacy single-shard behavior remains unchanged.
+
+### Core Modules
+
+- `definitions_intershard.js` — Provides the `ShardMemory` facade on top of the Screeps [`InterShardMemory`](https://docs.screeps.com/api/#InterShardMemory) API. Handles serialization, schema validation, request queues, directive routing, and payload trimming (≤95 KB).
+- `definitions_shard_control.js` — Implements `ShardControl.run()`, invoked each tick from `main.js`. Coordinates pulses via `isPulse_InterShard()`, merges remote shard telemetry, and publishes directives.
+- `overloads_creep.js` — Adds helpers for global creeps:
+  - `creep.isGlobal()`, `creep.ensureGlobal()`, `creep.setGlobalMission()`, `creep.updateGlobalStatus()`, `creep.clearGlobal()`, `creep.getGlobalDescriptor()`.
+- `definitions_console_commands.js` — Adds the `shards.*` console namespace for diagnostics and operator overrides.
+
+### Inter-Shard Memory Schema
+
+`ShardMemory` maintains a JSON payload with the following structure:
+
+```javascript
+{
+    version: 1,
+    shard: "shard0",
+    primary: "shard0",
+    heartbeat: Game.time,
+    summary: {
+        tick: Game.time,
+        role: "primary" | "follower",
+        global_local: 3,
+        remote_shards: 2,
+        remote_requests_total: 5,
+        cpu_bucket: Game.cpu.bucket,
+        cpu_used: Game.cpu.getUsed(),
+        gcl: Game.gcl.level,
+        gpl: Game.gpl.level
+    },
+    queues: {
+        resource: [],
+        creep: [],
+        mission: []
+    },
+    global: {
+        creeps: {
+            "creepName": {
+                status: "transferring",
+                mission: "colonization",
+                shard: "shard1",
+                room: "W1N1",
+                ttl: 123,
+                target: { shard: "shard1", room: "W1N1" },
+                portal: { roomName: "W0N0", x: 1, y: 48 },
+                last_update: Game.time
+            }
+        },
+        history: [{ type: "add" | "remove" | "status", creep: "creepName", tick: Game.time }]
+    },
+    directives: {
+        shards: {
+            shard1: {
+                updated: Game.time,
+                queues: { resource: 1, creep: 0, mission: 2 },
+                summary: { /* remote shard summary snapshot */ }
+            }
+        },
+        primary: { /* active directive for followers */ }
+    },
+    receipts: [{ tick: Game.time, message: "note" }],
+    meta: { version: 1, serialized_length: 12345, last_write: Game.time }
+}
+```
+
+Payloads are trimmed automatically if the serialized size approaches the 100 KB Screeps limit; history, receipts, and queue lengths are capped.
+
+**Additional ISM Fields (not shown in schema above):**
+- `creep_transfers`: Stores full creep memory snapshots for portal transfers (max 500 ticks retention for cross-shard transfers)
+- `handshake.pending`: Pending transfer offers from the origin shard
+- `handshake.acknowledgements`: Acknowledgments sent by destination shards
+- `handshake.completions`: Completed transfers (moved from pending after ack received)
+- `directives.shards[shardName].handshake`: Per-shard handshake data distributed by the primary
+
+### Creep Transfer Handshake System
+
+To ensure data integrity during inter-shard portal transfers, the system implements a three-phase handshake:
+
+**Phase 1: Offer** (Origin Shard)
+- Before entering a portal, the creep records its memory snapshot in `creep_transfers`
+- A handshake offer is registered in `handshake.pending` with portal and destination details
+- The creep waits one tile away from the portal for acknowledgment
+
+**Phase 2: Acknowledgment** (Destination Shard)
+- The follower shard reads pending offers from the primary shard's directives
+- When it sees an offer destined for itself, it sends an acknowledgment via `handshake.acknowledgements`
+- The acknowledgment includes the transfer data snapshot for restoration
+
+**Phase 3: Completion** (Origin Shard)
+- The primary shard receives acknowledgments from followers during its pulse cycle
+- It moves the handshake from `pending` to `completions` and removes the pending entry
+- The creep receives the "go" signal and moves through the portal
+
+**Key Implementation Details:**
+- **In-Memory Cache**: `global._localPayloadCache` ensures all `updateLocal()` calls within a single tick operate on the latest data, preventing stale reads
+- **Atomic Updates**: `recordCreepTransfer()` updates the transfer snapshot, handshake offer, and global manifest in a single transaction
+- **Pulse Frequency**: The intershard pulse runs every 3-10 ticks for responsive handshake coordination
+- **Cleanup**: Completed handshakes are retained for 500 ticks, then automatically purged
+- **Aggregation**: The primary shard only aggregates acknowledgments and completions from followers; pending offers originate only from the primary's local payload
+
+**Debugging Handshakes:**
+```javascript
+// Check handshake state on any shard (ES5-compatible)
+JSON.stringify((function(){
+    var ism=InterShardMemory.getLocal();
+    if(!ism)return{error:'No ISM'};
+    var data=JSON.parse(ism);
+    var pending=(data.handshake&&data.handshake.pending)||{};
+    var acks=(data.handshake&&data.handshake.acknowledgements)||{};
+    var completions=(data.handshake&&data.handshake.completions)||{};
+    return{
+        shard:Game.shard.name,
+        tick:Game.time,
+        pending:Object.keys(pending),
+        acks:Object.keys(acks),
+        completions:Object.keys(completions)
+    };
+})(),null,2);
+```
+
+### Shard Control Flow
+
+- `Control.initMemory()` seeds a dedicated pulse (`intershard`) with a 3–10 tick cadence and ensures `Memory.hive.ism` exists.
+- `ShardControl.run()` executes after `Control.initVisuals()` in `main.js`.
+- On each pulse:
+  1. Collects global creep descriptors and writes them into the local `ShardMemory` payload.
+  2. If operating on the primary shard, fetches remote payloads, aggregates request queues, and stores a unified snapshot in `Memory.hive.ism.primary_snapshot`.
+  3. Followers pull the primary payload and persist `Memory.hive.ism.follower_snapshot` for local automation.
+- Outside of pulse ticks the controller still refreshes `Memory.hive.ism` counters without touching `InterShardMemory` to conserve CPU.
+
+### Global Creep Manifest
+
+- Any creep with `memory.global`, `memory.shard_mission`, `memory.transfer_intent`, or a `colo:`/`global:` prefix is treated as a *global creep*.
+- `creep.ensureGlobal()` normalizes legacy fields onto the new structure, while `creep.updateGlobalStatus()` standardizes status transitions (`"active"`, `"transferring"`, `"restored"`, etc.).
+- `ShardControl` publishes local manifests to inter-shard memory, merges remote manifests, and records removal/status changes for auditing.
+- Colonizer transfer logic now calls the new helpers so cross-shard transfers automatically populate the manifest without altering existing mission flow.
+
+### Shards Console Commands
+
+`help("shards")` surfaces the new tooling:
+
+- `shards.status(shardName?)` — Show local role, queue depth, heartbeat, and (if primary) remote shard summaries. Provide a shard name to inspect its raw payload.
+- `shards.requests(type?)` — Inspect pending inter-shard requests. Primary shards see aggregated remote queues; followers review their outbound queues.
+- `shards.global(creepName?)` — List known global creeps or inspect a single creep’s manifest entry.
+- `shards.set_primary(shardName)` — Override the designated primary shard (default `shard0`).
+- `shards.help()` — Quick reference.
+
+### Empire Scout Missions
+
+- `empire.scout(rmColony, rally_pos, dest_pos, options)` queues a persistent scout assignment for the specified colony. The console command persists its configuration under `Memory.rooms[rmColony].scout_requests`, allowing `Control.runScoutRequests()` to regenerate spawn requests every tick even after the per-tick queue reset.
+- `options.count` defines how many scouts should gather at the rally point; `options.waitForFullRally` (default `true`) keeps the group at rally until all required creeps arrive. Set it to `false` to release scouts individually as they reach the rally point.
+- `options.respawn` keeps the mission alive forever when `true` (default). Set to `false` to spawn the requested group once and retire the mission after they expire.
+- `options.spawnRooms` overrides the default assist list with the exact spawns that may fulfill the request.
+- `options.patrol_mode` controls post-rally behaviour: use `"station"` to hold the destination, or `"loop"` to patrol between rally and destination.
+- Cross-shard travel is handled by `options.transfer_intent` plus the waypoint route:
+  - `transfer_intent.portal_pos` (`{ x, y, roomName, shard? }`) marks the outbound portal.
+  - `transfer_intent.return_portal` mirrors the structure for the return portal.
+  - `transfer_intent.portals` accepts an explicit portal network array of `{ from: { shard, roomName, pos }, to: { shard, roomName? } }`.
+  - Supply `options.rallyShard` / `options.destShard` when the provided positions lack shard metadata.
+  - `options.listRoute` accepts `"room"` or `"shard/room"` entries and is traversed forward/backward automatically when using `"loop"`.
+- Additional request tuning mirrors other spawn helpers: `priority`, `level`, `body`, `name`, and `global` descriptors for inter-shard manifest tracking.
+- Example:
+  ```javascript
+  empire.scout(
+      'E48S21',
+      new RoomPosition(25, 20, 'E48S21'),
+      new RoomPosition(45, 24, 'E50S20'),
+      {
+          count: 3,
+          respawn: true,
+          waitForFullRally: true,
+          patrol_mode: 'loop',
+          spawnRooms: ['E48S21'],
+          priority: 18,
+          listRoute: [
+              'E48S21',
+              'E49S21',
+              'E49S20',
+              'E50S20',
+              'shard1/E30S10',
+              'shard1/E30S14'
+          ],
+          transfer_intent: {
+              destination_shard: 'shard1',
+              destination_room: 'E30S14',
+              portal_pos: { roomName: 'E50S20', shard: 'shard0', x: 45, y: 24 },
+              return_portal: {
+                  shard: 'shard1',
+                  portal_pos: { roomName: 'E30S10', x: 13, y: 20 },
+                  destination_shard: 'shard0',
+                  destination_room: 'E50S20'
+              },
+              portals: [
+                  {
+                      from: { shard: 'shard0', roomName: 'E50S20', pos: { x: 45, y: 24, roomName: 'E50S20' } },
+                      to: { shard: 'shard1', roomName: 'E30S10' }
+                  },
+                  {
+                      from: { shard: 'shard1', roomName: 'E30S10', pos: { x: 13, y: 20, roomName: 'E30S10' } },
+                      to: { shard: 'shard0', roomName: 'E50S20' }
+                  }
+              ]
+          },
+          global: {
+              active: true,
+              mission: 'portal_scout',
+              origin: { shard: 'shard0', room: 'E48S21' },
+              target: { shard: 'shard1', room: 'E30S14' }
+          }
+      }
+  );
+  ```
+- Spawned scouts receive mission metadata (`scout_request_id`, `rally_release`, `patrol_mode`, etc.) each tick. `Creep_Roles.Scout` consumes these fields to coordinate rally staging, portal travel, and patrol behaviour without affecting legacy single-room scouting.
+
+### Testing Checklist
+
+Before deploying multi-shard changes:
+
+1. **Local pulse check**
+   - Run `shards.status()` to confirm heartbeat, queue sizes, and role detection.
+   - Verify `Memory.hive.ism.global.local_manifest` mirrors `ShardMemory.getLocalPayload().global.creeps`.
+2. **Global creep tracking**
+   - Spawn or tag a creep with `creep.setGlobalMission("scout", { target: { shard: "shard1", room: "W1N1" } })`.
+   - Confirm `shards.global()` lists the creep with accurate status/TTL.
+3. **Request queues**
+   - Enqueue test data via `ShardMemory.pushRequest("mission", { action: "scout", target: "W1N1" })`.
+   - On the primary shard, inspect `shards.requests("mission")` for the entry.
+4. **Follower synchronization**
+   - On a follower shard, ensure `Memory.hive.ism.follower_snapshot` populates after the next pulse and `shards.status()` echoes primary heartbeat info.
+5. **Inter-shard transfers**
+   - For portal transfers, watch console output and confirm `creep.updateGlobalStatus("transferring")` triggers `shards.global(creep)` updates on both shards.
+   - Verify handshake completion: creep should wait 1 tile from portal, then receive acknowledgment and proceed through
+   - Check handshake state with the ES5 debug command (see "Debugging Handshakes" section above)
+   - Confirm handshakes move from `pending` → `acknowledgements` → `completions`
+6. **Handshake system health**
+   - Verify intershard pulse is active: `Memory.hive.pulses.intershard.active` should be `true`
+   - Check pulse frequency: should run every 3-10 ticks
+   - Monitor console for handshake activity (only logs when transfers are active)
+   - Confirm no stale pending handshakes (check with debug command)
+7. **Regression**
+   - Run `mcp_screeps_upload_code`, monitor `mcp_screeps_get_console`, and execute `shards.help()` to verify command registration.
+
 ## Memory Structure Reference
 
 ```javascript

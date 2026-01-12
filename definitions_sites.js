@@ -36,6 +36,10 @@
 				this.runCreeps(rmColony, listCreeps, listSpawnRoute);
 				Stats_CPU.End(rmColony, "Colony-runCreeps");
 
+				Stats_CPU.Start(rmColony, "Colony-runScouts");
+				this.runScouts(rmColony, listCreeps);
+				Stats_CPU.End(rmColony, "Colony-runScouts");
+
 				Stats_CPU.Start(rmColony, "Colony-runTowers");
 				this.runTowers(rmColony);
 				Stats_CPU.End(rmColony, "Colony-runTowers");
@@ -288,9 +292,11 @@
 
 			runCreeps: function (rmColony, listCreeps, listSpawnRoute) {
 				_.each(listCreeps, creep => {
-					_.set(creep, ["memory", "list_route"], listSpawnRoute);
+					if (_.get(creep, ["memory", "role"]) != "scout")
+						_.set(creep, ["memory", "list_route"], listSpawnRoute);
 
 					switch (_.get(creep, ["memory", "role"])) {
+						case "scout": Creep_Roles.Scout(creep); break;
 						case "worker": Creep_Roles.Worker(creep); break;
 						case "upgrader": Creep_Roles.Upgrader(creep, _.get(Memory, ["rooms", rmColony, "defense", "is_safe"], true)); break;
 						case "healer": Creep_Roles.Healer(creep, true); break;
@@ -304,6 +310,22 @@
 							Creep_Roles.Archer(creep, false, true);
 							break;
 					}
+				});
+			},
+
+			runScouts: function (rmColony, listColonyCreeps) {
+				let existing = {};
+				_.each(listColonyCreeps, creep => existing[creep.name] = true);
+
+				let scouts = _.filter(Game.creeps, creep => {
+					return _.get(creep, ["memory", "role"]) == "scout"
+						&& (_.get(creep, ["memory", "colony"]) == rmColony
+							|| _.get(creep, ["memory", "room"]) == rmColony);
+				});
+
+				_.each(scouts, creep => {
+					if (!existing[creep.name])
+						Creep_Roles.Scout(creep);
 				});
 			},
 
@@ -613,12 +635,15 @@
 					_.set(Memory, ["sites", "mining", rmHarvest, "survey"], surveyData);
 				}
 				
-				// Only calculate minerals and sources if not already cached
-				if (visible && surveyData.has_minerals === undefined) {
-					let minerals = Game.rooms[rmHarvest].find(FIND_MINERALS);
-					surveyData.has_minerals = minerals.some(m => m.mineralAmount > 0);
-					surveyData.source_amount = Game.rooms[rmHarvest].findSources().length;
-				} else if (!visible) {
+				// Calculate minerals and sources - check mineral depletion periodically (every 100 ticks)
+				// to prevent spawning extractors when mineral is depleted
+				if (visible) {
+					if (surveyData.has_minerals === undefined || Game.time % 100 === 0) {
+						let minerals = Game.rooms[rmHarvest].find(FIND_MINERALS);
+						surveyData.has_minerals = minerals.some(m => m.mineralAmount > 0);
+						surveyData.source_amount = Game.rooms[rmHarvest].findSources().length;
+					}
+				} else {
 					surveyData.has_minerals = false;
 					surveyData.source_amount = 0;
 				}
@@ -1173,6 +1198,10 @@
 					t => {
 						let amount = 0, r1_amount = 0, r2_amount = 0;
 						let reagents = getReagents(_.get(t, "mineral"));
+						if (reagents == null || reagents.length < 2) {
+							console.log(`<font color="#A17BFF">[Labs]</font> Skipping reaction target ${_.get(t, "mineral")} - no reagent mapping found.`);
+							return false;
+						}
 						_.each(_.filter(Game.rooms,
 							r => { return r.controller != null && r.controller.my && r.terminal; }),
 							r => {
@@ -2570,15 +2599,29 @@
 
 				Stats_CPU.Start(rmColony, `Colonization-${rmTarget}-init`);
 				listRoute = _.get(Memory, ["sites", "colonization", rmTarget, "list_route"]);
+				const rmTargetBase = _.isString(rmTarget) && rmTarget.indexOf("/") >= 0 ? rmTarget.split("/")[1] : rmTarget;
 				Stats_CPU.End(rmColony, `Colonization-${rmTarget}-init`);
 
 				Stats_CPU.Start(rmColony, `Colonization-${rmTarget}-listCreeps`);
-				let listCreeps = _.filter(Game.creeps, c => c.memory.room == rmTarget && c.memory.colony == rmColony);
+				let listCreeps = _.filter(Game.creeps, c => {
+					// Accept both normal colonizers and colonizer-named creeps that may not have role restored yet
+					if (_.get(c, ["memory", "role"]) !== "colonizer" && !c.name.startsWith('colo:'))
+						return false;
+
+					const colonyMatches = _.get(c, ["memory", "colony"]) == null || _.get(c, ["memory", "colony"]) == rmColony;
+					const targetKey = _.get(c, ["memory", "target_key"]);
+					const memRoom = _.get(c, ["memory", "room"]);
+					const targetMatches = (targetKey == rmTarget || memRoom == rmTarget
+						|| targetKey == rmTargetBase || memRoom == rmTargetBase);
+					// For transferred creeps with empty memory, match by creep name pattern
+					const isTransferred = !_.get(c, ["memory", "role"]) && c.name.startsWith('colo:');
+					return (isTransferred || (colonyMatches && targetMatches));
+				});
 				Stats_CPU.End(rmColony, `Colonization-${rmTarget}-listCreeps`);
 
 				if (isPulse_Spawn()) {
 					Stats_CPU.Start(rmColony, `Colonization-${rmTarget}-runPopulation`);
-					this.runPopulation(rmColony, rmTarget, listCreeps);
+					this.runPopulation(rmColony, rmTarget, listCreeps, listRoute);
 					Stats_CPU.End(rmColony, `Colonization-${rmTarget}-runPopulation`);
 				}
 
@@ -2587,34 +2630,63 @@
 				Stats_CPU.End(rmColony, `Colonization-${rmTarget}-runCreeps`);
 			},
 
-			runPopulation: function (rmColony, rmTarget, listCreeps) {
+			runPopulation: function (rmColony, rmTarget, listCreeps, listRoute) {
+				const rmTargetBase = _.isString(rmTarget) && rmTarget.indexOf("/") >= 0 ? rmTarget.split("/")[1] : rmTarget;
 				let popActual = new Object();
-				_.set(popActual, "colonizer", _.filter(listCreeps, c => c.memory.role == "colonizer").length);
+				// Count colonizers regardless of transfer state so we do not spawn a duplicate
+				// while one is crossing shards. Previously we excluded global_status === 'transferring',
+				// which caused an extra colonizer to spawn mid-transfer.
+				_.set(popActual, "colonizer", _.filter(listCreeps, c => (c.memory.role == "colonizer" || c.name.startsWith('colo:'))).length);
 
-				let popTarget = _.cloneDeep(Population_Colonization);
+				const popTarget = _.cloneDeep(Population_Colonization);
+				const listSpawnRooms = _.get(Memory, ["rooms", rmColony, "spawn_assist", "rooms"]);
+				const colonyLevel = _.get(Game, ["rooms", rmColony, "controller", "level"], 1);
 
 				// Tally population levels for level scaling and statistics
 				Control.populationTally(rmColony,
 					_.sum(popTarget, p => { return _.get(p, "amount", 0); }),
 					_.sum(popActual));
 
-				if (_.get(popActual, "colonizer", 0) < _.get(popTarget, ["colonizer", "amount"], 0)) {
-					Memory["shard"]["spawn_requests"].push({
-						room: rmColony, listRooms: null,
+				const pendingColonizer = _.find(_.get(Memory, ["hive", "spawn_requests"], []), r => r && r.role === "colonizer" && _.get(r, ["args", "target_key"]) === rmTarget);
+				if (_.get(popActual, "colonizer", 0) < _.get(popTarget, ["colonizer", "amount"], 0) && !pendingColonizer) {
+					Memory["hive"]["spawn_requests"].push({
+						room: rmColony,
+						listRooms: listSpawnRooms,
 						priority: 21,
-						level: _.get(popTarget, ["colonizer", "level"], 6),
+						level: _.get(popTarget, ["colonizer", "level"], colonyLevel),
 						scale: _.get(popTarget, ["colonizer", "scale"], false),
 						body: _.get(popTarget, ["colonizer", "body"], "reserver_at"),
-						name: null, args: { role: "colonizer", room: rmTarget, colony: rmColony }
+						name: null,
+						args: {
+							role: "colonizer",
+							room: rmTarget,              // keep shard prefix
+							target_key: rmTarget,        // full shard/room for cross-shard logic
+							colony: rmColony,
+							list_route: listRoute || [], // waypoints/portals
+							shard_mission: "colonization"
+						}
 					});
 				}
 			},
 
 			runCreeps: function (rmColony, rmTarget, listCreeps, listRoute) {
+				const rmTargetBase = _.isString(rmTarget) && rmTarget.indexOf("/") >= 0 ? rmTarget.split("/")[1] : rmTarget;
 				_.each(listCreeps, creep => {
-					_.set(creep, ["memory", "list_route"], listRoute);
+						// Backfill colony if missing so future filters include this creep
+						if (!_.get(creep, ["memory", "colony"]))
+							creep.memory.colony = rmColony;
+					// Ensure target_key retains shard prefix for cross-shard missions
+					if (!_.get(creep.memory, "target_key") || creep.memory.target_key === rmTargetBase)
+						creep.memory.target_key = rmTarget;
+					// Always use full shard/room for destination when provided
+					if (rmTarget && creep.memory.room !== rmTarget)
+						creep.memory.room = rmTarget;  // Use full shard/room format
+						if (listRoute && (!creep.memory.list_route || creep.memory.list_route.length !== listRoute.length))
+						creep.memory.list_route = listRoute;
 
-					if (creep.memory.role == "colonizer") {
+					// Call Colonizer role for any colonizer creep, even if memory.role is undefined
+					// This ensures transferred colonizers get memory restoration
+					if (creep.memory.role == "colonizer" || creep.name.startsWith('colo:')) {
 						Creep_Roles.Colonizer(creep);
 					}
 				});

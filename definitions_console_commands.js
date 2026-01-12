@@ -18,6 +18,8 @@
 		let help_profiler = new Array();
 		let help_resources = new Array();
 		let help_visuals = new Array();
+		let help_shards = new Array();
+		let help_scouts = new Array();
 
 
 
@@ -33,10 +35,11 @@
 		help_main.push(`- "path" \t Utilities for enhancing creep pathfinding abilities`);
 		help_main.push(`- "pause" \t Utilities for pausing specific creep or colony functions`);
 		help_main.push(`- "pixels" \t Pixel generation management and statistics`);
-	help_main.push(`- "profiler" \t Built-in CPU profiler`);
-	help_main.push(`- "resources" \t Management of resources, empire-wide sharing and/or selling to market`);
-	help_main.push(`- "shard" \t Multi-shard coordination and management`);
-	help_main.push(`- "visuals" \t Manage visual objects (RoomVisual class)`);
+		help_main.push(`- "profiler" \t Built-in CPU profiler`);
+		help_main.push(`- "resources" \t Management of resources, empire-wide sharing and/or selling to market`);
+		help_main.push(`- "scouts" \t Scout mission status and diagnostics`);
+		help_main.push(`- "shards" \t Inter-shard coordination and diagnostics`);
+		help_main.push(`- "visuals" \t Manage visual objects (RoomVisual class)`);
 		help_main.push("");
 
 
@@ -147,6 +150,87 @@
 				_.set(Memory, ["rooms", rmName, "layout", "place_defenses"], true)
 
 			return `<font color=\"#D3FFA3\">[Console]</font> Blueprint placing defensive walls and ramparts: ${_.get(Memory, ["rooms", rmName, "layout", "place_defenses"], true)}`;
+		};
+
+		help_blueprint.push("blueprint.diagnose(roomName)");
+
+		blueprint.diagnose = function (roomName) {
+			let room = Game.rooms[roomName];
+			if (!room || !room.controller || !room.controller.my) {
+				return `<font color=\"#FF6B6B\">[Console]</font> Room ${roomName} not found or not owned.`;
+			}
+
+			let hasLayout = _.get(Memory, ["rooms", roomName, "layout"]) != null;
+			let hasOrigin = _.get(Memory, ["rooms", roomName, "layout", "origin"]) != null;
+			let layoutName = _.get(Memory, ["rooms", roomName, "layout", "name"]);
+			let origin = _.get(Memory, ["rooms", roomName, "layout", "origin"]);
+			let hasColonizationSite = _.get(Memory, ["sites", "colonization", roomName]) != null;
+			let colonizationLayout = _.get(Memory, ["sites", "colonization", roomName, "layout"]);
+			let spawns = room.find(FIND_MY_SPAWNS);
+			let constructionSites = room.find(FIND_MY_CONSTRUCTION_SITES).length;
+			let sitesPerRoom = room.controller.level <= 4 ? 15 : 10;
+
+			let output = [];
+			output.push(`<font color=\"#D3FFA3\">[Blueprint]</font> Diagnostics for ${roomName}:`);
+			output.push(`  Controller Level: ${room.controller.level}`);
+			output.push(`  Has Layout: ${hasLayout}`);
+			output.push(`  Has Origin: ${hasOrigin}`);
+			output.push(`  Layout Name: ${layoutName || "N/A"}`);
+			output.push(`  Origin: ${origin ? `(${origin.x}, ${origin.y})` : "N/A"}`);
+			output.push(`  Construction Sites: ${constructionSites}/${sitesPerRoom}`);
+			output.push(`  Spawns: ${spawns.length}`);
+			
+			if (spawns.length > 0) {
+				let topLeftSpawn = _.head(_.sortBy(spawns, s => s.pos.y * 50 + s.pos.x));
+				output.push(`  Top-left spawn: (${topLeftSpawn.pos.x}, ${topLeftSpawn.pos.y})`);
+			}
+
+			if (hasColonizationSite) {
+				output.push(`  Colonization Site: Found (layout may be recoverable)`);
+				if (colonizationLayout) {
+					let originX = (colonizationLayout.origin && colonizationLayout.origin.x) ? colonizationLayout.origin.x : "?";
+					let originY = (colonizationLayout.origin && colonizationLayout.origin.y) ? colonizationLayout.origin.y : "?";
+					output.push(`  Colonization Layout: ${colonizationLayout.name || "N/A"} at (${originX}, ${originY})`);
+				}
+			}
+
+			if (!hasOrigin) {
+				output.push(`<font color=\"#FF6B6B\">[Blueprint]</font> ISSUE: No layout origin set!`);
+				if (hasColonizationSite && colonizationLayout) {
+					output.push(`  Solution: Run blueprint.recover_layout("${roomName}") to recover from colonization site`);
+				} else if (spawns.length > 0) {
+					let topLeftSpawn = _.head(_.sortBy(spawns, s => s.pos.y * 50 + s.pos.x));
+					output.push(`  Solution: Run blueprint.set_layout("${roomName}", ${topLeftSpawn.pos.x}, ${topLeftSpawn.pos.y}, "def_hor")`);
+				} else {
+					output.push(`  Solution: Set layout manually with blueprint.set_layout("${roomName}", x, y, "def_hor")`);
+				}
+			} else if (constructionSites >= sitesPerRoom) {
+				output.push(`  Status: At construction site limit (${sitesPerRoom})`);
+			} else {
+				output.push(`  Status: Blueprint should be running`);
+			}
+
+			return output.join("\n");
+		};
+
+		help_blueprint.push("blueprint.recover_layout(roomName)");
+
+		blueprint.recover_layout = function (roomName) {
+			let room = Game.rooms[roomName];
+			if (!room || !room.controller || !room.controller.my) {
+				return `<font color=\"#FF6B6B\">[Console]</font> Room ${roomName} not found or not owned.`;
+			}
+
+			let colonizationSite = _.get(Memory, ["sites", "colonization", roomName]);
+			if (!colonizationSite || !colonizationSite.layout) {
+				return `<font color=\"#FF6B6B\">[Console]</font> No colonization site found for ${roomName} with layout data.`;
+			}
+
+			let layout = colonizationSite.layout;
+			_.set(Memory, ["rooms", roomName, "layout"], layout);
+			_.set(Memory, ["hive", "pulses", "blueprint", "request"], roomName);
+			
+			return `<font color=\"#D3FFA3\">[Console]</font> Recovered layout for ${roomName}: ${layout.name} at (${layout.origin.x}, ${layout.origin.y}). Blueprint requested for next tick.`;
 		};
 
 
@@ -320,8 +404,10 @@
 			return `<font color=\"#FFA500\">[Factory]</font> Factory status displayed.`;
 		};
 
-		factories.renew_assignments = function () {
-			console.log(`<font color=\"#FFA500\">[Factory]</font> Renewing factory assignments...`);
+		factories.renew_assignments = function (announce = true) {
+			if (announce) {
+				console.log(`<font color=\"#FFA500\">[Factory]</font> Renewing factory assignments...`);
+			}
 			// Safely clear existing assignments to force fresh assignment
 			if (Memory["resources"] && Memory["resources"]["factories"]) {
 				delete Memory["resources"]["factories"]["assignments"];
@@ -343,7 +429,7 @@
 		};
 
 		// Internal maintenance function (not exposed in help)
-		factories.maintenance = function () {
+		factories.maintenance = function (announce = true) {
 			// Initialize factory maintenance memory if needed
 			if (!Memory.factories) {
 				Memory.factories = {
@@ -359,16 +445,20 @@
 			
 			// Check if it's time for cleanup
 			if (currentTick - Memory.factories.lastCleanup >= Memory.factories.cleanupInterval) {
-				console.log(`<font color=\"#FFA500\">[Factory]</font> Running scheduled factory cleanup...`);
-				this.cleanup(1); // High priority cleanup
+				if (announce) {
+					console.log(`<font color=\"#FFA500\">[Factory]</font> Running scheduled factory cleanup...`);
+				}
+				this.cleanup(1, announce); // High priority cleanup
 				Memory.factories.lastCleanup = currentTick;
 				maintenanceActions.push("cleanup");
 			}
 			
 			// Check if it's time for assignment renewal
 			if (currentTick - Memory.factories.lastAssignmentCheck >= Memory.factories.assignmentCheckInterval) {
-				console.log(`<font color=\"#FFA500\">[Factory]</font> Running scheduled assignment check...`);
-				this.renew_assignments();
+				if (announce) {
+					console.log(`<font color=\"#FFA500\">[Factory]</font> Running scheduled assignment check...`);
+				}
+				this.renew_assignments(announce);
 				Memory.factories.lastAssignmentCheck = currentTick;
 				maintenanceActions.push("assignment renewal");
 			}
@@ -381,7 +471,7 @@
 		};
 
 		// Internal cleanup function (not exposed in help)
-		factories.cleanup = function (priority = 1) {
+		factories.cleanup = function (priority = 1, announce = true) {
 			let totalCleanupTasks = 0;
 			let roomsProcessed = 0;
 			let cleanupData = [];
@@ -543,24 +633,21 @@
 			});
 			
 			// Display consolidated cleanup table
-			if (cleanupData.length > 0) {
+			if (announce && cleanupData.length > 0) {
 				let tableStyle = "style=\"border-collapse: collapse; border: 1px solid #666; margin: 5px 0;\"";
 				let cellStyle = "style=\"border: 1px solid #666; padding: 6px 8px; text-align: left; font-size: 12px;\"";
 				let headerStyle = "style=\"border: 1px solid #666; padding: 8px 12px; text-align: left; background-color: #FFA500; color: white; font-weight: bold;\"";
 				
-				let cleanupTable = `<table ${tableStyle}><tr><th ${headerStyle}>Room</th><th ${headerStyle}>Status</th><th ${headerStyle}>Details</th></tr>`;
+				let cleanupTable = `<table ${tableStyle}>`;
+				cleanupTable += `<tr><th ${headerStyle}>Room</th><th ${headerStyle}>Status</th><th ${headerStyle}>Details</th></tr>`;
+				cleanupTable += `<tr><td ${cellStyle}>${cleanupData[0].room}</td><td ${cellStyle}><font color=\"${cleanupData[0].status.includes("✓") ? "green" : "red"}\">${cleanupData[0].status}</font></td><td ${cellStyle}>${cleanupData[0].details}</td></tr>`;
 				
-				_.each(cleanupData, data => {
-					let statusColor = data.status.includes("✓") ? "green" : data.status.includes("✗") ? "red" : "orange";
-					cleanupTable += `<tr><td ${cellStyle}>${data.room}</td><td ${cellStyle}><font color=\"${statusColor}\">${data.status}</font></td><td ${cellStyle}>${data.details}</td></tr>`;
-					
-					// Add factory details if available
-					if (data.factories && data.factories.length > 0) {
-						_.each(data.factories, factory => {
-							cleanupTable += `<tr><td ${cellStyle} style=\"padding-left: 20px;\">└─ ${factory.factory}</td><td ${cellStyle}>${factory.assignment}</td><td ${cellStyle}>${factory.actions}</td></tr>`;
-						});
-					}
-				});
+				// Add factory details if available
+				if (cleanupData[0].factories && cleanupData[0].factories.length > 0) {
+					_.each(cleanupData[0].factories, factory => {
+						cleanupTable += `<tr><td ${cellStyle} style=\"padding-left: 20px;\">└─ ${factory.factory}</td><td ${cellStyle}>${factory.assignment}</td><td ${cellStyle}>${factory.actions}</td></tr>`;
+					});
+				}
 				
 				cleanupTable += "</table>";
 				console.log(`<font color=\"#FFA500\">[Factory]</font> <b>Cleanup Summary (Priority ${priority}):</b><br>${cleanupTable}`);
@@ -763,7 +850,7 @@
 		help_log.push("log.storage()");
 
 		log.storage = function () {
-			console.log(`<font color=\"#D3FFA3">log-storage</font>`);
+			console.log(`<font color=\"#D3FFA3\">log-storage</font>`);
 
 			for (let i = 0; i < Object.keys(Game.rooms).length; i++) {
 				let room = Game.rooms[Object.keys(Game.rooms)[i]];
@@ -1616,6 +1703,438 @@
 			_.set(Memory, ["sites", "mining", rmHarvest], { colony: rmColony, has_keepers: hasKeepers, list_route: listRoute, spawn_assist: listSpawnAssistRooms, population: customPopulation });
 			return `<font color=\"#D3FFA3\">[Console]</font> Remote mining added to Memory.sites.mining.${rmHarvest} ... to cancel, delete the entry.`;
 		};
+		help_empire.push("empire.scout(rmColony, rally_pos, dest_pos, { count, respawn, waitForFullRally, priority, level, body, name, spawnRooms, patrol_mode, transfer_intent, global, listRoute, rallyShard, destShard })");
+		help_empire.push(" - rally_pos / dest_pos accept RoomPosition or plain objects ({ x, y, roomName, shard? })");
+		help_empire.push(" - options.count: number of scouts to keep active (default 1) | respawn: keep mission alive (default true)");
+		help_empire.push(" - waitForFullRally: hold at rally until all count creeps arrive (default true)");
+		help_empire.push(" - patrol_mode: 'station' (hold destination) or 'loop' (bounce between rally/destination)");
+		help_empire.push(" - spawnRooms: string or array of rooms allowed to spawn the request (falls back to spawn_assist)");
+		help_empire.push(" - listRoute: array of waypoint rooms (accepts 'shard/room' when crossing shards)");
+		help_empire.push(" - transfer_intent: { destination_shard, destination_room, portal_pos, return_portal?, portals? } (used for cross-shard portal transfers)");
+		help_empire.push("   · portal_pos / return_portal.portal_pos accept { x, y, roomName, shard? }");
+		help_empire.push("   · transfer_intent.portals allows explicit portal network [{ from: { shard, roomName, pos }, to: { shard, roomName? } }]");
+		help_empire.push(" - rallyShard / destShard override inferred shard when the RoomPosition lacks shard metadata");
+		help_empire.push(" - global: mission manifest stored in Memory.hive.ism (e.g. { mission: 'portal_scout', origin: { shard, room }, target: { shard, room } })");
+		help_empire.push("   transfer/global are optional but recommended when sending scouts through inter-shard portals");
+		help_empire.push(" - example: empire.scout('E48S21', new RoomPosition(25,20,'E48S21'), new RoomPosition(45,24,'E50S20'), { count: 3, respawn: true, patrol_mode: 'loop' })");
+		empire.scout = function (rmColony, rally_pos, dest_pos, options) {
+			let parseShardRoom = function (value, defaultShard) {
+				let shard = defaultShard || Game.shard.name;
+				let roomName = null;
+
+				if (value == null)
+					return { shard: shard, roomName: roomName };
+
+				if (value instanceof RoomPosition) {
+					return { shard: shard, roomName: value.roomName };
+				}
+
+				if (_.isString(value)) {
+					let parts = value.split("/");
+					if (parts.length === 2) {
+						shard = parts[0];
+						roomName = parts[1];
+					} else {
+						roomName = value;
+					}
+					return { shard: shard, roomName: roomName };
+				}
+
+				if (_.isObject(value)) {
+					let candidate = _.get(value, "roomName") || _.get(value, "room") || _.get(value, "name");
+					if (_.isString(candidate)) {
+						let parts = candidate.split("/");
+						if (parts.length === 2) {
+							shard = parts[0];
+							roomName = parts[1];
+						} else {
+							roomName = candidate;
+						}
+					}
+					if (_.isString(_.get(value, "shard")))
+						shard = value.shard;
+				}
+
+				return { shard: shard, roomName: roomName };
+			};
+
+			let packPos = function (pos, fallbackShard) {
+				if (pos == null)
+					return null;
+
+				if (pos instanceof RoomPosition) {
+					return {
+						x: pos.x,
+						y: pos.y,
+						roomName: pos.roomName,
+						shard: fallbackShard || Game.shard.name
+					};
+				}
+
+				if (_.isObject(pos)) {
+					let x = _.get(pos, "x");
+					let y = _.get(pos, "y");
+					let roomName = _.get(pos, "roomName") || _.get(pos, "room");
+					let shard = _.get(pos, "shard", fallbackShard || Game.shard.name);
+
+					if (_.isString(roomName) && roomName.indexOf("/") >= 0) {
+						let parsed = parseShardRoom(roomName, shard);
+						roomName = parsed.roomName;
+						shard = parsed.shard;
+					}
+
+					if (_.isNumber(x) && _.isNumber(y) && _.isString(roomName)) {
+						return {
+							x: x,
+							y: y,
+							roomName: roomName,
+							shard: shard
+						};
+					}
+				}
+
+				return null;
+			};
+
+			let normalizeRoomsArray = function (rooms, fallbackShard) {
+				if (rooms == null)
+					return null;
+
+				let list = _.isArray(rooms) ? rooms : [rooms];
+				let result = [];
+
+				_.each(list, entry => {
+					let parsed = parseShardRoom(entry, fallbackShard);
+					if (_.isString(parsed.roomName) && (!parsed.shard || parsed.shard === fallbackShard))
+						result.push(parsed.roomName);
+				});
+
+				return _.uniq(result);
+			};
+
+			let normalizeRoute = function (route, fallbackShard) {
+				if (!_.isArray(route))
+					return null;
+
+				let normalized = [];
+				_.each(route, step => {
+					if (step == null)
+						return;
+
+					if (_.isString(step)) {
+						let parts = step.split("/");
+						if (parts.length === 2) {
+							normalized.push(`${parts[0]}/${parts[1]}`);
+						} else {
+							normalized.push(step);
+						}
+						return;
+					}
+
+					if (_.isObject(step)) {
+						let parsed = parseShardRoom(step, fallbackShard);
+						if (!_.isString(parsed.roomName))
+							return;
+						if (parsed.shard && parsed.shard !== fallbackShard)
+							normalized.push(`${parsed.shard}/${parsed.roomName}`);
+						else
+							normalized.push(parsed.roomName);
+					}
+				});
+
+				return _.uniq(normalized);
+			};
+
+			let uniquePortalEntries = function (entries) {
+				if (!_.isArray(entries))
+					return [];
+
+				let deduped = [];
+				let seen = {};
+
+				for (let i = 0; i < entries.length; i++) {
+					let entry = entries[i];
+					if (!entry || !_.get(entry, ["from", "pos"]))
+						continue;
+
+					let from = entry.from;
+					let to = entry.to || {};
+					let pos = from.pos;
+
+					if (!_.isNumber(pos.x) || !_.isNumber(pos.y) || !_.isString(from.roomName) || !_.isString(from.shard) || !_.isString(to.shard))
+						continue;
+
+					let key = `${from.shard}/${from.roomName}:${pos.x}:${pos.y}->${to.shard}/${to.roomName || ""}`;
+					if (!seen[key]) {
+						seen[key] = true;
+						deduped.push(entry);
+					}
+				}
+
+				return deduped;
+			};
+
+			let normalizeTransferIntent = function (intent, defaults) {
+				if (!_.isObject(intent))
+					return null;
+
+				let normalized = _.cloneDeep(intent);
+
+				normalized.origin_shard = _.get(normalized, "origin_shard", defaults.originShard);
+				normalized.origin_room = _.get(normalized, "origin_room", defaults.originRoom);
+				normalized.destination_shard = _.get(normalized, "destination_shard", defaults.destinationShard);
+				normalized.destination_room = _.get(normalized, "destination_room", defaults.destinationRoom);
+
+				if (_.has(normalized, "portal_pos")) {
+					normalized.portal_pos = packPos(normalized.portal_pos, normalized.origin_shard);
+					if (!normalized.portal_pos)
+						delete normalized.portal_pos;
+				}
+
+				if (_.has(normalized, "return_portal")) {
+					let ret = _.get(normalized, "return_portal");
+					if (_.isObject(ret)) {
+						ret.shard = _.get(ret, "shard", normalized.destination_shard);
+						ret.destination_shard = _.get(ret, "destination_shard", normalized.origin_shard);
+						ret.destination_room = _.get(ret, "destination_room", normalized.origin_room);
+						if (_.has(ret, "portal_pos"))
+							ret.portal_pos = packPos(ret.portal_pos, ret.shard);
+						if (!_.get(ret, ["portal_pos", "roomName"]))
+							delete normalized.return_portal;
+						else
+							normalized.return_portal = ret;
+					} else {
+						delete normalized.return_portal;
+					}
+				}
+
+				let portalEntries = [];
+
+				let addPortalEntry = function (fromShard, fromRoom, portalPos, toShard, toRoom, label) {
+					if (!fromShard || !fromRoom || !portalPos || !toShard)
+						return;
+					if (!_.isNumber(portalPos.x) || !_.isNumber(portalPos.y) || !_.isString(portalPos.roomName))
+						return;
+
+					portalEntries.push({
+						from: {
+							shard: fromShard,
+							roomName: fromRoom,
+							pos: {
+								x: portalPos.x,
+								y: portalPos.y,
+								roomName: portalPos.roomName,
+								shard: portalPos.shard || fromShard
+							}
+						},
+						to: {
+							shard: toShard,
+							roomName: toRoom || null
+						},
+						label: label || null
+					});
+				};
+
+				if (_.get(normalized, ["portal_pos", "roomName"]) && normalized.destination_shard) {
+					addPortalEntry(
+						normalized.origin_shard,
+						normalized.portal_pos.roomName,
+						normalized.portal_pos,
+						normalized.destination_shard,
+						normalized.destination_room,
+						"outbound"
+					);
+				}
+
+				if (_.get(normalized, ["return_portal", "portal_pos", "roomName"])) {
+					let ret = normalized.return_portal;
+					addPortalEntry(
+						ret.shard,
+						ret.portal_pos.roomName,
+						ret.portal_pos,
+						ret.destination_shard,
+						ret.destination_room,
+						"return"
+					);
+				}
+
+				if (_.isArray(_.get(normalized, "portals"))) {
+					_.each(normalized.portals, entry => {
+						let fromParsed = parseShardRoom(_.get(entry, "from"), normalized.origin_shard);
+						let toParsed = parseShardRoom(_.get(entry, "to"), normalized.destination_shard);
+						let fromPos = packPos(_.get(entry, ["from", "pos"]) || _.get(entry, ["from", "portal_pos"]) || entry.from, fromParsed.shard);
+
+						if (!fromPos || !fromParsed.roomName || !toParsed.shard)
+							return;
+
+						portalEntries.push({
+							from: {
+								shard: fromPos.shard || fromParsed.shard,
+								roomName: fromPos.roomName,
+								pos: fromPos
+							},
+							to: {
+								shard: toParsed.shard,
+								roomName: toParsed.roomName || null
+							},
+							label: _.get(entry, "label", null)
+						});
+					});
+				}
+
+				let filteredEntries = [];
+				_.each(portalEntries, entry => {
+					if (entry && entry.from && entry.to && entry.from.pos)
+						filteredEntries.push(entry);
+				});
+
+				normalized.portals = uniquePortalEntries(filteredEntries);
+
+				return normalized;
+			};
+
+			let parsedColony = parseShardRoom(rmColony, Game.shard.name);
+			if (!_.isString(parsedColony.roomName))
+				return `<font color=\"#FF4E50\">[Console]</font> Error: Invalid rmColony ${rmColony}.`;
+
+			let colonyShard = parsedColony.shard;
+			let colonyRoomName = parsedColony.roomName;
+
+			if (colonyShard === Game.shard.name) {
+				let colonyRoom = _.get(Game, ["rooms", colonyRoomName]);
+				if (!colonyRoom || !_.get(colonyRoom, ["controller", "my"]))
+					return `<font color=\"#FF4E50\">[Console]</font> Error: rmColony ${colonyRoomName} is not under our control.`;
+			}
+
+			options = (options && typeof options === "object") ? options : {};
+
+			let rallyShardHint = _.get(options, "rallyShard") || colonyShard;
+			let destShardHint = _.get(options, "destShard") || colonyShard;
+
+			let packedRally = packPos(rally_pos, rallyShardHint);
+			let packedDest = packPos(dest_pos, destShardHint);
+
+			if (!packedRally)
+				return `<font color=\"#FF4E50\">[Console]</font> Error: rally_pos must include x, y, roomName.`;
+			if (!packedDest)
+				return `<font color=\"#FF4E50\">[Console]</font> Error: dest_pos must include x, y, roomName.`;
+
+			let rallyShard = packedRally.shard || rallyShardHint;
+			let destShard = packedDest.shard || destShardHint;
+
+			let spawnRooms = options.spawnRooms;
+			if (typeof spawnRooms === "string")
+				spawnRooms = [spawnRooms];
+			spawnRooms = normalizeRoomsArray(spawnRooms, colonyShard);
+
+			let mission = {
+				id: `scout:${colonyShard}/${colonyRoomName}:${destShard}/${packedDest.roomName}:${Game.time}`,
+				colony: colonyRoomName,
+				colony_shard: colonyShard,
+				created: Game.time,
+				rally_pos: packedRally,
+				dest_pos: packedDest,
+				custom: null,
+				list_route: null,
+				transfer_intent: null,
+				portals: null,
+				global: null,
+				spawn_rooms: spawnRooms || null,
+				creeps: [],
+				spawned_total: 0,
+				count: Math.max(1, _.get(options, "count", 1)),
+				respawn: _.get(options, "respawn", true) !== false,
+				wait_for_full_rally: _.get(options, "waitForFullRally") !== false,
+				patrol_mode: null,
+				rally_ready: false
+			};
+
+			let patrolMode = options.patrol_mode;
+			patrolMode = _.includes(["station", "loop"], patrolMode) ? patrolMode : "station";
+			mission.patrol_mode = patrolMode;
+
+			let priority = _.get(options, "priority");
+			let level = _.get(options, "level");
+			let body = _.get(options, "body");
+			let name = _.get(options, "name");
+			mission.custom = {
+				priority: priority,
+				level: level,
+				body: body,
+				name: name
+			};
+
+			if (options.transfer_intent) {
+				let transferIntent = normalizeTransferIntent(options.transfer_intent, {
+					originShard: rallyShard,
+					originRoom: packedRally.roomName,
+					destinationShard: destShard,
+					destinationRoom: packedDest.roomName
+				});
+				if (transferIntent) {
+					mission.transfer_intent = transferIntent;
+					if (_.isArray(transferIntent.portals) && transferIntent.portals.length > 0)
+						mission.portals = transferIntent.portals;
+				}
+			}
+			if (options.global)
+				mission.global = _.cloneDeep(options.global);
+			if (options.listRoute)
+				mission.list_route = normalizeRoute(options.listRoute, colonyShard);
+
+			if (!mission.list_route) {
+				if (colonyShard !== destShard) {
+					console.log(`<font color=\"#FF944E\">[Scout]</font> Warning: cross-shard scout mission ${mission.id} has no listRoute; please supply options.listRoute to guide portal approach.`);
+				} else {
+					let derivedRoute = [colonyRoomName];
+					try {
+						let routeResult = Game.map.findRoute(colonyRoomName, packedDest.roomName);
+						if (_.isArray(routeResult)) {
+							_.each(routeResult, step => {
+								let lastRoom = _.last(derivedRoute);
+								if (lastRoom !== step.room)
+									derivedRoute.push(step.room);
+							});
+						} else if (routeResult === ERR_NO_PATH) {
+							derivedRoute.push(packedDest.roomName);
+						}
+					} catch (err) {
+						console.log(`<font color=\"#FF944E\">[Scout]</font> Warning: Unable to derive route for ${colonyRoomName} -> ${packedDest.roomName}; ${err}`);
+					}
+					if (_.last(derivedRoute) !== packedDest.roomName)
+						derivedRoute.push(packedDest.roomName);
+					mission.list_route = _.uniq(derivedRoute);
+				}
+			}
+
+			if (_.isArray(options.portals) && options.portals.length > 0) {
+				let extraIntent = normalizeTransferIntent({ portals: options.portals }, {
+					originShard: rallyShard,
+					originRoom: packedRally.roomName,
+					destinationShard: destShard,
+					destinationRoom: packedDest.roomName
+				});
+				if (extraIntent && _.isArray(extraIntent.portals)) {
+					let combined = [];
+					if (_.isArray(mission.portals))
+						combined = combined.concat(mission.portals);
+					combined = combined.concat(extraIntent.portals);
+					combined = _.filter(combined, Boolean);
+					combined = uniquePortalEntries(combined);
+					if (combined.length > 0)
+						mission.portals = combined;
+				}
+			}
+
+			let requests = _.get(Memory, ["rooms", colonyRoomName, "scout_requests"], []);
+			if (!_.isArray(requests))
+				requests = [];
+
+			requests.push(mission);
+			_.set(Memory, ["rooms", colonyRoomName, "scout_requests"], requests);
+
+			return `<font color=\"#D3FFA3\">[Console]</font> Scout mission ${mission.id} queued for ${colonyRoomName} -> ${packedDest.roomName}.`;
+		};
 
 		help_empire.push("empire.set_sign(message)")
 		help_empire.push("empire.set_sign(message, rmName)")
@@ -2148,6 +2667,485 @@
 			return `<font color=\"#FFD700\">[Pixels]</font> Pixel statistics reset.`;
 		};
 
+		shards = new Object();
+
+		help_shards.push("shards.help()");
+		help_shards.push(" - Print a quick reference to shard commands");
+		shards.help = function () {
+			return `<font color=\"#4ECDC4\">[Shards]</font> Commands: shards.status(), shards.requests(), shards.global(), shards.set_primary(). Use help("shards") for full descriptions.`;
+		};
+
+		help_shards.push("shards.status(shardName?)");
+		help_shards.push(" - Show local shard pulse and remote shard summaries (optional shardName)");
+		shards.status = function (targetShard) {
+			if (typeof ShardMemory === "undefined") {
+				return `<font color="#FF6B6B">[Shards]</font> Inter-shard interface not initialized.`;
+			}
+
+			let payload = ShardMemory.getLocalPayload();
+			let role = _.get(payload, ["summary", "role"], ShardMemory.isPrimaryShard() ? "primary" : "follower");
+			let primaryShard = ShardMemory.getPrimaryShardName();
+
+			let lines = new Array();
+			lines.push(`<font color="#4ECDC4">[Shards]</font> Local shard <b>${Game.shard.name}</b> (${role})`);
+			lines.push(`  Primary shard: ${primaryShard}`);
+			lines.push(`  Heartbeat: ${payload.heartbeat} (summary tick ${_.get(payload, ["summary", "tick"], "n/a")})`);
+			lines.push(`  Local globals: ${_.size(_.get(payload, ["global", "creeps"], {}))}`);
+			lines.push(`  Queues (R/C/M): ${_.size(_.get(payload, ["queues", "resource"], []))}/${_.size(_.get(payload, ["queues", "creep"], []))}/${_.size(_.get(payload, ["queues", "mission"], []))}`);
+
+			if (targetShard) {
+				let remote = ShardMemory.readRemote(targetShard);
+				if (!remote) {
+					lines.push(`  No payload detected for ${targetShard}.`);
+				} else {
+					lines.push(`  -- Remote ${targetShard} --`);
+					lines.push(`    Heartbeat: ${remote.heartbeat} (tick ${_.get(remote, ["summary", "tick"], "n/a")})`);
+					lines.push(`    Role: ${_.get(remote, ["summary", "role"], "unknown")}`);
+					lines.push(`    Globals: ${_.size(_.get(remote, ["global", "creeps"], {}))}`);
+					lines.push(`    Queues (R/C/M): ${_.size(_.get(remote, ["queues", "resource"], []))}/${_.size(_.get(remote, ["queues", "creep"], []))}/${_.size(_.get(remote, ["queues", "mission"], []))}`);
+				}
+			} else if (ShardMemory.isPrimaryShard()) {
+				let remotes = _.get(Memory, ["hive", "ism", "primary_snapshot", "remoteSummaries"], {});
+				if (_.size(remotes) === 0) {
+					lines.push(`  No remote shard summaries captured yet.`);
+				} else {
+					lines.push(`  Remote shard summaries:`);
+					_.each(remotes, (summary, shardName) => {
+						let queues = _.get(summary, "queues", {});
+						lines.push(`    ${shardName}: heartbeat ${summary.heartbeat}, globals ${_.get(summary, ["summary", "global_local"], "n/a")}, queues ${_.get(queues, "resource", 0)}/${_.get(queues, "creep", 0)}/${_.get(queues, "mission", 0)}`);
+					});
+				}
+			} else {
+				let follower = _.get(Memory, ["hive", "ism", "follower_snapshot"]);
+				if (follower) {
+					lines.push(`  Primary heartbeat: ${_.get(follower, "heartbeat", "n/a")} (tick ${_.get(follower, ["summary", "tick"], "n/a")})`);
+					if (_.get(follower, "directive")) {
+						lines.push(`  Active directive: ${JSON.stringify(_.get(follower, "directive"))}`);
+					}
+				} else {
+					lines.push(`  No data from primary yet.`);
+				}
+			}
+
+			return lines.join("\n");
+		};
+
+		help_shards.push("shards.requests(type?)");
+		help_shards.push(" - Inspect pending inter-shard requests (resource|creep|mission)");
+		shards.requests = function (type) {
+			if (typeof ShardMemory === "undefined") {
+				return `<font color="#FF6B6B">[Shards]</font> Inter-shard interface not initialized.`;
+			}
+
+			let validTypes = ["resource", "creep", "mission"];
+			let filters = validTypes;
+			if (type != null) {
+				type = type.toString().toLowerCase();
+				if (!_.includes(validTypes, type)) {
+					return `<font color="#FF6B6B">[Shards]</font> Unknown request type "${type}". Use resource, creep, or mission.`;
+				}
+				filters = [type];
+			}
+
+			let lines = new Array();
+			if (ShardMemory.isPrimaryShard()) {
+				let snapshot = _.get(Memory, ["hive", "ism", "primary_snapshot", "requests"]);
+				lines.push(`<font color="#4ECDC4">[Shards]</font> Aggregated remote requests (primary view)`);
+				if (!snapshot) {
+					lines.push("  No requests recorded yet.");
+				} else {
+					_.each(filters, queue => {
+						let items = _.get(snapshot, queue, []);
+						lines.push(`  ${queue}: ${items.length} pending`);
+						_.each(_.take(items, 10), item => {
+							let origin = _.get(item, "shard", "unknown");
+							lines.push(`    ${origin}: ${JSON.stringify(_.omit(item, "shard"))}`);
+						});
+						if (items.length > 10)
+							lines.push(`    ... ${items.length - 10} more`);
+					});
+				}
+			} else {
+				let payload = ShardMemory.getLocalPayload();
+				lines.push(`<font color="#4ECDC4">[Shards]</font> Local outbound requests`);
+				_.each(filters, queue => {
+					let items = _.get(payload, ["queues", queue], []);
+					lines.push(`  ${queue}: ${items.length} queued`);
+					_.each(_.take(items, 10), item => {
+						lines.push(`    ${JSON.stringify(item)}`);
+					});
+					if (items.length > 10)
+						lines.push(`    ... ${items.length - 10} more`);
+				});
+			}
+
+			return lines.join("\n");
+		};
+
+		help_shards.push("shards.global(creepName?)");
+		help_shards.push(" - List known global creeps or inspect a specific creep");
+		shards.global = function (creepName) {
+			if (typeof ShardMemory === "undefined") {
+				return `<font color="#FF6B6B">[Shards]</font> Inter-shard interface not initialized.`;
+			}
+
+			let manifest = {};
+			let localPayload = ShardMemory.getLocalPayload();
+			_.each(_.get(localPayload, ["global", "creeps"], {}), (descriptor, name) => {
+				manifest[name] = _.assign({ shard: Game.shard.name }, descriptor);
+			});
+
+			if (ShardMemory.isPrimaryShard()) {
+				let aggregated = _.get(Memory, ["hive", "ism", "primary_snapshot", "globalManifest"], {});
+				_.assign(manifest, aggregated);
+			} else {
+				let primaryPayload = ShardMemory.readPrimary();
+				if (primaryPayload) {
+					_.each(_.get(primaryPayload, ["global", "creeps"], {}), (descriptor, name) => {
+						manifest[name] = _.assign({ shard: ShardMemory.getPrimaryShardName() }, descriptor);
+					});
+				}
+			}
+
+			if (creepName != null) {
+				let info = manifest[creepName];
+				if (!info) {
+					return `<font color="#FF6B6B">[Shards]</font> Global creep ${creepName} not found.`;
+				}
+				return `<font color="#4ECDC4">[Shards]</font> ${creepName}\n${JSON.stringify(info, null, 2)}`;
+			}
+
+			let entries = Object.entries(manifest);
+			let lines = new Array();
+			lines.push(`<font color="#4ECDC4">[Shards]</font> Known global creeps: ${entries.length}`);
+
+			if (entries.length === 0) {
+				return lines.join("\n");
+			}
+
+			_.each(_.take(entries, 12), ([name, info]) => {
+				lines.push(`  ${name}: ${info.status || "unknown"} | shard ${info.shard || "?"} | room ${info.room || _.get(info, ["target", "room"], "?")} | ttl ${_.get(info, "ttl", "?")} | mission ${info.mission || "?"}`);
+			});
+
+			if (entries.length > 12) {
+				lines.push(`  ... ${entries.length - 12} more (use shards.global("name"))`);
+			}
+
+			return lines.join("\n");
+		};
+
+		help_shards.push("shards.set_primary(shardName)");
+		help_shards.push(" - Update the designated primary shard (defaults to shard0)");
+		shards.set_primary = function (shardName) {
+			if (!_.isString(shardName) || shardName.length === 0) {
+				return `<font color="#FF6B6B">[Shards]</font> Provide a shard name, e.g. shards.set_primary('shard0').`;
+			}
+			if (typeof ShardMemory === "undefined") {
+				return `<font color="#FF6B6B">[Shards]</font> Inter-shard interface not initialized.`;
+			}
+			ShardMemory.setPrimaryShardName(shardName);
+			return `<font color="#4ECDC4">[Shards]</font> Primary shard set to ${shardName}.`;
+		};
+
+		// Primary-shard mission registry commands (Option A)
+		help_shards.push("shards.mission(creepName)");
+		help_shards.push(" - Inspect the authoritative mission for a creep (primary shard)");
+		shards.mission = function (creepName) {
+			if (!creepName)
+				return `<font color="#FF6B6B">[Shards]</font> Provide a creep name: shards.mission('MyCreep')`;
+			if (typeof ShardMemory === "undefined")
+				return `<font color="#FF6B6B">[Shards]</font> Inter-shard interface not initialized.`;
+			var mission = ShardMemory.getMission(creepName);
+			if (!mission)
+				return `<font color="#FF944E">[Shards]</font> No mission found for ${creepName} on primary.`;
+			console.log(`<font color="#4ECDC4">[Shards]</font> Mission for ${creepName}:\n` + JSON.stringify(mission, null, 2));
+			return `<font color="#4ECDC4">[Shards]</font> Mission displayed for ${creepName}.`;
+		};
+
+		help_shards.push("shards.missions(limit?)");
+		help_shards.push(" - List missions registered on the primary shard (default limit 12)");
+		shards.missions = function (limit) {
+			if (typeof ShardMemory === "undefined")
+				return `<font color="#FF6B6B">[Shards]</font> Inter-shard interface not initialized.`;
+			var primary = ShardMemory.readPrimary();
+			if (!primary)
+				return `<font color="#FF944E">[Shards]</font> No primary payload available.`;
+			var missions = _.get(primary, "missions", {});
+			var names = Object.keys(missions);
+			var max = parseInt(limit) || 12;
+			console.log(`<font color="#4ECDC4">[Shards]</font> Missions on primary: ${names.length}`);
+			_.each(_.take(names, max), function (name) {
+				var m = missions[name] || {};
+				console.log(`  ${name}: role=${_.get(m, 'role', 'unknown')} mission=${_.get(m, 'mission', 'unknown')} shard=${_.get(m, 'current_shard', _.get(m, ['origin','shard'], 'n/a'))} updated=${_.get(m, 'updated', 'n/a')}`);
+			});
+			if (names.length > max)
+				console.log(`  ... ${names.length - max} more`);
+			return `<font color="#4ECDC4">[Shards]</font> Listed ${Math.min(names.length, max)} mission(s).`;
+		};
+
+		help_shards.push("shards.set_mission(creepName, mission)");
+		help_shards.push(" - Set/replace the authoritative mission for a creep (primary only)");
+		shards.set_mission = function (creepName, mission) {
+			if (!creepName || typeof mission !== "object")
+				return `<font color="#FF6B6B">[Shards]</font> Usage: shards.set_mission('MyCreep', { role: 'worker', mission: 'assist', origin: { shard: 'shard0', room: 'E1N1' } })`;
+			if (typeof ShardMemory === "undefined")
+				return `<font color="#FF6B6B">[Shards]</font> Inter-shard interface not initialized.`;
+			if (!ShardMemory.isPrimaryShard()) {
+				console.log(`<font color="#FF944E">[Shards]</font> Warning: set_mission should be run on the primary shard (${ShardMemory.getPrimaryShardName()}).`);
+			}
+			// Minimal normalization
+			mission = _.assign({}, mission, { updated: Game.time });
+			ShardMemory.registerMission(creepName, mission);
+			return `<font color="#4ECDC4">[Shards]</font> Mission registered for ${creepName}.`;
+		};
+
+		help_shards.push("shards.remove_mission(creepName)");
+		help_shards.push(" - Remove the mission entry for a creep (primary only)");
+		shards.remove_mission = function (creepName) {
+			if (!creepName)
+				return `<font color="#FF6B6B">[Shards]</font> Provide a creep name: shards.remove_mission('MyCreep')`;
+			if (typeof ShardMemory === "undefined")
+				return `<font color="#FF6B6B">[Shards]</font> Inter-shard interface not initialized.`;
+			if (!ShardMemory.isPrimaryShard()) {
+				console.log(`<font color="#FF944E">[Shards]</font> Warning: remove_mission should be run on the primary shard (${ShardMemory.getPrimaryShardName()}).`);
+			}
+			ShardMemory.removeMission(creepName);
+			return `<font color="#4ECDC4">[Shards]</font> Mission removed for ${creepName}.`;
+		};
+
+		// Scout mission diagnostics
+		scouts = new Object();
+		help_scouts.push("scouts.status(requestId?)");
+		help_scouts.push(" - Show status of scout missions (optional requestId for specific mission)");
+		help_scouts.push(" - Displays active scouts, patrol state, shard locations, and mission details");
+		scouts.status = function (requestId) {
+			if (typeof Control === "undefined") {
+				return `<font color="#FF6B6B">[Scouts]</font> Control system not initialized.`;
+			}
+
+			let allRequests = {};
+			let totalScouts = 0;
+			let totalRequests = 0;
+
+			// Collect all scout requests
+			for (let roomName in Memory.rooms) {
+				let requests = _.get(Memory, ["rooms", roomName, "scout_requests"]);
+				if (_.isArray(requests) && requests.length > 0) {
+					for (let i = 0; i < requests.length; i++) {
+						let req = requests[i];
+						if (!req || (requestId && req.id !== requestId))
+							continue;
+						
+						totalRequests++;
+						let reqId = req.id || `unknown_${totalRequests}`;
+						allRequests[reqId] = {
+							request: req,
+							colony: roomName
+						};
+					}
+				}
+			}
+
+			if (requestId && Object.keys(allRequests).length === 0) {
+				return `<font color="#FF944E">[Scouts]</font> No scout request found with ID: ${requestId}`;
+			}
+
+			let lines = [];
+			lines.push(`<font color="#4ECDC4"><b>[Scouts]</b></font> Scout Mission Status (Tick ${Game.time})`);
+			lines.push("");
+
+			for (let reqId in allRequests) {
+				let reqData = allRequests[reqId];
+				let req = reqData.request;
+				let colony = reqData.colony;
+
+				lines.push(`<font color="#D3FFA3"><b>Request ID:</b></font> ${reqId}`);
+				lines.push(`  Colony: ${colony}`);
+				lines.push(`  Patrol Mode: ${req.patrol_mode || "station"}`);
+				lines.push(`  Count: ${req.count || 1} (Active: ${req.active || 0}, Remote: ${req.remote_count || 0})`);
+				lines.push(`  Respawn: ${req.respawn !== false ? "Yes" : "No"}`);
+				lines.push(`  Rally Ready: ${req.rally_ready ? "Yes" : "No"}`);
+				lines.push(`  Rally Release: ${req.rally_release ? "Yes" : "No"}`);
+
+				if (req.rally_pos) {
+					let rallyShard = _.get(req.rally_pos, "shard", Game.shard.name);
+					lines.push(`  Rally: ${req.rally_pos.roomName} (${req.rally_pos.x},${req.rally_pos.y}) [${rallyShard}]`);
+				}
+				if (req.dest_pos) {
+					let destShard = _.get(req.dest_pos, "shard", Game.shard.name);
+					lines.push(`  Destination: ${req.dest_pos.roomName} (${req.dest_pos.x},${req.dest_pos.y}) [${destShard}]`);
+				}
+
+				// List active creeps
+				let creeps = _.get(req, "creeps", []);
+				if (creeps.length > 0) {
+					lines.push(`  Active Scouts (${creeps.length}):`);
+					for (let i = 0; i < creeps.length; i++) {
+						let creepName = creeps[i];
+						let creep = Game.creeps[creepName];
+						if (creep) {
+							let patrolState = _.get(creep.memory, "scout_patrol_state", "unknown");
+							let shard = Game.shard.name;
+							let room = creep.room.name;
+							let ttl = creep.ticksToLive;
+							lines.push(`    - ${creepName}: ${room} [${shard}], state=${patrolState}, TTL=${ttl}`);
+						} else {
+							lines.push(`    - ${creepName}: <font color="#FF944E">not found</font>`);
+						}
+					}
+				}
+
+				// List remote creeps
+				let remoteCreeps = _.get(req, "remote_creeps", {});
+				let remoteNames = Object.keys(remoteCreeps);
+				if (remoteNames.length > 0) {
+					lines.push(`  Remote Scouts (${remoteNames.length}):`);
+					let globalState = Control.getGlobalCreepState();
+					for (let i = 0; i < remoteNames.length; i++) {
+						let creepName = remoteNames[i];
+						let lastSeen = remoteCreeps[creepName];
+						let isAlive = Control.isCreepTrackedGlobally(creepName, globalState);
+						let status = isAlive ? "alive" : "<font color=\"#FF944E\">dead</font>";
+						lines.push(`    - ${creepName}: ${status}, last seen ${Game.time - lastSeen} ticks ago`);
+					}
+				}
+
+				lines.push("");
+			}
+
+			if (Object.keys(allRequests).length === 0) {
+				lines.push("No active scout requests found.");
+			}
+
+			console.log(lines.join("<br>"));
+			return `<font color="#4ECDC4">[Scouts]</font> Status displayed for ${Object.keys(allRequests).length} request(s).`;
+		};
+
+		help_scouts.push("scouts.debug(level)");
+		help_scouts.push(" - Set debug logging level for scouts");
+		help_scouts.push(" - level: 0 = none, 1 = errors/state changes, 2 = +movement/portals, 3 = full verbose");
+		help_scouts.push(" - Example: scouts.debug(2) for movement and portal logging");
+		scouts.debug = function (level) {
+			if (level === undefined || level === null) {
+				let currentLevel = _.get(Memory, ["hive", "debug", "scout"], 0);
+				return `<font color="#4ECDC4">[Scouts]</font> Current debug level: ${currentLevel} (0=none, 1=errors, 2=movement, 3=verbose)`;
+			}
+			level = parseInt(level);
+			if (isNaN(level) || level < 0 || level > 3) {
+				return `<font color="#FF944E">[Scouts]</font> Invalid debug level. Use 0-3.`;
+			}
+			_.set(Memory, ["hive", "debug", "scout"], level);
+			let levelNames = ["none", "errors/state", "movement/portals", "verbose"];
+			return `<font color="#4ECDC4">[Scouts]</font> Debug level set to ${level} (${levelNames[level]}).`;
+		};
+
+		help_scouts.push("scouts.trace(creepName)");
+		help_scouts.push(" - Show detailed trace for specific scout");
+		help_scouts.push(" - Displays current state, memory, position, and mission details");
+		scouts.trace = function (creepName) {
+			if (!creepName) {
+				return `<font color="#FF944E">[Scouts]</font> Please provide a creep name.`;
+			}
+			let creep = Game.creeps[creepName];
+			if (!creep) {
+				return `<font color="#FF944E">[Scouts]</font> Creep ${creepName} not found.`;
+			}
+			if (creep.memory.role !== "scout") {
+				return `<font color="#FF944E">[Scouts]</font> ${creepName} is not a scout.`;
+			}
+
+			let output = [];
+			output.push(`<font color="#4ECDC4">[Scouts]</font> <b>Trace for ${creepName}:</b>`);
+			output.push(`Position: ${creep.pos.x},${creep.pos.y} in ${creep.room.name} (shard: ${Game.shard.name})`);
+			output.push(`TTL: ${creep.ticksToLive}`);
+			output.push(`Role: ${creep.memory.role}`);
+			output.push(`Colony: ${creep.memory.colony || "none"}`);
+			output.push(`Mission ID: ${creep.memory.scout_request_id || "none"}`);
+			output.push(`Patrol Mode: ${creep.memory.patrol_mode || "station"}`);
+			output.push(`Patrol State: ${creep.memory.scout_patrol_state || "none"}`);
+			output.push(`Dest Reached: ${creep.memory.scout_dest_reached || false}`);
+			output.push(`Rally Reached: ${creep.memory.scout_rally_reached || false}`);
+			output.push(`Transfer Recorded: ${creep.memory._scout_transfer_recorded || false}`);
+			output.push(`Restored: ${creep.memory._scout_restored || false}`);
+			
+			if (creep.memory.rally_pos) {
+				let rp = creep.memory.rally_pos;
+				output.push(`Rally: ${rp.shard || Game.shard.name}/${rp.roomName} (${rp.x},${rp.y})`);
+			}
+			if (creep.memory.dest_pos) {
+				let dp = creep.memory.dest_pos;
+				output.push(`Destination: ${dp.shard || Game.shard.name}/${dp.roomName} (${dp.x},${dp.y})`);
+			}
+			
+			let pathDest = _.get(creep.memory, ["path", "destination"]);
+			if (pathDest) {
+				output.push(`Path Destination: ${pathDest.roomName} (${pathDest.x},${pathDest.y})`);
+			}
+
+			console.log(output.join("<br>"));
+			return `<font color="#4ECDC4">[Scouts]</font> Trace complete for ${creepName}.`;
+		};
+
+		help_scouts.push("scouts.state(creepName)");
+		help_scouts.push(" - Show current state and memory for scout");
+		help_scouts.push(" - Compact version of trace() focused on state information");
+		scouts.state = function (creepName) {
+			if (!creepName) {
+				return `<font color="#FF944E">[Scouts]</font> Please provide a creep name.`;
+			}
+			let creep = Game.creeps[creepName];
+			if (!creep) {
+				return `<font color="#FF944E">[Scouts]</font> Creep ${creepName} not found.`;
+			}
+			if (creep.memory.role !== "scout") {
+				return `<font color="#FF944E">[Scouts]</font> ${creepName} is not a scout.`;
+			}
+
+			let state = {
+				position: `${creep.pos.x},${creep.pos.y}@${creep.room.name}`,
+				shard: Game.shard.name,
+				patrol_mode: creep.memory.patrol_mode || "station",
+				patrol_state: creep.memory.scout_patrol_state || "none",
+				dest_reached: creep.memory.scout_dest_reached || false,
+				rally_reached: creep.memory.scout_rally_reached || false,
+				transfer_recorded: creep.memory._scout_transfer_recorded || false,
+				restored: creep.memory._scout_restored || false
+			};
+
+			return `<font color="#4ECDC4">[Scouts]</font> ${creepName} state: ${JSON.stringify(state)}`;
+		};
+
+		help_scouts.push("scouts.movement(creepName)");
+		help_scouts.push(" - Show movement history for scout (last 10 ticks)");
+		help_scouts.push(" - Requires movement tracking to be enabled");
+		scouts.movement = function (creepName) {
+			if (!creepName) {
+				return `<font color="#FF944E">[Scouts]</font> Please provide a creep name.`;
+			}
+			let creep = Game.creeps[creepName];
+			if (!creep) {
+				return `<font color="#FF944E">[Scouts]</font> Creep ${creepName} not found.`;
+			}
+			if (creep.memory.role !== "scout") {
+				return `<font color="#FF944E">[Scouts]</font> ${creepName} is not a scout.`;
+			}
+
+			let history = _.get(creep.memory, "_scout_movement_history", []);
+			if (history.length === 0) {
+				return `<font color="#FF944E">[Scouts]</font> No movement history available for ${creepName}. Movement tracking may not be enabled.`;
+			}
+
+			let output = [];
+			output.push(`<font color="#4ECDC4">[Scouts]</font> <b>Movement history for ${creepName} (last ${Math.min(10, history.length)} ticks):</b>`);
+			let recent = history.slice(-10);
+			_.each(recent, (entry, idx) => {
+				output.push(`Tick ${entry.tick}: ${entry.action} at ${entry.pos.x},${entry.pos.y}@${entry.room}`);
+			});
+
+			console.log(output.join("<br>"));
+			return `<font color="#4ECDC4">[Scouts]</font> Movement history displayed for ${creepName}.`;
+		};
+
 
 	/* ***********************************************************
 	 *	SHARD COMMANDS (Multi-Shard Coordination)
@@ -2674,7 +3672,8 @@
 					case "pixels": menu = help_pixels; break;
 					case "profiler": menu = help_profiler; break;
 					case "resources": menu = help_resources; break;
-					case "shard": menu = help_shard; break;
+					case "scouts": menu = help_scouts; break;
+					case "shards": menu = help_shards; break;
 					case "visuals": menu = help_visuals; break;
 				}
 			}
