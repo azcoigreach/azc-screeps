@@ -429,80 +429,90 @@ empire.combat_trickle("W1N1", "W5N5", "standard_army");
 
 ---
 
-### empire.combat_wave(roomFrom, roomTarget, rallyPoint, armyType)
+### empire.combat(combatID, rmColony, rmTarget, listSpawnRooms, listRoute, tactic)
 
-**Purpose**: Attack with a coordinated wave (creeps rally first, then attack together).
+**Purpose**: Flexible combat system supporting multiple tactics (waves, trickle, occupy, dismantle, tower_drain, controller).
 
 **Parameters**:
-- `roomFrom` (string): Colony sending attackers
-- `roomTarget` (string): Room to attack
-- `rallyPoint` (string): Room to rally in
-- `armyType` (string): Army composition
+- `combatID` (string): Unique identifier for this combat operation
+- `rmColony` (string): Colony sending forces
+- `rmTarget` (string): Target room
+- `listSpawnRooms` (array|null): Specific rooms to spawn from (or null for default)
+- `listRoute` (array|null): Route to follow (or null for pathfinder)
+- `tactic` (object): Tactic configuration object (see examples below)
 
-**Example**:
+**Tactic Types**:
+
+**waves** - Coordinated wave attacks:
 ```javascript
-empire.combat_wave("W1N1", "W5N5", "W3N3", "standard_army");
+empire.combat("attack_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'waves',
+  spawn_repeat: true,  // Keep spawning waves
+  rally_pos: new RoomPosition(25, 25, "W3N3"),
+  target_creeps: true,
+  target_structures: true,
+  target_list: [],  // Specific IDs to target (optional)
+  to_occupy: false
+});
 ```
 
 ---
 
-### empire.combat_occupy(roomFrom, roomTarget, armyType)
-
-**Purpose**: Maintain an occupation force in a room.
-
-**Parameters**:
-- `roomFrom` (string): Colony sending occupiers
-- `roomTarget` (string): Room to occupy
-- `armyType` (string): Army composition
-
-**Example**:
+**occupy** - Maintain occupation force:
 ```javascript
-empire.combat_occupy("W1N1", "W5N5", "occupation_force");
+empire.combat("occupy_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'occupy',
+  target_creeps: false,
+  target_structures: false,
+  target_list: []  // Specific structures to defend against
+});
 ```
 
 ---
 
-### empire.combat_tower_drain(roomFrom, roomTarget)
-
-**Purpose**: Drain enemy towers by tanking and healing.
-
-**Parameters**:
-- `roomFrom` (string): Colony sending tanks/healers
-- `roomTarget` (string): Enemy room
-
-**Example**:
+**tower_drain** - Drain enemy towers:
 ```javascript
-empire.combat_tower_drain("W1N1", "W5N5");
+empire.combat("drain_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'tower_drain',
+  rally_pos: new RoomPosition(25, 25, "W5N5"),
+  drain_pos: new RoomPosition(30, 30, "W5N5")
+});
 ```
 
 ---
 
-### empire.combat_dismantle(roomFrom, roomTarget)
-
-**Purpose**: Send dismantlers to remove structures.
-
-**Parameters**:
-- `roomFrom` (string): Colony sending dismantlers
-- `roomTarget` (string): Room to dismantle
-
-**Example**:
+**dismantle** - Remove structures:
 ```javascript
-empire.combat_dismantle("W1N1", "W5N5");
+empire.combat("dismantle_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'dismantle',
+  target_list: []  // Specific structure IDs (or empty for all)
+});
 ```
 
 ---
 
-### empire.combat_controller(roomFrom, roomTarget)
-
-**Purpose**: Attack enemy controller to speed up downgrade.
-
-**Parameters**:
-- `roomFrom` (string): Colony sending attackers
-- `roomTarget` (string): Room to attack
-
-**Example**:
+**controller** - Attack enemy controller:
 ```javascript
-empire.combat_controller("W1N1", "W5N5");
+empire.combat("controller_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'controller',
+  to_occupy: false  // Set true to occupy after controller claimed
+});
+```
+
+**trickle** - Continuous spawning:
+```javascript
+empire.combat("trickle_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'trickle',
+  target_creeps: true,
+  target_structures: false,
+  target_list: [],
+  to_occupy: false
+});
+```
+
+**To cancel a combat operation**:
+```javascript
+delete Memory.sites.combat.combat_id;
 ```
 
 ---

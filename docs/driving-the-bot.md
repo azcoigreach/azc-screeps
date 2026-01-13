@@ -491,22 +491,36 @@ empire.combat_trickle("W1N1", "W5N5", "standard_army");
 ### Occupying a Room
 
 ```javascript
-empire.combat_occupy("W1N1", "W5N5", "occupation_force");
+empire.combat("occupy_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'occupy',
+  target_creeps: false,
+  target_structures: false,
+  target_list: []
+});
 ```
 
 Maintains a continuous presence in the target room.
+
+**To cancel**:
+```javascript
+delete Memory.sites.combat.occupy_w5n5;
+```
 
 ---
 
 ### Tower Drain Tactic
 
 ```javascript
-empire.combat_tower_drain("W1N1", "W5N5");
+empire.combat("drain_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'tower_drain',
+  rally_pos: new RoomPosition(25, 25, "W5N5"),
+  drain_pos: new RoomPosition(30, 30, "W5N5")
+});
 ```
 
 **What happens**:
-- Tanks and healers rally outside `W5N5`
-- Tanks enter, absorb tower fire, retreat
+- Tanks and healers rally at the rally_pos
+- Tanks enter, move to drain_pos, absorb tower fire
 - Healers restore them
 - Drains enemy towers' energy
 

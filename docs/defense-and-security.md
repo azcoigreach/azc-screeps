@@ -266,27 +266,50 @@ empire.combat_trickle("W1N1", "W5N5", "standard_army");
 
 **Wave Attack** (creeps rally, then attack together):
 ```javascript
-empire.combat_wave("W1N1", "W5N5", "W3N3", "standard_army");  // Rally at W3N3
+empire.combat("wave_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'waves',
+  spawn_repeat: true,
+  rally_pos: new RoomPosition(25, 25, "W3N3"),
+  target_creeps: true,
+  target_structures: true,
+  target_list: [],
+  to_occupy: false
+});
 ```
 
 **Occupy a Room** (maintain presence):
 ```javascript
-empire.combat_occupy("W1N1", "W5N5", "occupation_force");
+empire.combat("occupy_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'occupy',
+  target_creeps: false,
+  target_structures: false,
+  target_list: []
+});
 ```
 
 **Tower Drain** (drain enemy towers):
 ```javascript
-empire.combat_tower_drain("W1N1", "W5N5");
+empire.combat("drain_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'tower_drain',
+  rally_pos: new RoomPosition(25, 25, "W5N5"),
+  drain_pos: new RoomPosition(30, 30, "W5N5")
+});
 ```
 
 **Dismantle Structures**:
 ```javascript
-empire.combat_dismantle("W1N1", "W5N5");
+empire.combat("dismantle_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'dismantle',
+  target_list: []  // Specific IDs or empty for all
+});
 ```
 
 **Attack Controller** (speed up downgrade):
 ```javascript
-empire.combat_controller("W1N1", "W5N5");
+empire.combat("controller_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'controller',
+  to_occupy: false  // Set true to occupy after claiming
+});
 ```
 
 ---
@@ -562,9 +585,22 @@ log.resources();                            // Tower energy levels
 log.population();                           // Soldier counts
 
 // === COMBAT (MANUAL) ===
-empire.combat_trickle("W1N1", "W5N5", "army");    // Trickle attack
-empire.combat_occupy("W1N1", "W5N5", "army");     // Occupy room
-empire.combat_tower_drain("W1N1", "W5N5");        // Drain towers
+// Trickle attack
+empire.combat("trickle_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'trickle', target_creeps: true, target_structures: false
+});
+
+// Occupy room
+empire.combat("occupy_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'occupy', target_creeps: false, target_structures: false
+});
+
+// Drain towers
+empire.combat("drain_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'tower_drain',
+  rally_pos: new RoomPosition(25, 25, "W5N5"),
+  drain_pos: new RoomPosition(30, 30, "W5N5")
+});
 ```
 
 ---
