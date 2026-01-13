@@ -2670,7 +2670,7 @@
 					Memory["hive"]["spawn_requests"].push({
 						room: rmColony,
 						listRooms: listSpawnRooms,
-						priority: 21,
+						priority: 5,
 						level: _.get(popTarget, ["colonizer", "level"], colonyLevel),
 						scale: _.get(popTarget, ["colonizer", "scale"], false),
 						body: _.get(popTarget, ["colonizer", "body"], "reserver_at"),
