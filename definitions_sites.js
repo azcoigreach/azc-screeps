@@ -2601,14 +2601,31 @@
 				listRoute = _.get(Memory, ["sites", "colonization", rmTarget, "list_route"]);
 				const rmTargetBase = _.isString(rmTarget) && rmTarget.indexOf("/") >= 0 ? rmTarget.split("/")[1] : rmTarget;
 				
-				// Check if target room is already colonized with spawns - if so, clean up the mission
+				// Check local visibility first
 				const targetRoom = Game.rooms[rmTargetBase];
 				if (targetRoom && targetRoom.controller && targetRoom.controller.my) {
 					const spawns = targetRoom.find(FIND_MY_SPAWNS);
 					if (spawns.length > 0) {
-						// Room has spawns! Colonization complete, clean up mission
 						delete Memory["sites"]["colonization"][rmTarget];
 						console.log(`<font color="#4ECDC4">[Colonization]</font> ${rmTargetBase} colonization complete (${spawns.length} spawns), mission removed.`);
+						Stats_CPU.End(rmColony, `Colonization-${rmTarget}-init`);
+						return;
+					}
+				}
+
+				// Cross-shard completion check via ISM snapshots
+				if (rmTarget.indexOf("/") >= 0) {
+					const ismRooms = [
+						_.get(Memory, ["hive", "ism", "primary_snapshot", "rooms", rmTargetBase]),
+						_.get(Memory, ["hive", "ism", "follower_snapshot", "rooms", rmTargetBase]),
+						_.get(Memory, ["hive", "ism", "global", "rooms", rmTargetBase])
+					];
+					const remote = _.find(ismRooms, r => !!r);
+					const remoteOwned = _.get(remote, ["controller", "my"], false) || _.get(remote, "controller_my", false) || _.get(remote, "my", false);
+					const remoteSpawns = _.get(remote, "spawn_count", 0) || _.get(remote, ["spawns", "length"], 0);
+					if (remoteOwned && remoteSpawns > 0) {
+						delete Memory["sites"]["colonization"][rmTarget];
+						console.log(`<font color="#4ECDC4">[Colonization]</font> ${rmTarget} colonization complete via ISM (${remoteSpawns} spawns), mission removed.`);
 						Stats_CPU.End(rmColony, `Colonization-${rmTarget}-init`);
 						return;
 					}
@@ -2663,7 +2680,6 @@
 				const target = _.get(popTarget, ["colonizer", "amount"], 0);
 				const hasPending = !!pendingColonizer;
 				const shouldSpawn = actual < target && !pendingColonizer;
-				console.log(`<font color="#FF6B6B">[DEBUG]</font> Colonization runPopulation ${rmTarget}: actual=${actual}, target=${target}, pending=${hasPending}, should_spawn=${shouldSpawn}`);
 				
 				if (_.get(popActual, "colonizer", 0) < _.get(popTarget, ["colonizer", "amount"], 0) && !pendingColonizer) {
 					console.log(`<font color="#4ECDC4">[Colonization]</font> Creating spawn request for colonizer to ${rmTarget} from ${rmColony}`);
