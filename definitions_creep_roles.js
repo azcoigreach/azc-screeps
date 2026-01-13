@@ -2252,17 +2252,36 @@
 		let reqTargetBase = _.isString(reqTarget) && reqTarget.indexOf("/") >= 0 ? reqTarget.split("/")[1] : reqTarget;
 		
 		if ((reqTarget == creep.room.name || reqTargetBase == creep.room.name) && creep.room.controller.my) {
-			// Room already claimed! Close colonization mission and set up the new colony
-			let key = creep.memory.target_key || creep.room.name;
-			delete Memory["sites"]["colonization"][key];
-			_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "rooms"], [_.get(request, ["from"])]);
-			_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "list_route"], _.get(request, ["list_route"]));
-			_.set(Memory, ["rooms", creep.room.name, "layout"], _.get(request, "layout"));
-			_.set(Memory, ["rooms", creep.room.name, "focus_defense"], _.get(request, "focus_defense"));
-			_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
-			console.log(`<font color="#4ECDC4">[Colonization]</font> ${creep.name} - room already claimed, colonization mission complete!`);
-			creep.memory = {};
-			return;
+			// Room already claimed! Check if first spawn is built before completing mission
+			let spawns = creep.room.find(FIND_MY_SPAWNS);
+			
+			if (spawns.length > 0) {
+				// First spawn is complete! Close colonization mission
+				let key = creep.memory.target_key || creep.room.name;
+				delete Memory["sites"]["colonization"][key];
+				_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "rooms"], [_.get(request, ["from"])]);
+				_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "list_route"], _.get(request, ["list_route"]));
+				_.set(Memory, ["rooms", creep.room.name, "layout"], _.get(request, "layout"));
+				_.set(Memory, ["rooms", creep.room.name, "focus_defense"], _.get(request, "focus_defense"));
+				_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
+				console.log(`<font color="#4ECDC4">[Colonization]</font> ${creep.name} - first spawn complete, colonization mission complete!`);
+				creep.memory = {};
+				return;
+			} else {
+				// Room claimed but no spawn yet - ensure spawn assist and layout are set but keep mission active
+				if (!_.get(Memory, ["rooms", creep.room.name, "spawn_assist", "rooms"])) {
+					_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "rooms"], [_.get(request, ["from"])]);
+					_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "list_route"], _.get(request, ["list_route"]));
+					_.set(Memory, ["rooms", creep.room.name, "layout"], _.get(request, "layout"));
+					_.set(Memory, ["rooms", creep.room.name, "focus_defense"], _.get(request, "focus_defense"));
+					_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
+					console.log(`<font color="#4ECDC4">[Colonization]</font> ${creep.room.name} - room claimed, waiting for first spawn...`);
+				}
+				// Colonizer can help build the spawn while waiting
+				creep.memory.state = "working";
+				delete creep.memory.task;
+				return;
+			}
 		}
 
 		// Attempt to claim the controller
@@ -2273,16 +2292,16 @@
 		} else if (result == ERR_NO_BODYPART) {
 			return;		// Reservers and colonizers with no "claim" parts prevent null body spawn locking
 		} else if (result == OK) {
-			// Successfully claimed! Close the colonization mission
-			let key = creep.memory.target_key || creep.room.name;
-			delete Memory["sites"]["colonization"][key];
-			_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "rooms"], [_.get(request, ["from"])]);
-			_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "list_route"], _.get(request, ["list_route"]));
-			_.set(Memory, ["rooms", creep.room.name, "layout"], _.get(request, "layout"));
-			_.set(Memory, ["rooms", creep.room.name, "focus_defense"], _.get(request, "focus_defense"));
-			_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
-			console.log(`<font color="#4ECDC4">[Colonization]</font> ${creep.name} successfully claimed ${creep.room.name}!`);
-			creep.memory = {};
+			// Successfully claimed! Set up spawn assist but keep mission active until spawn is built
+			if (!_.get(Memory, ["rooms", creep.room.name, "spawn_assist", "rooms"])) {
+				_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "rooms"], [_.get(request, ["from"])]);
+				_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "list_route"], _.get(request, ["list_route"]));
+				_.set(Memory, ["rooms", creep.room.name, "layout"], _.get(request, "layout"));
+				_.set(Memory, ["rooms", creep.room.name, "focus_defense"], _.get(request, "focus_defense"));
+				_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
+			}
+			console.log(`<font color="#4ECDC4">[Colonization]</font> ${creep.name} successfully claimed ${creep.room.name}! Waiting for first spawn...`);
+			creep.memory.state = "working";
 			return;
 		} else {
 			console.log(`<font color=\"#F0FF00\">[Colonization]</font> ${creep.name} unable to colonize ${_.get(request, ["target"])}; error ${result}`);
