@@ -2600,6 +2600,20 @@
 				Stats_CPU.Start(rmColony, `Colonization-${rmTarget}-init`);
 				listRoute = _.get(Memory, ["sites", "colonization", rmTarget, "list_route"]);
 				const rmTargetBase = _.isString(rmTarget) && rmTarget.indexOf("/") >= 0 ? rmTarget.split("/")[1] : rmTarget;
+				
+				// Check if target room is already colonized with spawns - if so, clean up the mission
+				const targetRoom = Game.rooms[rmTargetBase];
+				if (targetRoom && targetRoom.controller && targetRoom.controller.my) {
+					const spawns = targetRoom.find(FIND_MY_SPAWNS);
+					if (spawns.length > 0) {
+						// Room has spawns! Colonization complete, clean up mission
+						delete Memory["sites"]["colonization"][rmTarget];
+						console.log(`<font color="#4ECDC4">[Colonization]</font> ${rmTargetBase} colonization complete (${spawns.length} spawns), mission removed.`);
+						Stats_CPU.End(rmColony, `Colonization-${rmTarget}-init`);
+						return;
+					}
+				}
+				
 				Stats_CPU.End(rmColony, `Colonization-${rmTarget}-init`);
 
 				Stats_CPU.Start(rmColony, `Colonization-${rmTarget}-listCreeps`);
@@ -2619,13 +2633,10 @@
 				});
 				Stats_CPU.End(rmColony, `Colonization-${rmTarget}-listCreeps`);
 
-				if (isPulse_Spawn()) {
-					Stats_CPU.Start(rmColony, `Colonization-${rmTarget}-runPopulation`);
-					this.runPopulation(rmColony, rmTarget, listCreeps, listRoute);
-					Stats_CPU.End(rmColony, `Colonization-${rmTarget}-runPopulation`);
-				}
-
-				Stats_CPU.Start(rmColony, `Colonization-${rmTarget}-runCreeps`);
+			// Run population management every tick to ensure colonizers spawn promptly
+			Stats_CPU.Start(rmColony, `Colonization-${rmTarget}-runPopulation`);
+			this.runPopulation(rmColony, rmTarget, listCreeps, listRoute);
+			Stats_CPU.End(rmColony, `Colonization-${rmTarget}-runPopulation`);
 				this.runCreeps(rmColony, rmTarget, listCreeps, listRoute);
 				Stats_CPU.End(rmColony, `Colonization-${rmTarget}-runCreeps`);
 			},
@@ -2648,7 +2659,14 @@
 					_.sum(popActual));
 
 				const pendingColonizer = _.find(_.get(Memory, ["hive", "spawn_requests"], []), r => r && r.role === "colonizer" && _.get(r, ["args", "target_key"]) === rmTarget);
+				const actual = _.get(popActual, "colonizer", 0);
+				const target = _.get(popTarget, ["colonizer", "amount"], 0);
+				const hasPending = !!pendingColonizer;
+				const shouldSpawn = actual < target && !pendingColonizer;
+				console.log(`<font color="#FF6B6B">[DEBUG]</font> Colonization runPopulation ${rmTarget}: actual=${actual}, target=${target}, pending=${hasPending}, should_spawn=${shouldSpawn}`);
+				
 				if (_.get(popActual, "colonizer", 0) < _.get(popTarget, ["colonizer", "amount"], 0) && !pendingColonizer) {
+					console.log(`<font color="#4ECDC4">[Colonization]</font> Creating spawn request for colonizer to ${rmTarget} from ${rmColony}`);
 					Memory["hive"]["spawn_requests"].push({
 						room: rmColony,
 						listRooms: listSpawnRooms,

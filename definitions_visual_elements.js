@@ -55,7 +55,7 @@
 			// Use cached data for shard visuals
 			if (Game.shard) {
 				if (_.get(Memory, ["hive", "visuals", "show_shard_health"], true) == true) {
-					this.Show_Shard_Health_Cached();
+					this.Show_Shard_Health();
 				}
 				if (_.get(Memory, ["hive", "visuals", "show_portal_indicators"], true) == true) {
 					this.Show_Portal_Indicators();
