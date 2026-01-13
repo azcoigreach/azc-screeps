@@ -333,13 +333,27 @@ delete Memory.sites.colonization["W3N3"];
 
 **Console Commands**:
 ```javascript
-empire.combat_trickle("W1N1", "W5N5", "standard_army");
-empire.combat_occupy("W1N1", "W5N5", "occupation_force");
+// Trickle attack (continuous spawning)
+empire.combat("trickle_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'trickle',
+  target_creeps: true,
+  target_structures: false,
+  target_list: [],
+  to_occupy: false
+});
+
+// Occupation force (maintain presence)
+empire.combat("occupy_w5n5", "W1N1", "W5N5", null, null, {
+  type: 'occupy',
+  target_creeps: false,
+  target_structures: false,
+  target_list: []
+});
 ```
 
 **Manual Edit** (to cancel combat):
 ```javascript
-delete Memory.sites.combat["operation_name"];
+delete Memory.sites.combat["trickle_w5n5"];
 ```
 
 **Use Case**: Manually cancel stuck or completed combat operations.
