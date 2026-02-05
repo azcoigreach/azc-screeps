@@ -166,7 +166,8 @@ global.ShardControl = {
 		let ackCount = 0;
 
 	if (directiveForFollower) {
-		let pending = _.get(directiveForFollower, ["handshake", "pending"], {});
+		// Read from 'pending_handshakes' to match primary's write path
+		let pending = _.get(directiveForFollower, "pending_handshakes", {});
 		
 		_.each(pending, (entry, creepName) => {
 				if (!entry)

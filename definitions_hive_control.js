@@ -1259,6 +1259,20 @@
 
 		Stats_CPU.Start("Hive", "processSpawnRequests");
 
+		// Merge global spawn requests into shard spawn queue (for cross-shard dispatched requests)
+		let globalRequests = _.get(Memory, ["hive", "spawn_requests"], []);
+		let shardRequests = _.get(Memory, ["shard", "spawn_requests"], []);
+		if (globalRequests.length > 0) {
+			_.each(globalRequests, req => {
+				if (req) {
+					shardRequests.push(req);
+				}
+			});
+			// Clear global queue after merging
+			Memory.hive.spawn_requests = [];
+			_.set(Memory, ["shard", "spawn_requests"], shardRequests);
+		}
+
 		// Cache spawn requests to avoid repeated memory lookups
 		let spawnRequests = _.get(Memory, ["shard", "spawn_requests"]);
 		if (!spawnRequests || spawnRequests.length == 0) {

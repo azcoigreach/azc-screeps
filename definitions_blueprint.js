@@ -7,15 +7,28 @@
 	Init: function () {
 		// Process special blueprint requests (from console) immediately, effectively pausing cycles/pulses by 1 tick.
 		if (_.get(Memory, ["hive", "pulses", "blueprint", "request"]) != null) {
-			let room = Game.rooms[_.get(Memory, ["hive", "pulses", "blueprint", "request"])];
+			let requestedRoom = _.get(Memory, ["hive", "pulses", "blueprint", "request"]);
+			let room = Game.rooms[requestedRoom];
 
+			// If room is not in our shard, don't process (avoid ERR_NO_PATH logs)
 			if (room == null) {
-				console.log(`<font color=\"#6065FF\">[Blueprint]</font> Blueprint() request for ${_.get(Memory, ["hive", "pulses", "blueprint", "request"])} failed; unable to find in Game.rooms.`);
+				// Check if this is a room on another shard - if so, don't log an error, just ignore
+				let isRemoteRoom = false;
+				if (requestedRoom && requestedRoom.includes("/")) {
+					isRemoteRoom = true; // Cross-shard room reference like "shard1/E50S20"
+				}
+				
+				if (!isRemoteRoom) {
+					console.log(`<font color="#6065FF">[Blueprint]</font> Blueprint() request for ${requestedRoom} failed; unable to find in Game.rooms.`);
+				}
 			} else {
-				Stats_CPU.Start("Hive", "Blueprint-Run");
-				console.log(`<font color=\"#6065FF\">[Blueprint]</font> Processing requested Blueprint() for ${room.name}`);
-				this.Run(room);
-				Stats_CPU.End("Hive", "Blueprint-Run");
+				// Only process if the room is owned by us
+				if (room.controller && room.controller.my) {
+					Stats_CPU.Start("Hive", "Blueprint-Run");
+					console.log(`<font color="#6065FF">[Blueprint]</font> Processing requested Blueprint() for ${room.name}`);
+					this.Run(room);
+					Stats_CPU.End("Hive", "Blueprint-Run");
+				}
 			}
 
 			delete Memory["hive"]["pulses"]["blueprint"]["request"];
