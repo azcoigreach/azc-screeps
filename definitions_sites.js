@@ -314,12 +314,15 @@
 			});
 		},
 
-				_.each(scouts, creep => {
-					if (!existing[creep.name])
-						Creep_Roles.Scout(creep);
-				});
-			},
+		runScouts: function (rmColony, listColonyCreeps) {
+			let existing = {};
+			_.each(listColonyCreeps, creep => existing[creep.name] = true);
 
+			let scouts = _.filter(Game.creeps, creep => {
+				return _.get(creep, ["memory", "role"]) == "scout"
+					&& (_.get(creep, ["memory", "colony"]) == rmColony
+						|| _.get(creep, ["memory", "room"]) == rmColony);
+			});
 
 			runTowers: function (rmColony) {
 				let is_safe = (_.get(Memory, ["rooms", rmColony, "defense", "hostiles"], new Array()).length == 0);
