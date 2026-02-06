@@ -298,13 +298,13 @@
 					switch (_.get(creep, ["memory", "role"])) {
 						case "scout": Creep_Roles.Scout(creep); break;
 					case "miner": Creep_Roles.Mining(creep, _.get(Memory, ["rooms", rmColony, "defense", "is_safe"], true)); break;
-							break;
+					case "worker": Creep_Roles.Worker(creep); break;
+					case "upgrader": Creep_Roles.Upgrader(creep, _.get(Memory, ["rooms", rmColony, "defense", "is_safe"], true)); break;
+					case "healer": Creep_Roles.Healer(creep, true); break;
+					case "portal_scout": Creep_Roles.Portal_Scout(creep); break;
 
-						case "ranger": case "archer":
-							Creep_Roles.Archer(creep, false, true);
-							break;
-					}
-				});
+					case "soldier": case "paladin":
+						Creep_Roles.Soldier(creep, false, true);
 			},
 
 			runScouts: function (rmColony, listColonyCreeps) {
