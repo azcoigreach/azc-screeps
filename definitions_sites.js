@@ -305,17 +305,14 @@
 
 					case "soldier": case "paladin":
 						Creep_Roles.Soldier(creep, false, true);
-			},
+						break;
 
-			runScouts: function (rmColony, listColonyCreeps) {
-				let existing = {};
-				_.each(listColonyCreeps, creep => existing[creep.name] = true);
-
-				let scouts = _.filter(Game.creeps, creep => {
-					return _.get(creep, ["memory", "role"]) == "scout"
-						&& (_.get(creep, ["memory", "colony"]) == rmColony
-							|| _.get(creep, ["memory", "room"]) == rmColony);
-				});
+					case "ranger": case "archer":
+						Creep_Roles.Archer(creep, false, true);
+						break;
+				}
+			});
+		},
 
 				_.each(scouts, creep => {
 					if (!existing[creep.name])
