@@ -1693,13 +1693,9 @@
 				// Final fallback: wait if no tasks available
 				creep.memory.task = creep.memory.task || creep.getTask_Wait(5);
 
-			} else if (creep.memory.role == "miner" || creep.memory.role == "carrier") {
-					creep.memory.task = creep.memory.task || creep.getTask_Pickup("energy");
-					
-					// PRIORITY 3: Withdraw from link (efficient transfer point)
-					creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Link(15);
-
-					// PRIORITY 4: Withdraw from containers/storage (only if can't mine)
+			} else if (creep.memory.role == "miner") {
+					// Miners are bootstrap creeps - can restart a room if other creeps die
+					// PRIORITY 1: Withdraw from existing containers/storage with energy
 					let energy_level = _.get(Memory, ["rooms", creep.room.name, "survey", "energy_level"]);
 					if (energy_level == CRITICAL || energy_level == LOW
 						|| _.get(Memory, ["sites", "mining", creep.memory.room, "store_percent"], 0) > 0.25) {
@@ -1710,10 +1706,42 @@
 						creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Container("energy", true);
 					}
 
+					// PRIORITY 2: Withdraw from link (efficient transfer point)
+					creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Link(15);
+
+					// PRIORITY 3: Mine from sources (bootstrap fallback - restart mechanism)
+					creep.memory.task = creep.memory.task || creep.getTask_Mine();
+
+					// PRIORITY 4: Pickup dropped energy from ground
+					creep.memory.task = creep.memory.task || creep.getTask_Pickup("energy");
+
 					// PRIORITY 5: Pick up minerals if available
 					creep.memory.task = creep.memory.task || creep.getTask_Pickup("mineral");
 					
 					// PRIORITY 6: Wait as last resort
+					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+					
+			} else if (creep.memory.role == "carrier") {
+					creep.memory.task = creep.memory.task || creep.getTask_Pickup("energy");
+					
+					// Withdraw from link (efficient transfer point)
+					creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Link(15);
+
+					// Withdraw from containers/storage (only if can't mine)
+					let energy_level = _.get(Memory, ["rooms", creep.room.name, "survey", "energy_level"]);
+					if (energy_level == CRITICAL || energy_level == LOW
+						|| _.get(Memory, ["sites", "mining", creep.memory.room, "store_percent"], 0) > 0.25) {
+						creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Container("energy", true);
+						creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage("energy", true);
+					} else {
+						creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage("energy", true);
+						creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Container("energy", true);
+					}
+
+					// Pick up minerals if available
+					creep.memory.task = creep.memory.task || creep.getTask_Pickup("mineral");
+					
+					// Wait as last resort
 					creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
 				}
 
