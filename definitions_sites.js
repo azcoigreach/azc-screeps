@@ -324,8 +324,15 @@
 						|| _.get(creep, ["memory", "room"]) == rmColony);
 			});
 
-			runTowers: function (rmColony) {
-				let is_safe = (_.get(Memory, ["rooms", rmColony, "defense", "hostiles"], new Array()).length == 0);
+			_.each(scouts, creep => {
+				if (!existing[creep.name])
+					Creep_Roles.Scout(creep);
+			});
+		},
+
+
+		runTowers: function (rmColony) {
+			let is_safe = (_.get(Memory, ["rooms", rmColony, "defense", "hostiles"], new Array()).length == 0);
 
 				if (!is_safe) {
 					_.set(Memory, ["rooms", rmColony, "defense", "targets", "heal"], null);
