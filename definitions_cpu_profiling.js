@@ -11,18 +11,18 @@
 			_.set(Memory, ["hive", "profiler", "cycles_total"], (cycles == null) ? 1 : cycles);
 			_.set(Memory, ["hive", "profiler", "status"], "on");
 			_.set(Memory, ["hive", "profiler", "pulses"], new Object());
-			return "<font color=\"#D3FFA3\">[CPU]</font> Profiler started"
+			return "[CPU] Profiler started"
 		};
 
 		profiler.stop = function () {
 			_.set(Memory, ["hive", "profiler", "cycles"], 0);
-			return "<font color=\"#D3FFA3\">[CPU]</font> Profiler stopped"
+			return "[CPU] Profiler stopped"
 		};
 
 		// Enhanced profiling with optimization analysis
 		profiler.analyze = function () {
 			let current = _.get(Memory, ["hive", "profiler", "current"]);
-			if (!current) return "<font color=\"#FF6B6B\">[CPU]</font> No profiling data available. Run profiler.run() first.";
+			if (!current) return "[CPU] No profiling data available. Run profiler.run() first.";
 			
 			let analysis = {
 				hotspots: [],
@@ -77,16 +77,16 @@
 			analysis.hotspots.sort((a, b) => b.avgCPU - a.avgCPU);
 			
 			// Console output
-			console.log(`<font color=\"#D3FFA3\">[CPU Analysis]</font> <b>Performance Analysis:</b>`);
-			console.log(`<font color=\"#D3FFA3\">[CPU Analysis]</font> Total CPU: ${analysis.totalCPU.toFixed(2)}`);
+			console.log(`[CPU Analysis] Performance Analysis:`);
+			console.log(`[CPU Analysis] Total CPU: ${analysis.totalCPU.toFixed(2)}`);
 			
 			if (analysis.hotspots.length > 0) {
-				console.log(`<font color=\"#FF6B6B\">[CPU Analysis]</font> <b>CPU Hotspots Found:</b>`);
+				console.log(`[CPU Analysis] CPU Hotspots Found:`);
 				_.each(analysis.hotspots.slice(0, 5), hotspot => {
 					console.log(`  ${hotspot.room}.${hotspot.function}: ${hotspot.avgCPU.toFixed(2)} avg CPU`);
 				});
 				
-				console.log(`<font color=\"#FFA500\">[CPU Analysis]</font> <b>Optimization Recommendations:</b>`);
+				console.log(`[CPU Analysis] Optimization Recommendations:`);
 				_.each(analysis.hotspots.slice(0, 3), hotspot => {
 					if (hotspot.avgCPU > 1.0) {
 						console.log(`  ⚠️  ${hotspot.room}.${hotspot.function}: Consider caching or reducing frequency`);
@@ -95,16 +95,16 @@
 					}
 				});
 			} else {
-				console.log(`<font color=\"#47FF3E\">[CPU Analysis]</font> <b>✅ No major CPU hotspots detected!</b>`);
+				console.log(`[CPU Analysis] ✅ No major CPU hotspots detected!`);
 			}
 			
 			// Room breakdown
-			console.log(`<font color=\"#D3FFA3\">[CPU Analysis]</font> <b>Room CPU Breakdown:</b>`);
+			console.log(`[CPU Analysis] Room CPU Breakdown:`);
 			_.each(analysis.roomBreakdown, (data, room) => {
 				console.log(`  ${room}: ${data.totalCPU.toFixed(2)} CPU`);
 			});
 			
-			return `<font color=\"#D3FFA3\">[CPU Analysis]</font> Analysis complete.`;
+			return `[CPU Analysis] Analysis complete.`;
 		};
 
 		if (_.get(Memory, ["hive", "profiler"]) == null)
@@ -161,7 +161,7 @@
 		if (_.get(Memory, ["hive", "profiler", "cycles"]) <= 0) {
 			let total_cycles = _.get(Memory, ["hive", "profiler", "cycles_total"]);
 
-			console.log(`<font color=\"#D3FFA3">Pulses during profiling: \n`
+			console.log(`Pulses during profiling: \n`
 				+ `Short:\t ${_.get(Memory, ["hive", "profiler", "pulses", "short"], 0)} \n`
 				+ `Mid:\t ${_.get(Memory, ["hive", "profiler", "pulses", "mid"], 0)} \n`
 				+ `Long:\t ${_.get(Memory, ["hive", "profiler", "pulses", "long"], 0)} \n`
@@ -177,7 +177,8 @@
 					let cycles = Object.keys(_.get(Memory, ["hive", "profiler", "current", r, n])).length;
 					_.forEach(_.get(Memory, ["hive", "profiler", "current", r, n]), c => { used += _.get(c, "used", 0); });
 					used = ((used > 0 == true) ? used : 0);
-					output += `<tr><td>(${parseFloat(used).toFixed(2)} / ${cycles})</td><td>${parseFloat(used / cycles).toFixed(2)}</td><td>${n}</td></tr>`;
+					output += `(${parseFloat(used).toFixed(2)} / ${cycles})	${parseFloat(used / cycles).toFixed(2)}	${n}	
+`;
 
 					room_used += used;
 					if (typeof (room_cycles) != "number")
@@ -185,17 +186,18 @@
 					room_cycles = Math.max(room_cycles, cycles);
 				}
 
-				console.log(`<font color=\"#D3FFA3">CPU report for ${r} \n`
+				console.log(`CPU report for ${r} \n`
 					+ `Room Total: ${parseFloat(room_used).toFixed(2)} : `
-					+ `Room Mean: ${parseFloat(room_used / total_cycles).toFixed(2)}</font> `
-					+ `<table><tr><th>Total / Cycles\t  </th><th>Mean\t  </th><th>Function</th></tr>`
-					+ `${output}</table>`);
+					+ `Room Mean: ${parseFloat(room_used / total_cycles).toFixed(2)} `
+					+ `Total / Cycles\t  	Mean\t  	Function	
+`
+					+ `${output}`);
 			}
 
 			_.set(Memory, ["hive", "profiler", "status"], "off");
 			_.set(Memory, ["hive", "profiler", "current"], new Object());	// Wipe for the next use
 		} else if (_.get(Memory, ["hive", "profiler", "cycles"]) % 5 == 0) {
-			console.log(`<font color=\"#D3FFA3\">[CPU]</font> Profiler running, ${_.get(Memory, ["hive", "profiler", "cycles"])} ticks remaining.`);
+			console.log(`[CPU] Profiler running, ${_.get(Memory, ["hive", "profiler", "cycles"])} ticks remaining.`);
 		}
 	}
 };

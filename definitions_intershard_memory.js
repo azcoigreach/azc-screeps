@@ -103,11 +103,11 @@ global.ISM = {
 			_.set(Memory, ["shard", "ism_size"], ismSize);
 			
 			if (ismSize > 90000) {
-				console.log(`<font color="#FF0000">[ISM]</font> WARNING: ISM size ${ismSize} bytes approaching 100KB limit!`);
+				console.log(`[ISM] WARNING: ISM size ${ismSize} bytes approaching 100KB limit!`);
 			}
 			
 		} catch (err) {
-			console.log(`<font color="#FF0000">[ISM]</font> Error publishing status: ${err.message}`);
+			console.log(`[ISM] Error publishing status: ${err.message}`);
 		}
 	},
 
@@ -128,7 +128,7 @@ global.ISM = {
 			}
 			return JSON.parse(data);
 		} catch (err) {
-			console.log(`<font color="#FF0000">[ISM]</font> Error reading shard ${shardName}: ${err.message}`);
+			console.log(`[ISM] Error reading shard ${shardName}: ${err.message}`);
 			return null;
 		}
 	},
@@ -152,7 +152,7 @@ global.ISM = {
 				statuses[currentShard] = JSON.parse(localData);
 			}
 		} catch (err) {
-			console.log(`<font color="#FF0000">[ISM]</font> Error reading local ISM: ${err.message}`);
+			console.log(`[ISM] Error reading local ISM: ${err.message}`);
 		}
 
 		// Try to read from other known shards
@@ -191,41 +191,41 @@ global.ISM = {
 	 */
 	debug: function() {
 		if (!this.isAvailable()) {
-			console.log("<font color='#FF0000'>[ISM]</font> InterShardMemory not available");
+			console.log("[ISM] InterShardMemory not available");
 			return;
 		}
 
 		try {
 			let localData = InterShardMemory.getLocal();
 			let size = localData ? localData.length : 0;
-			console.log(`<font color='#00FFFF'>[ISM]</font> Local ISM Size: ${size} / 102400 bytes (${(size/1024).toFixed(2)} KB)`);
+			console.log(`[ISM] Local ISM Size: ${size} / 102400 bytes (${(size/1024).toFixed(2)} KB)`);
 			
 			if (localData && localData !== "") {
 				let parsed = JSON.parse(localData);
-				console.log(`<font color='#00FFFF'>[ISM]</font> Shard: ${parsed.shard_name}, Tick: ${parsed.tick}`);
-				console.log(`<font color='#00FFFF'>[ISM]</font> Colonies: ${Object.keys(parsed.colonies || {}).length}`);
-				console.log(`<font color='#00FFFF'>[ISM]</font> Energy: ${(_.get(parsed, ["resources", "energy"], 0)).toLocaleString()}`);
-				console.log(`<font color='#00FFFF'>[ISM]</font> Operations: ${(_.get(parsed, ["operations", "colonizations", "length"], 0))} colonizations, ${(_.get(parsed, ["operations", "creep_transfers", "length"], 0))} transfers`);
+				console.log(`[ISM] Shard: ${parsed.shard_name}, Tick: ${parsed.tick}`);
+				console.log(`[ISM] Colonies: ${Object.keys(parsed.colonies || {}).length}`);
+				console.log(`[ISM] Energy: ${(_.get(parsed, ["resources", "energy"], 0)).toLocaleString()}`);
+				console.log(`[ISM] Operations: ${(_.get(parsed, ["operations", "colonizations", "length"], 0))} colonizations, ${(_.get(parsed, ["operations", "creep_transfers", "length"], 0))} transfers`);
 			}
 			
 			// Try to read other shards
 			let knownShards = ["shard0", "shard1", "shard2", "shard3"];
 			let currentShard = _.get(Game, ["shard", "name"], "sim");
 			
-			console.log(`<font color='#00FFFF'>[ISM]</font> --- Other Shards ---`);
+			console.log(`[ISM] --- Other Shards ---`);
 			_.each(knownShards, shardName => {
 				if (shardName !== currentShard) {
 					let status = this.getShardStatus(shardName);
 					if (status) {
-						console.log(`<font color='#00FFFF'>[ISM]</font> ${shardName}: ${Object.keys(status.colonies || {}).length} colonies, ${(_.get(status, ["resources", "energy"], 0)).toLocaleString()} energy`);
+						console.log(`[ISM] ${shardName}: ${Object.keys(status.colonies || {}).length} colonies, ${(_.get(status, ["resources", "energy"], 0)).toLocaleString()} energy`);
 					} else {
-						console.log(`<font color='#00FFFF'>[ISM]</font> ${shardName}: No data`);
+						console.log(`[ISM] ${shardName}: No data`);
 					}
 				}
 			});
 			
 		} catch (err) {
-			console.log(`<font color="#FF0000">[ISM]</font> Error in debug: ${err.message}`);
+			console.log(`[ISM] Error in debug: ${err.message}`);
 		}
 	}
 };

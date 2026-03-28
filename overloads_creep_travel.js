@@ -575,7 +575,7 @@ Creep.prototype.travelToShard = function(targetShard, targetRoom) {
 		// Transfer already registered, continue to portal
 		let route = Portals.getPortalRoute(this.room.name, targetShard, targetRoom);
 		if (!route) {
-			console.log(`<font color="#FF0000">[Creep]</font> ${this.name}: No portal route to ${targetShard}`);
+			console.log(`[Creep] ${this.name}: No portal route to ${targetShard}`);
 			return ERR_NO_PATH;
 		}
 
@@ -586,7 +586,7 @@ Creep.prototype.travelToShard = function(targetShard, targetRoom) {
 	let route = Portals.getPortalRoute(this.room.name, targetShard, targetRoom);
 	
 	if (!route) {
-		console.log(`<font color="#FF0000">[Creep]</font> ${this.name}: No portal route found to ${targetShard}`);
+		console.log(`[Creep] ${this.name}: No portal route found to ${targetShard}`);
 		return ERR_NO_PATH;
 	}
 
@@ -631,7 +631,7 @@ Creep.prototype.travelToPortal = function(route) {
 				// Move into portal
 				let result = this.moveTo(portalStructure);
 				if (result === OK) {
-					console.log(`<font color="#00FFFF">[Creep]</font> ${this.name} entering portal to ${route.destShard}`);
+					console.log(`[Creep] ${this.name} entering portal to ${route.destShard}`);
 				}
 				return result;
 			} else {
@@ -640,7 +640,7 @@ Creep.prototype.travelToPortal = function(route) {
 			}
 		} else {
 			// Portal not found - may have decayed
-			console.log(`<font color="#FF0000">[Creep]</font> ${this.name}: Portal at ${portal.pos.roomName} not found!`);
+			console.log(`[Creep] ${this.name}: Portal at ${portal.pos.roomName} not found!`);
 			return ERR_NO_PATH;
 		}
 	} else {
@@ -675,7 +675,7 @@ Creep.prototype.cancelShardTransfer = function() {
 	let canceled = beforeLength > Memory.shard.operations.creep_transfers.length;
 	
 	if (canceled) {
-		console.log(`<font color="#FF6600">[Creep]</font> ${this.name}: Canceled shard transfer`);
+		console.log(`[Creep] ${this.name}: Canceled shard transfer`);
 	}
 	
 	return canceled;

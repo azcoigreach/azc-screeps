@@ -117,7 +117,7 @@
 				for (let i = 0; i < structures.length; i++) {
 					if (structures[i].pos.findInRange(threats, 3).length > 0) {
 						if (room.controller.activateSafeMode() == OK)
-							console.log(`<font color=\"#FF0000\">[Invasion]</font> Safe mode activated in ${rmColony}; enemy detected at key base structure!`);
+							console.log(`[Invasion] Safe mode activated in ${rmColony}; enemy detected at key base structure!`);
 						return;
 					}
 				}
@@ -126,7 +126,7 @@
 					for (let i = 0; i < listCreeps.length; i++) {
 						if (listCreeps[i].pos.findInRange(threats, 3).length > 0) {
 							if (room.controller.activateSafeMode() == OK)
-								console.log(`<font color=\"#FF0000\">[Invasion]</font> Safe mode activated in ${rmColony}; no structures; enemy detected at creeps!`);
+								console.log(`[Invasion] Safe mode activated in ${rmColony}; no structures; enemy detected at creeps!`);
 							return;
 						}
 					}
@@ -392,7 +392,7 @@
 					//Ensure we have a spawn, otherwise return 25, 25
 					if(!originX || !originY)
 					{
-						console.log(`<font color=\"#FF0000\">[Invasion]</font> Could not detect any spawns in room ${rmColony}`);
+						console.log(`[Invasion] Could not detect any spawns in room ${rmColony}`);
 						originX = 25;
 						originY = 25;
 					}
@@ -534,7 +534,7 @@
 					});
 
 					Memory["rooms"][rmColony]["links"] = link_defs;
-					console.log(`<font color=\"#D3FFA3\">[Console]</font> Links defined for ${rmColony}.`);
+					console.log(`[Console] Links defined for ${rmColony}.`);
 				}
 
 			},
@@ -1047,7 +1047,7 @@
 					if (source.pos.findInRange(containers, 1).length < 1) {
 						let adj = source.pos.getBuildableTile_Adjacent();
 						if (adj != null && adj.createConstructionSite("container") == OK)
-							console.log(`<font color=\"#6065FF\">[Mining]</font> ${room.name} placing container at (${adj.x}, ${adj.y})`);
+							console.log(`[Mining] ${room.name} placing container at (${adj.x}, ${adj.y})`);
 					}
 				});
 			}
@@ -1191,7 +1191,7 @@
 					return s.structureType == "lab"
 						&& _.filter(labDefinitions, def => { return _.get(def, "action") == "boost" && _.get(def, "lab") == s.id; }).length == 0
 				}).length < 3) {
-					console.log(`<font color=\"#A17BFF\">[Labs]</font> Unable to assign a reaction to ${rmColony}- not enough labs available for reactions (labs boosting?).`);
+					console.log(`[Labs] Unable to assign a reaction to ${rmColony}- not enough labs available for reactions (labs boosting?).`);
 					return;
 				}
 
@@ -1200,7 +1200,7 @@
 						let amount = 0, r1_amount = 0, r2_amount = 0;
 						let reagents = getReagents(_.get(t, "mineral"));
 						if (reagents == null || reagents.length < 2) {
-							console.log(`<font color="#A17BFF">[Labs]</font> Skipping reaction target ${_.get(t, "mineral")} - no reagent mapping found.`);
+							console.log(`[Labs] Skipping reaction target ${_.get(t, "mineral")} - no reagent mapping found.`);
 							return false;
 						}
 						_.each(_.filter(Game.rooms,
@@ -1218,10 +1218,10 @@
 
 				if (target != null) {
 					_.set(Memory, ["resources", "labs", "reactions", rmColony], { mineral: target.mineral, amount: target.amount });
-					console.log(`<font color=\"#A17BFF\">[Labs]</font> Assigning ${rmColony} to create ${target.mineral}.`);
+					console.log(`[Labs] Assigning ${rmColony} to create ${target.mineral}.`);
 				} else {
 					_.set(Memory, ["resources", "labs", "reactions", rmColony], { mineral: null, amount: null });
-					console.log(`<font color=\"#A17BFF\">[Labs]</font> No reaction to assign to ${rmColony}, idling.`);
+					console.log(`[Labs] No reaction to assign to ${rmColony}, idling.`);
 				}
 
 			},
@@ -1305,7 +1305,7 @@
 
 				labDefinitions.push({ action: "reaction", supply1: supply1, supply2: supply2, reactors: reactors });
 				_.set(Memory, ["rooms", rmColony, "labs", "definitions"], labDefinitions);
-				console.log(`<font color=\"#A17BFF\">[Labs]</font> Labs defined for ${rmColony}.`);
+				console.log(`[Labs] Labs defined for ${rmColony}.`);
 			},
 
 			runLabs: function (rmColony) {
@@ -1375,7 +1375,7 @@
 								if (_.get(Memory, ["resources", "labs", "targets", mineral, "is_reagent"]))
 									delete Memory["resources"]["labs"]["targets"][mineral];
 								delete Memory["resources"]["labs"]["reactions"][rmColony];
-								console.log(`<font color=\"#A17BFF\">[Labs]</font> ${rmColony} completed target for ${mineral}, re-assigning lab.`);
+								console.log(`[Labs] ${rmColony} completed target for ${mineral}, re-assigning lab.`);
 								delete Memory["hive"]["pulses"]["lab"];
 								return;
 							}
@@ -1471,7 +1471,7 @@
 
 							lab = Game.getObjectById(listing["supply1"]);
 							if (lab == null) {
-								console.log(`<font color=\"#FF0000\">[Error]</font> Sites.Industry: Game.getObjectById(${listing["supply1"]}) is null.`);
+								console.log(`[Error] Sites.Industry: Game.getObjectById(${listing["supply1"]}) is null.`);
 								return;
 							}
 							else if (lab.mineralType != null && lab.mineralType != supply1_mineral) {
@@ -1487,7 +1487,7 @@
 
 							lab = Game.getObjectById(listing["supply2"]);
 							if (lab == null) {
-								console.log(`<font color=\"#FF0000\">[Error]</font> Sites.Industry: Game.getObjectById(${listing["supply2"]}) is null.`);
+								console.log(`[Error] Sites.Industry: Game.getObjectById(${listing["supply2"]}) is null.`);
 								return;
 							}
 							else if (lab.mineralType != null && lab.mineralType != supply2_mineral) {
@@ -1504,7 +1504,7 @@
 							_.forEach(listing["reactors"], r => {
 								lab = Game.getObjectById(r);
 								if (lab == null) {
-									console.log(`<font color=\"#FF0000\">[Error]</font> Sites.Industry: Game.getObjectById(${r}) is null.`);
+									console.log(`[Error] Sites.Industry: Game.getObjectById(${r}) is null.`);
 									return;
 								}
 								else if (lab.mineralType != null && lab.mineralType != mineral) {
@@ -1559,7 +1559,7 @@
 						if (amount > 0) {
 							// Prevent spamming "new energy order creted" if it's just modifying the amount on an existing order...
 							if (_.get(Memory, ["resources", "terminal_orders", `${rmColony}-energy_critical`]) == null)
-								console.log(`<font color=\"#DC00FF\">[Terminals]</font> Creating critical energy order for ${rmColony} for ${amount} energy.`);
+								console.log(`[Terminals] Creating critical energy order for ${rmColony} for ${amount} energy.`);
 							_.set(Memory, ["resources", "terminal_orders", `${rmColony}-energy_critical`],
 								{ room: rmColony, resource: "energy", amount: amount, automated: true, priority: 1 });
 
@@ -1627,14 +1627,14 @@
 								
 								// Check if this transaction is profitable (we gain more energy than we spend)
 								if (netEnergyGained <= 0) {
-									console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Transaction not profitable: buying ${amountToBuy} energy costs ${energyCost} energy (net gain: ${netEnergyGained}). Skipping.`);
+									console.log(`[Market Emergency] Transaction not profitable: buying ${amountToBuy} energy costs ${energyCost} energy (net gain: ${netEnergyGained}). Skipping.`);
 									return;
 								}
 								
 								// Check if the energy gain is significant enough to make a difference
 								let minSignificantGain = _.get(Memory, ["resources", "market_min_energy_gain"], 1000); // Minimum 1000 net energy gain
 								if (netEnergyGained < minSignificantGain) {
-									console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Energy gain too small: ${netEnergyGained} net energy (minimum: ${minSignificantGain}). Skipping.`);
+									console.log(`[Market Emergency] Energy gain too small: ${netEnergyGained} net energy (minimum: ${minSignificantGain}). Skipping.`);
 									return;
 								}
 								
@@ -1669,7 +1669,7 @@
 										terminal_fuel: true, // Mark as terminal fuel order
 										emergency: true // Mark as emergency to get special handling
 									});
-									console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Terminal in ${rmColony} needs ${energyNeeded} energy for transaction. Creating high-priority energy order.`);
+									console.log(`[Market Emergency] Terminal in ${rmColony} needs ${energyNeeded} energy for transaction. Creating high-priority energy order.`);
 									return; // Wait for terminal to get energy first
 								}
 								
@@ -1686,15 +1686,15 @@
 									net_gain: netEnergyGained
 								});
 
-								console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Creating market buy order: ${amountToBuy} energy at ${bestOrder.price} credits (cost: ${energyCost} energy, net gain: ${netEnergyGained}) to ${bestReceivingRoom} (terminal energy: ${bestRoomEnergy}).`);
+								console.log(`[Market Emergency] Creating market buy order: ${amountToBuy} energy at ${bestOrder.price} credits (cost: ${energyCost} energy, net gain: ${netEnergyGained}) to ${bestReceivingRoom} (terminal energy: ${bestRoomEnergy}).`);
 							} else {
-								console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Energy below threshold but insufficient credits. Need ${totalCost} credits, have ${availableCredits}.`);
+								console.log(`[Market Emergency] Energy below threshold but insufficient credits. Need ${totalCost} credits, have ${availableCredits}.`);
 							}
 						} else {
-							console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Energy below threshold but all available orders are too expensive. Average price: ${avgPrice.toFixed(2)}, max acceptable: ${maxPrice.toFixed(2)}.`);
+							console.log(`[Market Emergency] Energy below threshold but all available orders are too expensive. Average price: ${avgPrice.toFixed(2)}, max acceptable: ${maxPrice.toFixed(2)}.`);
 						}
 					} else {
-						console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Energy below threshold but no energy sell orders available on market.`);
+						console.log(`[Market Emergency] Energy below threshold but no energy sell orders available on market.`);
 					}
 				}
 			},
@@ -1718,7 +1718,7 @@
 
 					if (_.get(order, "active", true) == false) {
 						if (order.emergency) {
-							console.log(`<font color=\"#FFA500\">[Debug]</font> Emergency order ${order.name} skipped - inactive`);
+							console.log(`[Debug] Emergency order ${order.name} skipped - inactive`);
 						}
 						continue;
 					}
@@ -1777,13 +1777,13 @@
 								order["room"] = replacement.roomName;
 								order["resource"] = replacement.resourceType;
 
-								console.log(`<font color=\"#00F0FF\">[Market]</font> Replacement market order found for ${o}!`);
+								console.log(`[Market] Replacement market order found for ${o}!`);
 								return true;
 							} else {
-								console.log(`<font color=\"#00F0FF\">[Market]</font> No replacement market order found for ${o}; order deleted!`);
+								console.log(`[Market] No replacement market order found for ${o}; order deleted!`);
 
 								if (order.emergency) {
-									console.log(`<font color=\"#FFA500\">[Debug]</font> Emergency order ${o} deleted - no replacement found`);
+									console.log(`[Debug] Emergency order ${o} deleted - no replacement found`);
 								}
 								delete Memory["resources"]["terminal_orders"][o];
 								return false;
@@ -1832,7 +1832,7 @@
 								: Game.market.deal(order["market_id"], amount, rmColony);
 
 							if (result == OK) {
-								console.log(`<font color=\"#DC00FF\">[Terminals]</font> ${o}: ${amount} of ${res} sent, ${rmColony}`
+								console.log(`[Terminals] ${o}: ${amount} of ${res} sent, ${rmColony}`
 									+ ` -> ${order["room"]}`);
 
 								Memory["resources"]["terminal_orders"][o]["amount"] -= amount;
@@ -1842,7 +1842,7 @@
 								return true;
 
 							} else {
-								console.log(`<font color=\"#DC00FF\">[Terminals]</font> ${o}: failed to send, `
+								console.log(`[Terminals] ${o}: failed to send, `
 									+ `${amount} of ${res} ${rmColony} -> ${order["room"]} (code: ${result})`);
 							}
 						} else {
@@ -1891,7 +1891,7 @@
 					let result = Game.market.deal(order["market_id"], amount, rmColony);
 
 					if (result == OK) {
-						console.log(`<font color=\"#DC00FF\">[Terminals]</font> ${o}: ${amount} of ${res} received, ${order["room"]}`
+						console.log(`[Terminals] ${o}: ${amount} of ${res} received, ${order["room"]}`
 							+ ` -> ${rmColony} `);
 
 						Memory["resources"]["terminal_orders"][o]["amount"] -= amount;
@@ -1900,7 +1900,7 @@
 
 						return true;
 					} else {
-						console.log(`<font color=\"#DC00FF\">[Terminals]</font> ${o}: failed to receive`
+						console.log(`[Terminals] ${o}: failed to receive`
 							+ ` ${amount} of ${res} ${order["room"]} -> ${rmColony} (code: ${result})`);
 					}
 				} else {
@@ -1911,7 +1911,7 @@
 						let energyNeeded = Math.max(cost + 1000, 5000); // Need cost + buffer
 						_.set(Memory, ["resources", "terminal_orders", `${rmColony}-energy_emergency`], 
 							{ room: rmColony, resource: "energy", amount: energyNeeded, automated: true, priority: 1 });
-						console.log(`<font color=\"#FF6B6B\">[Market Emergency]</font> Creating emergency energy order for terminal in ${rmColony}: ${energyNeeded} energy needed`);
+						console.log(`[Market Emergency] Creating emergency energy order for terminal in ${rmColony}: ${energyNeeded} energy needed`);
 					}
 					
 					if (_.get(storage, ["store", "energy"]) > room.getCriticalEnergy()) {
@@ -2608,7 +2608,7 @@
 					const spawns = targetRoom.find(FIND_MY_SPAWNS);
 					if (spawns.length > 0) {
 						delete Memory["sites"]["colonization"][rmTarget];
-						console.log(`<font color="#4ECDC4">[Colonization]</font> ${rmTargetBase} colonization complete (${spawns.length} spawns), mission removed.`);
+						console.log(`[Colonization] ${rmTargetBase} colonization complete (${spawns.length} spawns), mission removed.`);
 						Stats_CPU.End(rmColony, `Colonization-${rmTarget}-init`);
 						return;
 					}
@@ -2626,7 +2626,7 @@
 					const remoteSpawns = _.get(remote, "spawn_count", 0) || _.get(remote, ["spawns", "length"], 0);
 					if (remoteOwned && remoteSpawns > 0) {
 						delete Memory["sites"]["colonization"][rmTarget];
-						console.log(`<font color="#4ECDC4">[Colonization]</font> ${rmTarget} colonization complete via ISM (${remoteSpawns} spawns), mission removed.`);
+						console.log(`[Colonization] ${rmTarget} colonization complete via ISM (${remoteSpawns} spawns), mission removed.`);
 						Stats_CPU.End(rmColony, `Colonization-${rmTarget}-init`);
 						return;
 					}
@@ -2683,7 +2683,7 @@
 				const shouldSpawn = actual < target && !pendingColonizer;
 				
 				if (_.get(popActual, "colonizer", 0) < _.get(popTarget, ["colonizer", "amount"], 0) && !pendingColonizer) {
-					console.log(`<font color="#4ECDC4">[Colonization]</font> Creating spawn request for colonizer to ${rmTarget} from ${rmColony}`);
+					console.log(`[Colonization] Creating spawn request for colonizer to ${rmTarget} from ${rmColony}`);
 					Memory["hive"]["spawn_requests"].push({
 						room: rmColony,
 						listRooms: listSpawnRooms,
@@ -2894,7 +2894,7 @@
 						if (_.get(combat, ["tactic", "to_occupy"]))
 							this.setOccupation(combat_id, combat, tactic);
 						delete Memory["sites"]["combat"][combat_id];
-						console.log(`<font color=\"#FFA100\">[Combat: ${combat_id}]</font> Combat completed, removing from memory.`);
+						console.log(`[Combat: ${combat_id}] Combat completed, removing from memory.`);
 						return;
 				}
 			},
@@ -2939,7 +2939,7 @@
 						if (_.get(combat, ["tactic", "to_occupy"], false))
 							this.setOccupation(combat_id, combat, tactic);
 						delete Memory["sites"]["combat"][combat_id];
-						console.log(`<font color=\"#FFA100\">[Combat: ${combat_id}]</font> Combat completed, removing from memory.`);
+						console.log(`[Combat: ${combat_id}] Combat completed, removing from memory.`);
 						return;
 				}
 			},
@@ -3026,7 +3026,7 @@
 							let target_room = Game["rooms"][_.get(combat, "target_room")];
 							if (target_room != null && _.filter(target_room.find(FIND_STRUCTURES), s => { return s.structureType == "tower"; }).length == 0) {
 								_.set(Memory, ["sites", "combat", combat_id, "state_combat"], "complete");
-								console.log(`<font color=\"#FFA100\">[Combat: ${combat_id}]</font> No enemy towers detected! Completing tower drain combat.`);
+								console.log(`[Combat: ${combat_id}] No enemy towers detected! Completing tower drain combat.`);
 								return;
 							}
 						}
@@ -3034,7 +3034,7 @@
 
 					case "complete":
 						delete Memory["sites"]["combat"][combat_id];
-						console.log(`<font color=\"#FFA100\">[Combat: ${combat_id}]</font> Combat completed, removing from memory.`);
+						console.log(`[Combat: ${combat_id}] Combat completed, removing from memory.`);
 						return;
 				}
 			},
@@ -3076,7 +3076,7 @@
 						if (_.get(combat, ["tactic", "to_occupy"]))
 							this.setOccupation(combat_id, combat, tactic);
 						delete Memory["sites"]["combat"][combat_id];
-						console.log(`<font color=\"#FFA100\">[Combat: ${combat_id}]</font> Combat completed, removing from memory.`);
+						console.log(`[Combat: ${combat_id}] Combat completed, removing from memory.`);
 						return;
 				}
 			},
@@ -3096,11 +3096,11 @@
 				if (state_combat == "rallying" && listCreeps.length > 0 && Game.time % 5 == 0) {
 					if (creeps_rallied.length == listCreeps.length) {
 						_.set(Memory, ["sites", "combat", combat_id, "state_combat"], "attacking");
-						console.log(`<font color=\"#FFA100\">[Combat: ${combat_id}]</font> All creeps at rally point. Launching attack!`);
+						console.log(`[Combat: ${combat_id}] All creeps at rally point. Launching attack!`);
 						return true;
 					}
 				} else if (Game.time % 50 == 0) {
-					console.log(`<font color=\"#FFA100\">[Combat: ${combat_id}]</font> Spawning and rallying troops, `
+					console.log(`[Combat: ${combat_id}] Spawning and rallying troops, `
 						+ `${creeps_rallied.length} of ${army_amount} at rally point.`);
 				}
 				return false;
@@ -3184,7 +3184,7 @@
 			evaluateDefeat_CreepsWiped: function (combat_id, combat, listCreeps) {
 				if (listCreeps.length == 0 && _.get(combat, ["tactic", "spawn_repeat"]) != true) {
 					_.set(Memory, ["sites", "combat", combat_id, "state_combat"], "complete");
-					console.log(`<font color=\"#FFA100\">[Combat: ${combat_id}]</font> Defeat detected by all friendly creeps killed! Stopping attack.`);
+					console.log(`[Combat: ${combat_id}] Defeat detected by all friendly creeps killed! Stopping attack.`);
 					return true;
 				}
 				return false;
@@ -3201,7 +3201,7 @@
 						});
 					if (_.get(combat, ["tactic", "target_structures"]) == true && attack_structures.length == 0) {
 						_.set(Memory, ["sites", "combat", combat_id, "state_combat"], "complete");
-						console.log(`<font color=\"#FFA100\">[Combat: ${combat_id}]</font> Victory detected by destroying all structures! Stopping attack.`);
+						console.log(`[Combat: ${combat_id}] Victory detected by destroying all structures! Stopping attack.`);
 						return true;
 					}
 				}
@@ -3219,7 +3219,7 @@
 
 					if (targets_remaining.length == 0) {
 						_.set(Memory, ["sites", "combat", combat_id, "state_combat"], "complete");
-						console.log(`<font color=\"#FFA100\">[Combat: ${combat_id}]</font> Victory detected by destroying all targets on target list! Stopping attack.`);
+						console.log(`[Combat: ${combat_id}] Victory detected by destroying all targets on target list! Stopping attack.`);
 						return true;
 					}
 				}
@@ -3236,7 +3236,7 @@
 			},
 
 			setOccupation: function (combat_id, combat, tactic) {
-				console.log(`<font color=\"#FFA100\">[Combat: ${combat_id}]</font> `
+				console.log(`[Combat: ${combat_id}] `
 					+ `Setting occupation request in Memory; combat_id ${combat_id}-occupy.`);
 				_.set(Memory, ["sites", "combat", `${combat_id}-occupy`],
 					{
@@ -3269,9 +3269,9 @@
 			
 			// Debug: Log highway mining status
 			if (Game.time % 50 == 0) {
-				console.log(`<font color=\"#FFA500\">[Highway Debug]</font> Highway ${highway_id}: ${listCreeps.length} creeps, state: ${highwayData.state}`);
+				console.log(`[Highway Debug] Highway ${highway_id}: ${listCreeps.length} creeps, state: ${highwayData.state}`);
 				_.each(listCreeps, c => {
-					console.log(`<font color=\"#FFA500\">[Highway Debug]</font> - ${c.name}: ${c.memory.role} in ${c.room.name}`);
+					console.log(`[Highway Debug] - ${c.name}: ${c.memory.role} in ${c.room.name}`);
 				});
 			}
 			
@@ -3346,7 +3346,7 @@
 						if (!highwayData.replacement_queued || Game.time - (highwayData.last_replacement || 0) > travel_time) {
 							highwayData.replacement_queued = true;
 							highwayData.last_replacement = Game.time;
-							console.log(`<font color=\"#FFA500\">[Highway]</font> Queuing replacement burrower for ${highway_id} (${replacementReason})`);
+							console.log(`[Highway] Queuing replacement burrower for ${highway_id} (${replacementReason})`);
 							Memory["shard"]["spawn_requests"].push({
 								room: highwayData.colony, listRooms: listSpawnRooms,
 								priority: 15,
@@ -3364,7 +3364,7 @@
 					// Clear replacement flag when new burrower arrives (fresh spawn)
 					if (burrower.ticksToLive > 1500) { // Fresh spawn
 						highwayData.replacement_queued = false;
-						console.log(`<font color=\"#FFA500\">[Highway]</font> New burrower arrived, clearing replacement flag for ${highway_id}`);
+						console.log(`[Highway] New burrower arrived, clearing replacement flag for ${highway_id}`);
 					}
 				}
 
@@ -3430,7 +3430,7 @@
 							}
 						});
 										if (role === "highway_burrower") {
-					console.log(`<font color=\"#FFA500\">[Highway]</font> Spawning single extractor (level 8: 25 WORK, 8 CARRY, 17 MOVE) for commodity mining in ${highway_id}`);
+					console.log(`[Highway] Spawning single extractor (level 8: 25 WORK, 8 CARRY, 17 MOVE) for commodity mining in ${highway_id}`);
 				}
 					}
 				});
@@ -3482,7 +3482,7 @@
 				let activeCreeps = _.filter(Game.creeps, c => c.memory.highway_id === highway_id && !c.spawning);
 				if (activeCreeps.length === 0) {
 					// No active creeps, but don't mark as completed yet - wait for spawn
-					console.log(`<font color=\"#FFA500\">[Highway]</font> No active creeps for ${highway_id}, waiting for spawn`);
+					console.log(`[Highway] No active creeps for ${highway_id}, waiting for spawn`);
 					return;
 				}
 				
@@ -3491,7 +3491,7 @@
 				if (!resource) {
 					// Resource no longer exists, mark as completed
 					highwayData.state = "completed";
-					console.log(`<font color=\"#FFA500\">[Highway]</font> Resource ${resourceId} no longer exists, marking operation as completed for ${highway_id}`);
+					console.log(`[Highway] Resource ${resourceId} no longer exists, marking operation as completed for ${highway_id}`);
 					return;
 				}
 				
@@ -3499,7 +3499,7 @@
 				if (resourceType == 'power' && resource.structureType == STRUCTURE_POWER_BANK) {
 					if (resource.hits <= 0) {
 						highwayData.state = "completed";
-						console.log(`<font color=\"#FFA500\">[Highway]</font> Power bank ${resourceId} depleted, marking operation as completed for ${highway_id}`);
+						console.log(`[Highway] Power bank ${resourceId} depleted, marking operation as completed for ${highway_id}`);
 						return;
 					}
 				}
@@ -3508,7 +3508,7 @@
 				if (resourceType != 'power' && resource.structureType == "deposit") {
 					if (resource.ticksToDeposit <= 0) {
 						highwayData.state = "completed";
-						console.log(`<font color=\"#FFA500\">[Highway]</font> Deposit ${resourceId} depleted, marking operation as completed for ${highway_id}`);
+						console.log(`[Highway] Deposit ${resourceId} depleted, marking operation as completed for ${highway_id}`);
 						return;
 					}
 				}
@@ -3518,7 +3518,7 @@
 				let timeElapsed = Game.time - operationStart;
 				if (timeElapsed > 5000 && activeCreeps.length === 0) { // Much longer timeout, only if no creeps
 					highwayData.state = "completed";
-					console.log(`<font color=\"#FFA500\">[Highway]</font> Operation timeout after ${timeElapsed} ticks with no active creeps, marking as completed for ${highway_id}`);
+					console.log(`[Highway] Operation timeout after ${timeElapsed} ticks with no active creeps, marking as completed for ${highway_id}`);
 					return;
 				}
 			},
@@ -3655,7 +3655,7 @@
 				
 				// Return if any condition is met
 				if (shouldReturn) {
-					console.log(`<font color=\"#FFA500\">[Highway]</font> Burrower ${creep.name} returning home (${returnReason}) from ${creep.room.name} with ${carrySum}/${creep.carryCapacity} resources`);
+					console.log(`[Highway] Burrower ${creep.name} returning home (${returnReason}) from ${creep.room.name} with ${carrySum}/${creep.carryCapacity} resources`);
 					creep.memory.state = "returning";
 					creep.memory.task = creep.getTask_Highway_Carry_Resource();
 					creep.runTask(creep);
@@ -3672,7 +3672,7 @@
 					if (droppedResources.length > 0) {
 						let closestDrop = creep.pos.findClosestByPath(droppedResources);
 						if (closestDrop) {
-							console.log(`<font color=\"#FFA500\">[Highway]</font> Empty burrower ${creep.name} picking up dropped ${highwayData.resource_type}`);
+							console.log(`[Highway] Empty burrower ${creep.name} picking up dropped ${highwayData.resource_type}`);
 							creep.memory.task = {
 								type: "pickup",
 								id: closestDrop.id,
@@ -3697,7 +3697,7 @@
 					if (droppedResources.length > 0 && _.sum(creep.carry) < creep.carryCapacity) {
 						let closestDrop = creep.pos.findClosestByPath(droppedResources);
 						if (closestDrop) {
-							console.log(`<font color=\"#FFA500\">[Highway]</font> Returning burrower ${creep.name} picking up dropped ${highwayData.resource_type}`);
+							console.log(`[Highway] Returning burrower ${creep.name} picking up dropped ${highwayData.resource_type}`);
 							creep.memory.task = {
 								type: "pickup",
 								id: closestDrop.id,
@@ -3724,7 +3724,7 @@
 					if (droppedResources.length > 0 && _.sum(creep.carry) < creep.carryCapacity) {
 						let closestDrop = creep.pos.findClosestByPath(droppedResources);
 						if (closestDrop) {
-							console.log(`<font color=\"#FFA500\">[Highway]</font> Burrower ${creep.name} picking up dropped ${highwayData.resource_type}`);
+							console.log(`[Highway] Burrower ${creep.name} picking up dropped ${highwayData.resource_type}`);
 							creep.memory.task = {
 								type: "pickup",
 								id: closestDrop.id,

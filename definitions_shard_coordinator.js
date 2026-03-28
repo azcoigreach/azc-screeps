@@ -152,7 +152,7 @@ global.ShardCoordinator = {
 				
 				if (allSpawned && op.creeps && op.creeps.length > 0) {
 					op.status = "traveling";
-					console.log(`<font color="#00FF00">[ShardCoordinator]</font> Colonization ${op.id}: All creeps spawned, now traveling`);
+					console.log(`[ShardCoordinator] Colonization ${op.id}: All creeps spawned, now traveling`);
 				}
 			}
 			
@@ -168,7 +168,7 @@ global.ShardCoordinator = {
 			
 			// Timeout check
 			if (age > 10000) {
-				console.log(`<font color="#FF0000">[ShardCoordinator]</font> Colonization ${op.id} timed out after ${age} ticks`);
+				console.log(`[ShardCoordinator] Colonization ${op.id} timed out after ${age} ticks`);
 				op.status = "failed";
 			}
 		});
@@ -193,7 +193,7 @@ global.ShardCoordinator = {
 			
 			// Timeout check
 			if (Game.time > transfer.expected_arrival_tick + 1000) {
-				console.log(`<font color="#FF0000">[ShardCoordinator]</font> Transfer ${transfer.id} timed out`);
+				console.log(`[ShardCoordinator] Transfer ${transfer.id} timed out`);
 				transfer.status = "failed";
 			}
 		});
@@ -213,7 +213,7 @@ global.ShardCoordinator = {
 	 */
 	planColonization: function(targetShard, targetRoom, options = {}) {
 		if (!Game.shard) {
-			console.log("<font color='#FF0000'>[ShardCoordinator]</font> Not on multi-shard server");
+			console.log("[ShardCoordinator] Not on multi-shard server");
 			return null;
 		}
 
@@ -224,7 +224,7 @@ global.ShardCoordinator = {
 		let route = Portals.getPortalRoute(sourceRoom, targetShard, targetRoom);
 		
 		if (!route) {
-			console.log(`<font color='#FF0000'>[ShardCoordinator]</font> No portal route found to ${targetShard}`);
+			console.log(`[ShardCoordinator] No portal route found to ${targetShard}`);
 			return null;
 		}
 
@@ -249,7 +249,7 @@ global.ShardCoordinator = {
 		}
 		Memory.shard.operations.colonizations.push(operation);
 
-		console.log(`<font color="#00FF00">[ShardCoordinator]</font> Colonization planned: ${targetShard}/${targetRoom} via ${route.portal.pos.roomName}`);
+		console.log(`[ShardCoordinator] Colonization planned: ${targetShard}/${targetRoom} via ${route.portal.pos.roomName}`);
 		
 		return opId;
 	},
@@ -259,11 +259,11 @@ global.ShardCoordinator = {
 	 */
 	displayStatus: function() {
 		if (!Game.shard) {
-			console.log("<font color='#FF0000'>[ShardCoordinator]</font> Not on multi-shard server");
+			console.log("[ShardCoordinator] Not on multi-shard server");
 			return;
 		}
 
-		console.log(`<font color='#00FFFF'>[ShardCoordinator]</font> === Multi-Shard Status ===`);
+		console.log(`[ShardCoordinator] === Multi-Shard Status ===`);
 		
 		let allStatuses = this.getAllShardStatuses();
 		
@@ -278,9 +278,9 @@ global.ShardCoordinator = {
 			
 			let current = (Game.shard.name === shardName) ? " (current)" : "";
 			
-			console.log(`<font color='#00FFFF'>[ShardCoordinator]</font> ${shardName}${current}:`);
-			console.log(`<font color='#00FFFF'>[ShardCoordinator]</font>   Colonies: ${colonies}, Energy: ${energy.toLocaleString()}`);
-			console.log(`<font color='#00FFFF'>[ShardCoordinator]</font>   CPU: ${cpu.toFixed(1)}, Bucket: ${bucket}, Data age: ${age} ticks`);
+			console.log(`[ShardCoordinator] ${shardName}${current}:`);
+			console.log(`[ShardCoordinator]   Colonies: ${colonies}, Energy: ${energy.toLocaleString()}`);
+			console.log(`[ShardCoordinator]   CPU: ${cpu.toFixed(1)}, Bucket: ${bucket}, Data age: ${age} ticks`);
 		});
 
 		// Show operations
@@ -288,9 +288,9 @@ global.ShardCoordinator = {
 		let transfers = _.get(Memory, ["shard", "operations", "creep_transfers"], []);
 		
 		if (colonizations.length > 0 || transfers.length > 0) {
-			console.log(`<font color='#00FFFF'>[ShardCoordinator]</font> === Active Operations ===`);
-			console.log(`<font color='#00FFFF'>[ShardCoordinator]</font> Colonizations: ${colonizations.length}`);
-			console.log(`<font color='#00FFFF'>[ShardCoordinator]</font> Creep transfers: ${transfers.length}`);
+			console.log(`[ShardCoordinator] === Active Operations ===`);
+			console.log(`[ShardCoordinator] Colonizations: ${colonizations.length}`);
+			console.log(`[ShardCoordinator] Creep transfers: ${transfers.length}`);
 		}
 	}
 };

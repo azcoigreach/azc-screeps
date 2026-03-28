@@ -20,7 +20,7 @@
     getUsername = function () {
         return _.find({...Game.structures, ...Game.creeps, ...Game.constructionSites}).owner.username;
     }
-    
+
     hasCPU = function () {
         return Game.cpu.getUsed() < Game.cpu.limit;
     };

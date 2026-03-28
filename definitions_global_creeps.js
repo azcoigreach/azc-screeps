@@ -90,7 +90,7 @@ global.GlobalCreeps = {
 			default:
 				// Unknown role - log warning
 				if (Game.time % 100 === 0) {
-					console.log(`<font color="#FFA500">[GlobalCreeps]</font> Unknown role for global creep ${creep.name}: ${role}`);
+					console.log(`[GlobalCreeps] Unknown role for global creep ${creep.name}: ${role}`);
 				}
 				break;
 		}
@@ -329,7 +329,7 @@ global.GlobalCreeps = {
 					discovered: Game.time
 				};
 				
-				console.log(`<font color="#FFFF00">[Resources]</font> Found power bank in ${roomName}: ${bank.power} power`);
+				console.log(`[Resources] Found power bank in ${roomName}: ${bank.power} power`);
 			});
 		}
 		
@@ -348,7 +348,7 @@ global.GlobalCreeps = {
 					discovered: Game.time
 				};
 				
-				console.log(`<font color="#FFFF00">[Resources]</font> Found ${deposit.depositType} deposit in ${roomName}`);
+				console.log(`[Resources] Found ${deposit.depositType} deposit in ${roomName}`);
 			});
 		}
 		

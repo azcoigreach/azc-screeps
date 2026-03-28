@@ -166,7 +166,7 @@ global.ShardMemory = {
 			global._localPayloadCacheTick = Game.time;
 			return payload;
 		} catch (err) {
-			console.log(`<font color="#FF6B6B">[InterShard]</font> Failed to parse local payload: ${err.message}`);
+			console.log(`[InterShard] Failed to parse local payload: ${err.message}`);
 			return this._bootstrapPayload();
 		}
 	},
@@ -184,7 +184,7 @@ global.ShardMemory = {
 			try {
 				mutator(payload);
 			} catch (err) {
-				console.log(`<font color="#FF6B6B">[InterShard]</font> updateLocal mutator error: ${err.message}`);
+				console.log(`[InterShard] updateLocal mutator error: ${err.message}`);
 			}
 		}
 
@@ -221,7 +221,7 @@ global.ShardMemory = {
 			let parsed = JSON.parse(raw);
 			return this._coercePayload(parsed);
 		} catch (err) {
-			console.log(`<font color="#FF6B6B">[InterShard]</font> Failed to parse remote payload (${shardName}): ${err.message}`);
+			console.log(`[InterShard] Failed to parse remote payload (${shardName}): ${err.message}`);
 			return null;
 		}
 	},
@@ -859,7 +859,7 @@ global.ShardMemory = {
 		}
 
 		if (json.length > this.MAX_SERIALIZED_LENGTH) {
-			console.log(`<font color="#FF6B6B">[InterShard]</font> Payload still exceeds size limit (${json.length}) after trimming; dropping history.`);
+			console.log(`[InterShard] Payload still exceeds size limit (${json.length}) after trimming; dropping history.`);
 			if (_.has(toSerialize, ["global", "history"])) {
 				toSerialize.global.history = [];
 				json = JSON.stringify(toSerialize);
@@ -994,7 +994,7 @@ global.ShardMemory = {
 			}
 			
 			if (removed.length > 0) {
-				console.log(`<font color="#FFD700">[InterShard]</font> Cleanup: Removed ${removed.length} old creeps from manifest`);
+				console.log(`[InterShard] Cleanup: Removed ${removed.length} old creeps from manifest`);
 			}
 		});
 	}

@@ -108,7 +108,7 @@ global.ShardControl = {
 		});
 		
 		if (handshakeCount > 0) {
-			console.log(`<font color="#4ECDC4">[InterShard]</font> PRIMARY: Distributed ${handshakeCount} handshake offers`);
+			console.log(`[InterShard] PRIMARY: Distributed ${handshakeCount} handshake offers`);
 		}
 
 		// Process acknowledgments from follower shards and complete handshakes
@@ -136,13 +136,13 @@ global.ShardControl = {
 					delete payload.handshake.pending[creepName];
 					acksProcessed++;
 					
-					console.log(`<font color="#4ECDC4">[InterShard]</font> PRIMARY: Completed handshake for ${creepName}`);
+					console.log(`[InterShard] PRIMARY: Completed handshake for ${creepName}`);
 				}
 			});
 		});
 		
 		if (acksProcessed > 0) {
-			console.log(`<font color="#4ECDC4">[InterShard]</font> PRIMARY: Processed ${acksProcessed} acknowledgments`);
+			console.log(`[InterShard] PRIMARY: Processed ${acksProcessed} acknowledgments`);
 		}
 	}
 
@@ -157,7 +157,7 @@ global.ShardControl = {
 		let primaryPayload = ShardMemory.readPrimary();
 
 		if (!primaryPayload) {
-			console.log(`<font color="#FF6B6B">[InterShard]</font> FOLLOWER: No primary payload found!`);
+			console.log(`[InterShard] FOLLOWER: No primary payload found!`);
 			_.set(Memory, ["hive", "ism", "last_primary_seen"], null);
 			return;
 		}
@@ -196,13 +196,13 @@ global.ShardControl = {
 					transfer_data: transferData
 				});
 				ackCount++;
-				console.log(`<font color="#4ECDC4">[InterShard]</font> FOLLOWER: Acknowledged transfer for ${creepName}`);
+				console.log(`[InterShard] FOLLOWER: Acknowledged transfer for ${creepName}`);
 			}
 		});
 	}
 	
 	if (ackCount > 0) {
-		console.log(`<font color="#4ECDC4">[InterShard]</font> FOLLOWER: Sent ${ackCount} acknowledgements`);
+		console.log(`[InterShard] FOLLOWER: Sent ${ackCount} acknowledgements`);
 	}
 
 		_.set(Memory, ["hive", "ism", "follower_snapshot"], {

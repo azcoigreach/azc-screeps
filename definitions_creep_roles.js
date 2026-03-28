@@ -106,9 +106,9 @@
 			return;
 		}
 		
-		debugLog(2, `<font color="#4ECDC4">[Scout]</font> recordTransferSnapshot called for ${creep.name} - target: ${targetShard}/${targetRoom}`, 10);
+		debugLog(2, `[Scout] recordTransferSnapshot called for ${creep.name} - target: ${targetShard}/${targetRoom}`, 10);
 
-		debugLog(2, `<font color="#4ECDC4">[Scout]</font> Recording transfer snapshot for ${creep.name}`, 10);
+		debugLog(2, `[Scout] Recording transfer snapshot for ${creep.name}`, 10);
 		let snapshot;
 			try {
 				snapshot = JSON.parse(JSON.stringify(creep.memory || {}));
@@ -145,7 +145,7 @@
 			};
 
 		if (Memory && _.get(Memory, ["hive", "ism", "debug_transfers"])) {
-			console.log(`<font color="#9B5DE5">[Scout]</font> transferData for ${creep.name} -> ${JSON.stringify(_.pick(transferData, ["destination_shard","destination_room","origin_shard","portal","transfer_time"]))}`);
+			console.log(`[Scout] transferData for ${creep.name} -> ${JSON.stringify(_.pick(transferData, ["destination_shard","destination_room","origin_shard","portal","transfer_time"]))}`);
 		}
 
 			creep.memory.global_status = "transferring";
@@ -186,11 +186,11 @@
 			}
 
 			if (typeof ShardMemory !== "undefined" && _.isFunction(_.get(ShardMemory, "recordCreepTransfer"))) {
-				console.log(`<font color="#4ECDC4">[Scout]</font> Storing transfer via ShardMemory for ${creep.name}`);
+				console.log(`[Scout] Storing transfer via ShardMemory for ${creep.name}`);
 				ShardMemory.recordCreepTransfer(creep.name, transferData, {
 					descriptor: descriptor
 				});
-				console.log(`<font color="#4ECDC4">[Scout]</font> snapshot stored for ${creep.name}`);
+				console.log(`[Scout] snapshot stored for ${creep.name}`);
 			} else {
 				let ismData = InterShardMemory.getLocal() ? JSON.parse(InterShardMemory.getLocal()) : {};
 				if (!_.isObject(ismData))
@@ -202,10 +202,10 @@
 					ismData.global_creeps = {};
 				ismData.global_creeps[creep.name] = descriptor;
 				InterShardMemory.setLocal(JSON.stringify(ismData));
-				debugLog(2, `<font color="#4ECDC4">[Scout]</font> snapshot stored for ${creep.name}`, 10);
+				debugLog(2, `[Scout] snapshot stored for ${creep.name}`, 10);
 			}
 		} catch (err) {
-			debugLog(1, `<font color="#FFA500">[Scout]</font> Failed to record transfer for ${creep.name}: ${err.message}`, 0);
+			debugLog(1, `[Scout] Failed to record transfer for ${creep.name}: ${err.message}`, 0);
 		}
 
 		creep.memory._scout_next_portal_allowed = Game.time + 20;
@@ -241,7 +241,7 @@
 			return;
 		}
 
-		debugLog(2, `<font color="#4ECDC4">[Scout]</font> Attempting restoration for ${creep.name} on shard ${Game.shard.name}`, 0);
+		debugLog(2, `[Scout] Attempting restoration for ${creep.name} on shard ${Game.shard.name}`, 0);
 		let transferData = null;
 
 		for (let i = 0; i < knownShards.length; i++) {
@@ -275,7 +275,7 @@
 
 			if (entry) {
 				transferData = entry;
-				debugLog(2, `<font color="#4ECDC4">[Scout]</font> Found transfer for ${creep.name} from ${shardName}`, 0);
+				debugLog(2, `[Scout] Found transfer for ${creep.name} from ${shardName}`, 0);
 				break;
 			}
 		}
@@ -286,19 +286,19 @@
 				offer = ShardMemory.getHandshakeOffer(creep.name, true);
 			}
 			if (_.get(offer, "transfer_data")) {
-				debugLog(2, `<font color="#4ECDC4">[Scout]</font> Using handshake backup transfer for ${creep.name}`, 0);
+				debugLog(2, `[Scout] Using handshake backup transfer for ${creep.name}`, 0);
 				transferData = _.get(offer, "transfer_data");
 			} else {
 				// Log once per creep to avoid console spam when transfer data never arrives
 				if (!creep.memory._scout_transfer_missing_logged) {
 					creep.memory._scout_transfer_missing_logged = true;
-					debugLog(1, `<font color="#FFD700">[Scout]</font> No transfer data found for ${creep.name}`, 0);
+					debugLog(1, `[Scout] No transfer data found for ${creep.name}`, 0);
 				}
 				return;
 			}
 		}
 
-		debugLog(2, `<font color="#4ECDC4">[Scout]</font> Restoring memory for ${creep.name} from transfer data`, 0);
+		debugLog(2, `[Scout] Restoring memory for ${creep.name} from transfer data`, 0);
 		let snapshot = _.get(transferData, "memory");
 
 		if (_.isObject(snapshot)) {
@@ -443,7 +443,7 @@
 				}
 			}
 			
-			debugLog(1, `<font color="#4ECDC4">[Scout]</font> ${creep.name} restored on ${Game.shard.name}: patrol_state=${creep.memory.scout_patrol_state}, mode=${patrolMode}, dest_reached=${creep.memory.scout_dest_reached}, rally_reached=${creep.memory.scout_rally_reached}, at_rally=${atRallyPos}, at_dest=${atDestPos}`, 0);
+			debugLog(1, `[Scout] ${creep.name} restored on ${Game.shard.name}: patrol_state=${creep.memory.scout_patrol_state}, mode=${patrolMode}, dest_reached=${creep.memory.scout_dest_reached}, rally_reached=${creep.memory.scout_rally_reached}, at_rally=${atRallyPos}, at_dest=${atDestPos}`, 0);
 
 			creep.memory._scout_next_portal_allowed = Game.time + 20;
 			creep.memory._scout_last_shard_switch = Game.time;
@@ -485,7 +485,7 @@
 				if (typeof ShardMemory !== "undefined" && _.isFunction(_.get(ShardMemory, "registerGlobalCreep")))
 					ShardMemory.registerGlobalCreep(creep.name, descriptor);
 			} catch (err) {
-				debugLog(1, `<font color="#FFA500">[Scout]</font> Failed to update ISM for restored ${creep.name}: ${err.message}`, 0);
+				debugLog(1, `[Scout] Failed to update ISM for restored ${creep.name}: ${err.message}`, 0);
 			}
 		};
 
@@ -765,7 +765,7 @@
 					let returnToShard = _.get(intent, "return_portal.destination_shard", colonyShard);
 					let returnToRoom = _.get(intent, "return_portal.destination_room", null);
 					
-					debugLog(2, `<font color="#4ECDC4">[Scout]</font> ${creep.name} registering return portal: ${returnFromShard}/${ret.roomName} -> ${returnToShard}/${returnToRoom || "?"}`, 50);
+					debugLog(2, `[Scout] ${creep.name} registering return portal: ${returnFromShard}/${ret.roomName} -> ${returnToShard}/${returnToRoom || "?"}`, 50);
 					
 					registerEntry(
 						returnFromShard,
@@ -859,7 +859,7 @@
 			if (!portalEntry) {
 				let warnTick = _.get(creep.memory, "_scout_portal_warn");
 				if (!warnTick || warnTick + 50 < Game.time) {
-					debugLog(1, `<font color="#FF944E">[Scout]</font> ${creep.name} missing portal entry for ${targetShard}/${targetRoom || "?"} (state=${currentPatrolState})`, 0);
+					debugLog(1, `[Scout] ${creep.name} missing portal entry for ${targetShard}/${targetRoom || "?"} (state=${currentPatrolState})`, 0);
 					creep.memory._scout_portal_warn = Game.time;
 				}
 				return false;
@@ -907,10 +907,10 @@
 			let awaitingAck = shouldWaitForTransferAck(targetShard);
 			if (awaitingAck) {
 				creep.memory._awaiting_transfer_ack = true;
-				debugLog(2, `<font color="#4ECDC4">[Scout]</font> ${creep.name} awaiting transfer acknowledgement to ${targetShard}/${targetRoom || "?"}`, 10);
+				debugLog(2, `[Scout] ${creep.name} awaiting transfer acknowledgement to ${targetShard}/${targetRoom || "?"}`, 10);
 			} else {
 				if (_.get(creep.memory, "_awaiting_transfer_ack") === true) {
-					debugLog(2, `<font color="#4ECDC4">[Scout]</font> ${creep.name} received transfer acknowledgement for ${targetShard}/${targetRoom || "?"}`, 0);
+					debugLog(2, `[Scout] ${creep.name} received transfer acknowledgement for ${targetShard}/${targetRoom || "?"}`, 0);
 					creep.say("GO!");
 				}
 				delete creep.memory._awaiting_transfer_ack;
@@ -1032,7 +1032,7 @@
 				}
 			}
 
-			debugLog(1, `<font color="#4ECDC4">[Scout]</font> ${creep.name} shard switch: ${current} -> ${Game.shard.name}, patrol_state=${creep.memory.scout_patrol_state}, mode=${currentPatrolMode}, dest_reached=${destReached}, rally_reached=${rallyReached}`, 0);
+			debugLog(1, `[Scout] ${creep.name} shard switch: ${current} -> ${Game.shard.name}, patrol_state=${creep.memory.scout_patrol_state}, mode=${currentPatrolMode}, dest_reached=${destReached}, rally_reached=${rallyReached}`, 0);
 
 			creep.memory._scout_next_portal_allowed = Game.time + 20;
 			creep.memory._scout_last_shard_switch = Game.time;
@@ -1126,7 +1126,7 @@
 				// On destination shard
 				if (atDestPos && state !== "to_rally" && shouldCorrect) {
 					// Actually at destination position, should be heading back to rally
-					debugLog(1, `<font color="#FF944E">[Scout]</font> ${creep.name} correcting state: ${state} -> to_rally (at dest pos)`, 0);
+					debugLog(1, `[Scout] ${creep.name} correcting state: ${state} -> to_rally (at dest pos)`, 0);
 					if (typeof creep.travelClear === "function")
 						creep.travelClear();
 					creep.memory.scout_patrol_state = "to_rally";
@@ -1136,7 +1136,7 @@
 					state = "to_rally";
 				} else if (!atDestPos && !destReached && state !== "to_dest" && shouldCorrect) {
 					// Haven't reached destination yet, should be heading to destination
-					debugLog(1, `<font color="#FF944E">[Scout]</font> ${creep.name} correcting state: ${state} -> to_dest (on dest shard, dest not reached)`, 0);
+					debugLog(1, `[Scout] ${creep.name} correcting state: ${state} -> to_dest (on dest shard, dest not reached)`, 0);
 					if (typeof creep.travelClear === "function")
 						creep.travelClear();
 					creep.memory.scout_patrol_state = "to_dest";
@@ -1145,7 +1145,7 @@
 					state = "to_dest";
 				} else if (destReached && state !== "to_rally" && shouldCorrect) {
 					// Reached destination (flag set), should be heading back to rally
-					debugLog(1, `<font color="#FF944E">[Scout]</font> ${creep.name} correcting state: ${state} -> to_rally (on dest shard, dest reached)`, 0);
+					debugLog(1, `[Scout] ${creep.name} correcting state: ${state} -> to_rally (on dest shard, dest reached)`, 0);
 					if (typeof creep.travelClear === "function")
 						creep.travelClear();
 					creep.memory.scout_patrol_state = "to_rally";
@@ -1157,7 +1157,7 @@
 				// On rally shard
 				if (atRallyPos && state !== "to_dest" && shouldCorrect) {
 					// Actually at rally position, should be heading to destination
-					debugLog(1, `<font color="#FF944E">[Scout]</font> ${creep.name} correcting state: ${state} -> to_dest (at rally pos)`, 0);
+					debugLog(1, `[Scout] ${creep.name} correcting state: ${state} -> to_dest (at rally pos)`, 0);
 					if (typeof creep.travelClear === "function")
 						creep.travelClear();
 					creep.memory.scout_patrol_state = "to_dest";
@@ -1167,7 +1167,7 @@
 					state = "to_dest";
 				} else if (!atRallyPos && !rallyReached && state !== "to_rally" && shouldCorrect) {
 					// Haven't reached rally yet, should be heading to rally
-					debugLog(1, `<font color="#FF944E">[Scout]</font> ${creep.name} correcting state: ${state} -> to_rally (on rally shard, rally not reached)`, 0);
+					debugLog(1, `[Scout] ${creep.name} correcting state: ${state} -> to_rally (on rally shard, rally not reached)`, 0);
 					if (typeof creep.travelClear === "function")
 						creep.travelClear();
 					creep.memory.scout_patrol_state = "to_rally";
@@ -1176,7 +1176,7 @@
 					state = "to_rally";
 				} else if (rallyReached && state !== "to_dest" && shouldCorrect) {
 					// Reached rally (flag set), should be heading to destination
-					debugLog(1, `<font color="#FF944E">[Scout]</font> ${creep.name} correcting state: ${state} -> to_dest (on rally shard, rally reached)`, 0);
+					debugLog(1, `[Scout] ${creep.name} correcting state: ${state} -> to_dest (on rally shard, rally reached)`, 0);
 					if (typeof creep.travelClear === "function")
 						creep.travelClear();
 					creep.memory.scout_patrol_state = "to_dest";
@@ -1216,7 +1216,7 @@
 					return;
 				}
 				// Reached destination - switch to heading to rally
-				debugLog(1, `<font color="#4ECDC4">[Scout]</font> ${creep.name} reached destination, switching to rally`, 0);
+				debugLog(1, `[Scout] ${creep.name} reached destination, switching to rally`, 0);
 				creep.memory.scout_patrol_state = "to_rally";
 				creep.memory.scout_dest_reached = true;
 				creep.memory.scout_rally_reached = false;
@@ -1256,7 +1256,7 @@
 					return;
 				}
 				// Reached rally - switch to heading to destination (start next loop)
-				debugLog(1, `<font color="#4ECDC4">[Scout]</font> ${creep.name} reached rally, switching to destination`, 0);
+				debugLog(1, `[Scout] ${creep.name} reached rally, switching to destination`, 0);
 				creep.memory.scout_patrol_state = "to_dest";
 				creep.memory.scout_rally_reached = true;
 				creep.memory.scout_dest_reached = false;
@@ -1317,14 +1317,14 @@
 			
 			// Check if we're already on the target shard
 			if (currentShard === creep.memory.portal_target_shard) {
-				console.log(`<font color="#00FF00">[Scout]</font> ${creep.name} successfully arrived on ${currentShard}!`);
+				console.log(`[Scout] ${creep.name} successfully arrived on ${currentShard}!`);
 				
 				// Move to target room on this shard
 				if (creep.room.name !== creep.memory.portal_target_room) {
 					let targetPos = new RoomPosition(25, 25, creep.memory.portal_target_room);
 					creep.travel(targetPos);
 				} else {
-					console.log(`<font color="#00FF00">[Scout]</font> ${creep.name} reached destination room ${creep.room.name}!`);
+					console.log(`[Scout] ${creep.name} reached destination room ${creep.room.name}!`);
 					// Mission complete - suicide or wander
 					creep.say("✓Portal!");
 				}
@@ -1336,7 +1336,7 @@
 				);
 				
 				if (result === ERR_NO_PATH) {
-					console.log(`<font color="#FF0000">[Scout]</font> ${creep.name} cannot find portal route`);
+					console.log(`[Scout] ${creep.name} cannot find portal route`);
 					creep.say("No portal");
 				} else {
 					creep.say("→Portal");
@@ -1441,7 +1441,7 @@
 						if (!creep.memory.auto_test_attempted) {
 							let shard3Portal = _.find(portals, p => p.destination.shard === "shard3");
 							if (shard3Portal && currentShard !== "shard3") {
-								console.log(`<font color="#00FFFF">[Scout]</font> ${creep.name} auto-testing portal traversal to shard3!`);
+								console.log(`[Scout] ${creep.name} auto-testing portal traversal to shard3!`);
 								creep.memory.auto_test_attempted = true;
 								creep.memory.test_mode = true;
 								creep.memory.portal_target_shard = "shard3";
@@ -2034,7 +2034,7 @@
 			// CRITICAL: Check if this is a transferred colonizer that needs memory restoration
 			// Must run EVERY TICK, not just every 5 ticks, to catch recent transfers
 			if (!creep.memory.role) {
-				console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} has no role, attempting memory restoration`);
+				console.log(`[Colonizer] ${creep.name} has no role, attempting memory restoration`);
 			
 			// Check shard0's master ISM for transfer data
 			try {
@@ -2045,10 +2045,10 @@
 					// Try both old "transfers" and new "creep_transfers" key names
 					transferData = _.get(parsed, ["creep_transfers", creep.name], null) 
 						|| _.get(parsed, ["transfers", creep.name], null);
-					console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} looking in ISM, found: ${transferData ? 'yes' : 'no'}`);
+					console.log(`[Colonizer] ${creep.name} looking in ISM, found: ${transferData ? 'yes' : 'no'}`);
 				}
 				if (transferData) {
-						console.log(`<font color="#4ECDC4">[Colonizer]</font> Found transfer data for ${creep.name}: role=${transferData.role}, room=${transferData.room}`);
+						console.log(`[Colonizer] Found transfer data for ${creep.name}: role=${transferData.role}, room=${transferData.room}`);
 						
 						// Restore memory
 						creep.memory.role = transferData.role;
@@ -2071,12 +2071,12 @@
 							}
 						});
 						
-						console.log(`<font color="#4ECDC4">[Colonizer]</font> Memory restored for ${creep.name}: role=${creep.memory.role}, room=${creep.memory.room}`);
+						console.log(`[Colonizer] Memory restored for ${creep.name}: role=${creep.memory.role}, room=${creep.memory.room}`);
 				} else {
-						console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} not found in master ISM creep_transfers`);
+						console.log(`[Colonizer] ${creep.name} not found in master ISM creep_transfers`);
 				}
 			} catch (e) {
-				console.log(`<font color="#FFA500">[Colonizer]</font> Error reading master ISM: ${e.message}`);
+				console.log(`[Colonizer] Error reading master ISM: ${e.message}`);
 			}
 		}
 		
@@ -2157,7 +2157,7 @@
 					
 					// Fallback: if no exact match, take first portal (for edge cases)
 					if (!portal && portals.length > 0) {
-						console.log(`<font color="#FFAA00">[Colonizer]</font> ${creep.name} no exact portal match for ${destShard}/${destRoom} in ${portalRoom}, using first available`);
+						console.log(`[Colonizer] ${creep.name} no exact portal match for ${destShard}/${destRoom} in ${portalRoom}, using first available`);
 						portal = portals[0];
 					}
 				}
@@ -2168,7 +2168,7 @@
 						destination_room: destRoom,
 						portal_pos: { x: portal.pos.x, y: portal.pos.y, roomName: portal.pos.roomName }
 					};
-					console.log(`<font color="#4ECDC4">[Colonizer]</font> ${creep.name} detected shard transition to ${destShard}/${destRoom}, portal at ${portalRoom}`);
+					console.log(`[Colonizer] ${creep.name} detected shard transition to ${destShard}/${destRoom}, portal at ${portalRoom}`);
 				}
 			}
 		}
@@ -2213,7 +2213,7 @@
 				
 				InterShardMemory.setLocal(JSON.stringify(ismData));
 				
-				console.log(`<font color="#4ECDC4">[Colonizer]</font> Transfer data stored for ${creep.name}`);
+				console.log(`[Colonizer] Transfer data stored for ${creep.name}`);
 				creep.memory.transfer_data_stored = true;
 			}
 			
@@ -2229,7 +2229,7 @@
 			// Check if creep is at portal
 			if (creep.pos.x === portalPos.x && creep.pos.y === portalPos.y && creep.room.name === portalPos.roomName) {
 				// Creep is at portal, transfer will happen automatically
-				console.log(`<font color="#4ECDC4">[Colonizer]</font> ${creep.name} at portal, transferring to ${creep.memory.transfer_intent.destination_shard}`);
+				console.log(`[Colonizer] ${creep.name} at portal, transferring to ${creep.memory.transfer_intent.destination_shard}`);
 				
 				// Clear transfer intent - the transfer will happen automatically
 				delete creep.memory.transfer_intent;
@@ -2253,7 +2253,7 @@
 					// Adjacent to portal - move onto it
 					let moveResult = creep.move(creep.pos.getDirectionTo(portalPos.x, portalPos.y));
 					if (moveResult === OK) {
-						console.log(`<font color="#4ECDC4">[Colonizer]</font> ${creep.name} crossing portal`);
+						console.log(`[Colonizer] ${creep.name} crossing portal`);
 					}
 					return;
 				} else {
@@ -2292,7 +2292,7 @@
 				_.set(Memory, ["rooms", creep.room.name, "layout"], _.get(request, "layout"));
 				_.set(Memory, ["rooms", creep.room.name, "focus_defense"], _.get(request, "focus_defense"));
 				_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
-				console.log(`<font color="#4ECDC4">[Colonization]</font> ${creep.name} - first spawn complete, colonization mission complete!`);
+				console.log(`[Colonization] ${creep.name} - first spawn complete, colonization mission complete!`);
 				creep.memory = {};
 				return;
 			} else {
@@ -2303,7 +2303,7 @@
 					_.set(Memory, ["rooms", creep.room.name, "layout"], _.get(request, "layout"));
 					_.set(Memory, ["rooms", creep.room.name, "focus_defense"], _.get(request, "focus_defense"));
 					_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
-					console.log(`<font color="#4ECDC4">[Colonization]</font> ${creep.room.name} - room claimed, waiting for first spawn...`);
+					console.log(`[Colonization] ${creep.room.name} - room claimed, waiting for first spawn...`);
 				}
 				// Colonizer can help build the spawn while waiting
 				creep.memory.state = "working";
@@ -2328,11 +2328,11 @@
 				_.set(Memory, ["rooms", creep.room.name, "focus_defense"], _.get(request, "focus_defense"));
 				_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
 			}
-			console.log(`<font color="#4ECDC4">[Colonization]</font> ${creep.name} successfully claimed ${creep.room.name}! Waiting for first spawn...`);
+			console.log(`[Colonization] ${creep.name} successfully claimed ${creep.room.name}! Waiting for first spawn...`);
 			creep.memory.state = "working";
 			return;
 		} else {
-			console.log(`<font color=\"#F0FF00\">[Colonization]</font> ${creep.name} unable to colonize ${_.get(request, ["target"])}; error ${result}`);
+			console.log(`[Colonization] ${creep.name} unable to colonize ${_.get(request, ["target"])}; error ${result}`);
 			return;
 		}
 	},
@@ -2655,7 +2655,7 @@
 		if (carrySum === creep.carryCapacity && currentState !== "returning") {
 			currentState = "returning";
 			creep.memory.state = currentState;
-			console.log(`<font color=\"#FFA500\">[Highway]</font> Burrower ${creep.name} returning home from ${creep.room.name}`);
+			console.log(`[Highway] Burrower ${creep.name} returning home from ${creep.room.name}`);
 		} else if (carrySum === 0 && isInColony && currentState !== "mining") {
 			currentState = "mining";
 			creep.memory.state = currentState;
@@ -2701,7 +2701,7 @@
 			let target = Game.getObjectById(highwayData.resource_id);
 			if (!target || (target.structureType === "deposit" && target.ticksToDeposit <= 0)) {
 				highwayData.state = "completed";
-				console.log(`<font color=\"#FFA500\">[Highway]</font> Resource ${highwayData.resource_id} depleted or gone, marking operation as completed for ${creep.memory.highway_id}`);
+				console.log(`[Highway] Resource ${highwayData.resource_id} depleted or gone, marking operation as completed for ${creep.memory.highway_id}`);
 			}
 		}
 	},
