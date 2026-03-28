@@ -298,7 +298,7 @@ global.ShardMemory = {
 			try {
 				mutator(payload);
 			} catch (err) {
-				console.log(`<font color="#FF6B6B">[InterShard]</font> updateLocal error: ${err.message}`);
+				console.log(`[InterShard] updateLocal error: ${err.message}`);
 			}
 		}
 
@@ -335,7 +335,7 @@ global.ShardMemory = {
 			let parsed = JSON.parse(raw);
 			return this._coercePayload(parsed);
 		} catch (err) {
-			console.log(`<font color="#FF6B6B">[InterShard]</font> Failed to parse remote (${shardName}): ${err.message}`);
+			console.log(`[InterShard] Failed to parse remote (${shardName}): ${err.message}`);
 			return null;
 		}
 	},
@@ -374,7 +374,7 @@ global.ShardMemory = {
 			global._localPayloadCacheTick = Game.time;
 			return payload;
 		} catch (err) {
-			console.log(`<font color="#FF6B6B">[InterShard]</font> Parse error: ${err.message}`);
+			console.log(`[InterShard] Parse error: ${err.message}`);
 			return this._bootstrapPayload();
 		}
 	},
@@ -517,7 +517,7 @@ global.ShardMemory = {
 		}
 
 		if (json.length > this.MAX_SERIALIZED_LENGTH) {
-			console.log(`<font color="#FF6B6B">[InterShard]</font> WARNING: Payload exceeds limit (${json.length}b)`);
+			console.log(`[InterShard] WARNING: Payload exceeds limit (${json.length}b)`);
 		}
 
 		InterShardMemory.setLocal(json);

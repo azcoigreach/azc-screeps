@@ -381,7 +381,47 @@ Creep.prototype.travelToExitTile = function travelToExitTile(target_name) {
 	for (let i in room_exits) {
 		if (room_exits[i] == target_name) {
 			let exit_tiles = _.get(Memory, ["hive", "paths", "exits", "rooms", this.room.name]);
-			if (exit_tiles == null)
+			
+			// If exit tiles not cached (e.g., on shard1 colonized rooms), generate them on-demand
+			if (exit_tiles == null) {
+				exit_tiles = [];
+				let terrain = new Room.Terrain(this.room.name);
+				
+				// Determine which edges to scan
+				let toScan = [];
+				switch (i) {
+					case '1': toScan = [{x: null, y: 0}]; break;     // Top (y=0)
+					case '3': toScan = [{x: 49, y: null}]; break;    // Right (x=49)
+					case '5': toScan = [{x: null, y: 49}]; break;    // Bottom (y=49)
+					case '7': toScan = [{x: 0, y: null}]; break;     // Left (x=0)
+				}
+				
+				// Scan edge for passable tiles
+				for (let edge of toScan) {
+					if (edge.x !== null) {
+						// Vertical edge (x is fixed)
+						for (let y = 0; y < 50; y++) {
+							if (terrain.get(edge.x, y) !== TERRAIN_MASK_WALL && (y > 0 && y < 49)) {
+								exit_tiles.push({x: edge.x, y: y, roomName: this.room.name});
+							}
+						}
+					} else {
+						// Horizontal edge (y is fixed)
+						for (let x = 0; x < 50; x++) {
+							if (terrain.get(x, edge.y) !== TERRAIN_MASK_WALL && (x > 0 && x < 49)) {
+								exit_tiles.push({x: x, y: edge.y, roomName: this.room.name});
+							}
+						}
+					}
+				}
+				
+				// Cache the result for future use
+				if (exit_tiles.length > 0) {
+					_.set(Memory, ["hive", "paths", "exits", "rooms", this.room.name], exit_tiles);
+				}
+			}
+			
+			if (exit_tiles == null || exit_tiles.length == 0)
 				return ERR_NO_PATH;
 
 			let tile = null;
@@ -535,7 +575,7 @@ Creep.prototype.travelToShard = function(targetShard, targetRoom) {
 		// Transfer already registered, continue to portal
 		let route = Portals.getPortalRoute(this.room.name, targetShard, targetRoom);
 		if (!route) {
-			console.log(`<font color="#FF0000">[Creep]</font> ${this.name}: No portal route to ${targetShard}`);
+			console.log(`[Creep] ${this.name}: No portal route to ${targetShard}`);
 			return ERR_NO_PATH;
 		}
 
@@ -546,7 +586,7 @@ Creep.prototype.travelToShard = function(targetShard, targetRoom) {
 	let route = Portals.getPortalRoute(this.room.name, targetShard, targetRoom);
 	
 	if (!route) {
-		console.log(`<font color="#FF0000">[Creep]</font> ${this.name}: No portal route found to ${targetShard}`);
+		console.log(`[Creep] ${this.name}: No portal route found to ${targetShard}`);
 		return ERR_NO_PATH;
 	}
 
@@ -591,7 +631,7 @@ Creep.prototype.travelToPortal = function(route) {
 				// Move into portal
 				let result = this.moveTo(portalStructure);
 				if (result === OK) {
-					console.log(`<font color="#00FFFF">[Creep]</font> ${this.name} entering portal to ${route.destShard}`);
+					console.log(`[Creep] ${this.name} entering portal to ${route.destShard}`);
 				}
 				return result;
 			} else {
@@ -600,7 +640,7 @@ Creep.prototype.travelToPortal = function(route) {
 			}
 		} else {
 			// Portal not found - may have decayed
-			console.log(`<font color="#FF0000">[Creep]</font> ${this.name}: Portal at ${portal.pos.roomName} not found!`);
+			console.log(`[Creep] ${this.name}: Portal at ${portal.pos.roomName} not found!`);
 			return ERR_NO_PATH;
 		}
 	} else {
@@ -635,7 +675,7 @@ Creep.prototype.cancelShardTransfer = function() {
 	let canceled = beforeLength > Memory.shard.operations.creep_transfers.length;
 	
 	if (canceled) {
-		console.log(`<font color="#FF6600">[Creep]</font> ${this.name}: Canceled shard transfer`);
+		console.log(`[Creep] ${this.name}: Canceled shard transfer`);
 	}
 	
 	return canceled;

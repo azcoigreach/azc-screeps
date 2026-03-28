@@ -7,7 +7,7 @@
 	refillBucket: function () {
 		if (Game.cpu.bucket >= 10000 && _.get(Memory, ["shard", "pause", "bucket"], false)) {
 			_.set(Memory, ["shard", "pause", "bucket"], false);
-			console.log(`<font color=\"#D3FFA3\">[Console]</font> Bucket full, resuming main.js.`);
+			console.log(`[Console] Bucket full, resuming main.js.`);
 		}
 
 		return _.get(Memory, ["shard", "pause", "bucket"], false) || _.get(Memory, ["hive", "global_pause"], false);
@@ -85,7 +85,7 @@
 		try {
 			state.payloads[Game.shard.name] = ShardMemory.getLocalPayload();
 		} catch (err) {
-			console.log(`<font color="#FF6B6B">[InterShard]</font> Failed to read local payload: ${err.message}`);
+			console.log(`[InterShard] Failed to read local payload: ${err.message}`);
 		}
 
 		_.each(state.shards, shard => {
@@ -96,7 +96,7 @@
 				if (payload)
 					state.payloads[shard] = payload;
 			} catch (err) {
-				console.log(`<font color="#FF6B6B">[InterShard]</font> Failed to read remote payload ${shard}: ${err.message}`);
+				console.log(`[InterShard] Failed to read remote payload ${shard}: ${err.message}`);
 			}
 		});
 
@@ -303,7 +303,7 @@
 					try {
 						ShardMemory.removeGlobalCreep(name, "dead");
 					} catch (err) {
-						console.log(`<font color="#FF944E">[Shard]</font> Failed to unregister ${name}: ${err.message}`);
+						console.log(`[Shard] Failed to unregister ${name}: ${err.message}`);
 					}
 				});
 			}
@@ -327,7 +327,7 @@
 							let crossShard = destinationShard && destinationShard !== Game.shard.name;
 							if (!(crossShard && recentTransfer)) {
 								if (Memory && _.get(Memory, ["hive", "ism", "debug_transfers"])) {
-									console.log(`<font color="#9B5DE5">[InterShard]</font> clearDeadMemory removing transfer ${name}; crossShard=${crossShard} destination=${destinationShard} transferTime=${transferTime} recent=${recentTransfer}`);
+									console.log(`[InterShard] clearDeadMemory removing transfer ${name}; crossShard=${crossShard} destination=${destinationShard} transferTime=${transferTime} recent=${recentTransfer}`);
 								}
 								delete payload.creep_transfers[name];
 								changed = true;
@@ -350,7 +350,7 @@
 						InterShardMemory.setLocal(JSON.stringify(payload));
 				}
 			} catch (err) {
-				console.log(`<font color="#FF944E">[Shard]</font> Failed to prune ISM for dead creeps: ${err.message}`);
+				console.log(`[Shard] Failed to prune ISM for dead creeps: ${err.message}`);
 			}
 
 			let manifest = _.get(Memory, ["hive", "ism", "global", "local_manifest"]);
@@ -571,7 +571,7 @@
 		// Only log colonizer detection once per minute to reduce console spam
 		let colonizer_creeps = _.filter(creeps, c => c && (c.memory.role === "colonizer" || (typeof c.name === "string" && c.name.indexOf("colo:") === 0)));
 		if (colonizer_creeps.length > 0 && Game.time % 50 === 0) {
-			console.log(`<font color="#4ECDC4">[Colonizers]</font> ${colonizer_creeps.length} active on ${Game.shard.name}`);
+			console.log(`[Colonizers] ${colonizer_creeps.length} active on ${Game.shard.name}`);
 		}
 
 		_.each(creeps, creep => {
@@ -591,7 +591,7 @@
 			if (!needsRestoration && creep.memory.role === "colonizer" && !creep.memory.room && creep.name.startsWith('colo:')) {
 				// Transferred creep with role set but missing room - definitely needs ISM restoration
 				needsRestoration = true;
-				console.log(`<font color="#FFA500">[Colonizer]</font> ${creep.name} detected as transferred (role set, room missing)`);
+				console.log(`[Colonizer] ${creep.name} detected as transferred (role set, room missing)`);
 			}
 
 			if (needsRestoration) {
@@ -617,11 +617,11 @@
 					creep.memory.transferred = true;
 					creep.memory.transfer_time = transferData.transfer_time;
 					creep.memory.global_status = 'restored';
-					console.log(`<font color="#4ECDC4">[Colonizer]</font> ${creep.name} restored on ${creep.memory.room}`);
+					console.log(`[Colonizer] ${creep.name} restored on ${creep.memory.room}`);
 					role = creep.memory.role; // Update local role variable
 				}
 			} catch (e) {
-				console.log(`<font color="#FFA500">[Colonizer]</font> Error restoring ${creep.name}: ${e.message}`);
+				console.log(`[Colonizer] Error restoring ${creep.name}: ${e.message}`);
 			}
 		}
 
@@ -756,7 +756,7 @@
 					// Creep is dead or no longer tracked
 					let debugScouts = _.get(Memory, ["hive", "debug", "scout"], 0);
 					if (debugScouts >= 1) {
-						console.log(`<font color="#FF944E">[Scout]</font> Detected dead remote scout ${name} (last seen ${Game.time - lastSeen} ticks ago)`);
+						console.log(`[Scout] Detected dead remote scout ${name} (last seen ${Game.time - lastSeen} ticks ago)`);
 					}
 					delete request.remote_creeps[name];
 					request._remote_pruned++;
@@ -1051,7 +1051,7 @@
 				route.push(destination);
 			}
 		} catch (error) {
-			console.log(`<font color=\"#FF944E\">[Scout]</font> Unable to derive route ${origin} -> ${destination}: ${error}`);
+			console.log(`[Scout] Unable to derive route ${origin} -> ${destination}: ${error}`);
 			if (_.last(route) !== destination)
 				route.push(destination);
 		}
@@ -1097,7 +1097,7 @@
 								// Clear dispatched requests for this shard
 								if (dispatched[shard]) {
 									delete dispatched[shard];
-									console.log(`<font color="#4ECDC4">[CrossShard]</font> Cleared dispatched requests for ${shard}`);
+									console.log(`[CrossShard] Cleared dispatched requests for ${shard}`);
 								}
 							}
 						}
@@ -1111,7 +1111,7 @@
 				InterShardMemory.setLocal(JSON.stringify(localParsed));
 			}
 		} catch (err) {
-			console.log(`<font color="#FF6B6B">[CrossShard]</font> Failed to process clear requests: ${err.message}`);
+			console.log(`[CrossShard] Failed to process clear requests: ${err.message}`);
 		}
 
 		// Read spawn requests from all shards
@@ -1138,7 +1138,7 @@
 					});
 				}
 			} catch (err) {
-				console.log(`<font color="#FF6B6B">[CrossShard]</font> Failed to read spawn requests from ${shard}: ${err.message}`);
+				console.log(`[CrossShard] Failed to read spawn requests from ${shard}: ${err.message}`);
 			}
 		});
 
@@ -1194,7 +1194,7 @@
 
 					InterShardMemory.setLocal(JSON.stringify(localParsed));
 				} catch (err) {
-					console.log(`<font color="#FF6B6B">[CrossShard]</font> Failed to dispatch spawn request to ${targetShard}: ${err.message}`);
+					console.log(`[CrossShard] Failed to dispatch spawn request to ${targetShard}: ${err.message}`);
 				}
 			}
 		});
@@ -1243,7 +1243,7 @@
 								Memory.hive.spawn_requests.push(req);
 						});
 
-						console.log(`<font color="#4ECDC4">[CrossShard]</font> Received ${dispatched.length} spawn requests from master shard0`);
+						console.log(`[CrossShard] Received ${dispatched.length} spawn requests from master shard0`);
 
 						// Clear dispatched requests from master ISM by notifying master
 						let localData = InterShardMemory.getLocal();
@@ -1253,11 +1253,25 @@
 					}
 				}
 			} catch (err) {
-				console.log(`<font color="#FF6B6B">[CrossShard]</font> Failed to read dispatched spawn requests: ${err.message}`);
+				console.log(`[CrossShard] Failed to read dispatched spawn requests: ${err.message}`);
 			}
 		}
 
 		Stats_CPU.Start("Hive", "processSpawnRequests");
+
+		// Merge global spawn requests into shard spawn queue (for cross-shard dispatched requests)
+		let globalRequests = _.get(Memory, ["hive", "spawn_requests"], []);
+		let shardRequests = _.get(Memory, ["shard", "spawn_requests"], []);
+		if (globalRequests.length > 0) {
+			_.each(globalRequests, req => {
+				if (req) {
+					shardRequests.push(req);
+				}
+			});
+			// Clear global queue after merging
+			Memory.hive.spawn_requests = [];
+			_.set(Memory, ["shard", "spawn_requests"], shardRequests);
+		}
 
 		// Cache spawn requests to avoid repeated memory lookups
 		let spawnRequests = _.get(Memory, ["shard", "spawn_requests"]);
@@ -1410,7 +1424,7 @@
 				: bestSpawn.spawnCreep(body, name, { memory: request.args, energyStructures: energies });
 
 			if (result == OK) {
-				console.log(`<font color=\"#19C800\">[Spawns]</font> Spawning `
+				console.log(`[Spawns] Spawning `
 					+ (bestSpawn.room.name == room ? `${room}  ` : `${bestSpawn.room.name} -> ${room}  `)
 					+ `${level} / ${request.level}  ${name} : ${request.args["role"]}`
 					+ `${request.args["subrole"] == null ? "" : ", " + request.args["subrole"]} `
@@ -1496,7 +1510,7 @@
 
 				if (order != null) {
 					if (_.get(Memory, ["resources", "terminal_orders", `overflow_${res}`]) != null)
-						console.log(`<font color=\"#F7FF00\">[Hive]</font> Selling overflow resource to market: ${excess} of ${res} from ${room}`);
+						console.log(`[Hive] Selling overflow resource to market: ${excess} of ${res} from ${room}`);
 					_.set(Memory, ["resources", "terminal_orders", `overflow_${res}`], { market_id: order.id, amount: excess, from: room, priority: 4 });
 
 				}
@@ -1531,7 +1545,7 @@
 				r => { return !_.has(Memory, ["resources", "terminal_orders", `overflow_energy_${r}`]) && energy[r] - limit > 100; }),
 				r => {	// Terminal transfers: minimum quantity of 100.
 					_.set(Memory, ["resources", "terminal_orders", `overflow_energy_${r}`], { room: tgtRoom, resource: "energy", amount: energy[r] - limit, from: r, priority: 2 });
-					console.log(`<font color=\"#F7FF00\">[Hive]</font> Creating overflow energy transfer: ${energy[r] - limit}, ${r} -> ${tgtRoom}`);
+					console.log(`[Hive] Creating overflow energy transfer: ${energy[r] - limit}, ${r} -> ${tgtRoom}`);
 				});
 		}
 
@@ -1586,7 +1600,7 @@
 					r => { return r.controller != null && r.controller.my && r.terminal; }),
 					r => { amount += r.store(reagent); });
 				if (amount <= 1000 && !_.has(Memory, ["resources", "labs", "targets", reagent]) && getReagents(reagent) != null) {
-					console.log(`<font color=\"#A17BFF\">[Labs]</font> reagent ${reagent} missing for ${target.mineral}, creating target goal.`);
+					console.log(`[Labs] reagent ${reagent} missing for ${target.mineral}, creating target goal.`);
 					Memory["resources"]["labs"]["targets"][reagent] = { amount: target.amount, priority: target.priority, mineral: reagent, is_reagent: true };
 					this.createReagentTargets(Memory["resources"]["labs"]["targets"][reagent]);
 				}
@@ -1644,9 +1658,9 @@
 					Memory.hive.pixels.stats.generation_history.shift();
 				}
 				
-				console.log(`<font color=\"#FFD700\">[Pixels]</font> Generated pixel! Total: ${Memory.hive.pixels.stats.total_generated}, CPU: ${(cpuUsagePercent * 100).toFixed(1)}%, Bucket: ${Game.cpu.bucket}`);
+				console.log(`[Pixels] Generated pixel! Total: ${Memory.hive.pixels.stats.total_generated}, CPU: ${(cpuUsagePercent * 100).toFixed(1)}%, Bucket: ${Game.cpu.bucket}`);
 			} else {
-				console.log(`<font color=\"#FF6B6B\">[Pixels]</font> Failed to generate pixel. Error code: ${result}`);
+				console.log(`[Pixels] Failed to generate pixel. Error code: ${result}`);
 			}
 		}
 	},

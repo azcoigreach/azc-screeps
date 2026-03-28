@@ -69,7 +69,7 @@ global.Portals = {
 		});
 
 		if (portalsFound > 0) {
-			console.log(`<font color="#00FFFF">[Portals]</font> Detected ${portalsFound} portal(s) across ${Object.keys(Game.rooms).length} visible rooms`);
+			console.log(`[Portals] Detected ${portalsFound} portal(s) across ${Object.keys(Game.rooms).length} visible rooms`);
 		}
 
 		Stats_CPU.End("Portals", "scanPortals");
@@ -158,7 +158,7 @@ global.Portals = {
 		let portals = this.getPortalsToShard(destShard);
 		
 		if (portals.length === 0) {
-			console.log(`<font color="#FF0000">[Portals]</font> No portals found to shard ${destShard}`);
+			console.log(`[Portals] No portals found to shard ${destShard}`);
 			return null;
 		}
 
@@ -170,13 +170,13 @@ global.Portals = {
 		
 		// Log portal availability status (but don't treat it as an error)
 		if (viablePortals.length === 0 && portals.length > 0) {
-			console.log(`<font color="#FFA500">[Portals]</font> Found ${portals.length} portal(s) to shard ${destShard}, checking stability...`);
+			console.log(`[Portals] Found ${portals.length} portal(s) to shard ${destShard}, checking stability...`);
 		}
 
 		// If no "stable" portals found, use any portal for testing
 		if (viablePortals.length === 0) {
 			viablePortals = portals;
-			console.log(`<font color="#FFA500">[Portals]</font> No explicitly stable portals to shard ${destShard}, using available portals for cross-shard travel`);
+			console.log(`[Portals] No explicitly stable portals to shard ${destShard}, using available portals for cross-shard travel`);
 		}
 
 		// Find nearest viable portal
@@ -193,7 +193,7 @@ global.Portals = {
 		});
 
 		if (!nearest) {
-			console.log(`<font color="#FF0000">[Portals]</font> No path to any portal from ${sourceRoom}`);
+			console.log(`[Portals] No path to any portal from ${sourceRoom}`);
 			return null;
 		}
 
@@ -263,7 +263,7 @@ global.Portals = {
 
 		Memory.shard.operations.creep_transfers.push(transfer);
 		
-		console.log(`<font color="#00FFFF">[Portals]</font> Tracking ${creepName} transfer to ${destShard}/${destRoom} (ETA: ${expectedTick - Game.time} ticks)`);
+		console.log(`[Portals] Tracking ${creepName} transfer to ${destShard}/${destRoom} (ETA: ${expectedTick - Game.time} ticks)`);
 	},
 
 	/**
@@ -305,7 +305,7 @@ global.Portals = {
 				}
 
 				if (role) {
-					console.log(`<font color="#FFA500">[Portals]</font> Restoring lost memory for ${creep.name} (detected as ${role}) in ${roomName}`);
+					console.log(`[Portals] Restoring lost memory for ${creep.name} (detected as ${role}) in ${roomName}`);
 
 					// Restore basic memory
 					creep.memory.role = role;
@@ -364,7 +364,7 @@ global.Portals = {
 					
 					if (creep) {
 						// Creep has arrived!
-						console.log(`<font color="#00FF00">[Portals]</font> Creep ${transfer.creep_name} arrived from ${otherShard} to ${transfer.dest_room}`);
+						console.log(`[Portals] Creep ${transfer.creep_name} arrived from ${otherShard} to ${transfer.dest_room}`);
 						
 						// Restore preserved memory
 						if (transfer.memory) {
@@ -385,7 +385,7 @@ global.Portals = {
 						
 						// Auto-reset scouts to exploration mode when they arrive on a new shard
 						if (creep.memory.role === "portal_scout") {
-							console.log(`<font color="#00FFFF">[Portals]</font> Auto-resetting scout ${transfer.creep_name} to exploration mode on ${currentShard}`);
+							console.log(`[Portals] Auto-resetting scout ${transfer.creep_name} to exploration mode on ${currentShard}`);
 							creep.memory.test_mode = false;
 							creep.memory.portal_target_shard = undefined;
 							creep.memory.portal_target_room = undefined;
@@ -406,7 +406,7 @@ global.Portals = {
 						let expectedTime = transfer.expected_arrival_tick - transfer.departure_tick;
 						
 						if (Game.time > transfer.expected_arrival_tick + 500) {
-							console.log(`<font color="#FF0000">[Portals]</font> Creep ${transfer.creep_name} from ${otherShard} timed out after ${travelTime} ticks (expected ${expectedTime})`);
+							console.log(`[Portals] Creep ${transfer.creep_name} from ${otherShard} timed out after ${travelTime} ticks (expected ${expectedTime})`);
 							timeoutsDetected++;
 						}
 					}
@@ -425,7 +425,7 @@ global.Portals = {
 			
 			// Log cleanup
 			if (!keepTransfer && Game.time >= transfer.expected_arrival_tick + 1000) {
-				console.log(`<font color="#FF6600">[Portals]</font> Cleaning up timed-out transfer: ${transfer.creep_name} to ${transfer.dest_shard}`);
+				console.log(`[Portals] Cleaning up timed-out transfer: ${transfer.creep_name} to ${transfer.dest_shard}`);
 			}
 			
 			return keepTransfer;
@@ -440,7 +440,7 @@ global.Portals = {
 			if (restoredCreeps > 0) parts.push(`${restoredCreeps} restored`);
 			if (timeoutsDetected > 0) parts.push(`${timeoutsDetected} timeouts`);
 			if (cleanedCount > 0) parts.push(`${cleanedCount} cleaned`);
-			console.log(`<font color="#00FFFF">[Portals]</font> Arrival processing: ${parts.join(", ")}`);
+			console.log(`[Portals] Arrival processing: ${parts.join(", ")}`);
 		}
 
 		Stats_CPU.End("Portals", "processArrivals");
@@ -453,11 +453,11 @@ global.Portals = {
 		let portals = this.getAll();
 		
 		if (portals.length === 0) {
-			console.log("<font color='#00FFFF'>[Portals]</font> No portals detected yet. Scan will run on next long pulse.");
+			console.log("[Portals] No portals detected yet. Scan will run on next long pulse.");
 			return;
 		}
 
-		console.log(`<font color='#00FFFF'>[Portals]</font> === Known Portals (${portals.length}) ===`);
+		console.log(`[Portals] === Known Portals (${portals.length}) ===`);
 		
 		// Group by destination shard
 		let byShard = {};
@@ -470,11 +470,11 @@ global.Portals = {
 		});
 
 		_.each(Object.keys(byShard), shard => {
-			console.log(`<font color='#00FFFF'>[Portals]</font> → ${shard}:`);
+			console.log(`[Portals] → ${shard}:`);
 			_.each(byShard[shard], portal => {
 				let stability = portal.stable ? "stable" : `unstable (${portal.ticksToDecay} ticks)`;
 				let age = Game.time - portal.lastSeen;
-				console.log(`<font color='#00FFFF'>[Portals]</font>   ${portal.pos.roomName} → ${portal.destination.room} (${stability}, seen ${age} ticks ago)`);
+				console.log(`[Portals]   ${portal.pos.roomName} → ${portal.destination.room} (${stability}, seen ${age} ticks ago)`);
 			});
 		});
 	},

@@ -7,15 +7,28 @@
 	Init: function () {
 		// Process special blueprint requests (from console) immediately, effectively pausing cycles/pulses by 1 tick.
 		if (_.get(Memory, ["hive", "pulses", "blueprint", "request"]) != null) {
-			let room = Game.rooms[_.get(Memory, ["hive", "pulses", "blueprint", "request"])];
+			let requestedRoom = _.get(Memory, ["hive", "pulses", "blueprint", "request"]);
+			let room = Game.rooms[requestedRoom];
 
+			// If room is not in our shard, don't process (avoid ERR_NO_PATH logs)
 			if (room == null) {
-				console.log(`<font color=\"#6065FF\">[Blueprint]</font> Blueprint() request for ${_.get(Memory, ["hive", "pulses", "blueprint", "request"])} failed; unable to find in Game.rooms.`);
+				// Check if this is a room on another shard - if so, don't log an error, just ignore
+				let isRemoteRoom = false;
+				if (requestedRoom && requestedRoom.includes("/")) {
+					isRemoteRoom = true; // Cross-shard room reference like "shard1/E50S20"
+				}
+				
+				if (!isRemoteRoom) {
+					console.log(`[Blueprint] Blueprint() request for ${requestedRoom} failed; unable to find in Game.rooms.`);
+				}
 			} else {
-				Stats_CPU.Start("Hive", "Blueprint-Run");
-				console.log(`<font color=\"#6065FF\">[Blueprint]</font> Processing requested Blueprint() for ${room.name}`);
-				this.Run(room);
-				Stats_CPU.End("Hive", "Blueprint-Run");
+				// Only process if the room is owned by us
+				if (room.controller && room.controller.my) {
+					Stats_CPU.Start("Hive", "Blueprint-Run");
+					console.log(`[Blueprint] Processing requested Blueprint() for ${room.name}`);
+					this.Run(room);
+					Stats_CPU.End("Hive", "Blueprint-Run");
+				}
 			}
 
 			delete Memory["hive"]["pulses"]["blueprint"]["request"];
@@ -39,7 +52,7 @@
 		Stats_CPU.Start("Hive", "Blueprint-Run");
 		let room = (room_iter < room_list.length ? Game.rooms[room_list[room_iter]] : null);
 		if (room != null) {
-			console.log(`<font color=\"#6065FF\">[Blueprint]</font> ${room_iter + 1}/${room_list.length}: Running Blueprint() for ${room.name}`);
+			console.log(`[Blueprint] ${room_iter + 1}/${room_list.length}: Running Blueprint() for ${room.name}`);
 			this.Run(room);			// Run blueprinting for this room
 		}
 
@@ -117,7 +130,7 @@
 			}).length == 0) {
 				Memory["rooms"][room.name]["layout"]["blocked_areas"].push(
 					{ start: { x: (s.pos.x - 1), y: (s.pos.y - 1) }, end: { x: (s.pos.x + 1), y: (s.pos.y + 1) } });
-				console.log(`<font color=\"#6065FF\">[Blueprint]</font> Blocking area in ${room.name} for source around (${s.pos.x}, ${s.pos.y}).`);
+				console.log(`[Blueprint] Blocking area in ${room.name} for source around (${s.pos.x}, ${s.pos.y}).`);
 			}
 		});
 
@@ -127,7 +140,7 @@
 		}).length == 0) {
 			Memory["rooms"][room.name]["layout"]["blocked_areas"].push(
 				{ start: { x: (mineral.pos.x - 1), y: (mineral.pos.y - 1) }, end: { x: (mineral.pos.x + 1), y: (mineral.pos.y + 1) } });
-			console.log(`<font color=\"#6065FF\">[Blueprint]</font> Blocking area in ${room.name} for mineral around (${mineral.pos.x}, ${mineral.pos.y}).`);
+			console.log(`[Blueprint] Blocking area in ${room.name} for mineral around (${mineral.pos.x}, ${mineral.pos.y}).`);
 		}
 
 		if (_.filter(blocked_areas, a => {
@@ -136,7 +149,7 @@
 		}).length == 0) {
 			Memory["rooms"][room.name]["layout"]["blocked_areas"].push(
 				{ start: { x: (room.controller.pos.x - 1), y: (room.controller.pos.y - 1) }, end: { x: (room.controller.pos.x + 1), y: (room.controller.pos.y + 1) } });
-			console.log(`<font color=\"#6065FF\">[Blueprint]</font> Blocking area in ${room.name} for room controller around (${room.controller.pos.x}, ${room.controller.pos.y}).`);
+			console.log(`[Blueprint] Blocking area in ${room.name} for room controller around (${room.controller.pos.x}, ${room.controller.pos.y}).`);
 		}
 
 		// If colonization focused on rapidly building defenses (RCL 3), don't place anything until tower is built
@@ -175,7 +188,7 @@
 					if (sites < sites_per_room && source.pos.findInRange(containers, 1).length < 2) {
 						let adj = source.pos.getBuildableTile_Adjacent();
 						if (adj != null && adj.createConstructionSite("container") == OK) {
-							console.log(`<font color=\"#6065FF\">[Blueprint]</font> ${room.name} placing container at (${adj.x}, ${adj.y})`);
+							console.log(`[Blueprint] ${room.name} placing container at (${adj.x}, ${adj.y})`);
 							sites += 1;
 						}
 					}
@@ -195,7 +208,7 @@
 					if (sites < sites_per_room && source.pos.findInRange(containers, 1).length < 2) {
 						let adj = source.pos.getBuildableTile_Adjacent();
 						if (adj != null && adj.createConstructionSite("container") == OK) {
-							console.log(`<font color=\"#6065FF\">[Blueprint]</font> ${room.name} placing container at (${adj.x}, ${adj.y})`);
+							console.log(`[Blueprint] ${room.name} placing container at (${adj.x}, ${adj.y})`);
 							sites += 1;
 						}
 					}
@@ -248,7 +261,7 @@
 					if (sites < sites_per_room && source.pos.findInRange(links, 2).length == 0) {
 						let adj = source.pos.getOpenTile_Path(2);
 						if (adj != null && adj.createConstructionSite("link") == OK) {
-							console.log(`<font color=\"#6065FF\">[Blueprint]</font> ${room.name} placing link at (${adj.x}, ${adj.y})`);
+							console.log(`[Blueprint] ${room.name} placing link at (${adj.x}, ${adj.y})`);
 							sites += 1;
 						}
 					}
@@ -266,7 +279,7 @@
 				if (sites < sites_per_room && room.controller.pos.findInRange(links, 2).length < cont_links) {
 					let adj = room.controller.pos.getOpenTile_Path(2);
 					if (adj != null && adj.createConstructionSite("link") == OK) {
-						console.log(`<font color=\"#6065FF\">[Blueprint]</font> ${room.name} placing link at (${adj.x}, ${adj.y})`);
+						console.log(`[Blueprint] ${room.name} placing link at (${adj.x}, ${adj.y})`);
 						sites += 1;
 					}
 				}
@@ -281,7 +294,7 @@
 				let extractors = _.filter(structures, s => { return s.structureType == "extractor"; }).length;
 				if (extractors < CONTROLLER_STRUCTURES["extractor"][level]) {
 					if (room.createConstructionSite(mineral.pos.x, mineral.pos.y, "extractor") == OK) {
-						console.log(`<font color=\"#6065FF\">[Blueprint]</font> ${room.name} placing extractor at `
+						console.log(`[Blueprint] ${room.name} placing extractor at `
 							+ `(${mineral.pos.x}, ${mineral.pos.y})`);
 						sites += 1;
 					}
@@ -297,7 +310,7 @@
 						|| structure.structureType == "storage" || structure.structureType == "terminal"
 						|| structure.structureType == "nuker" || structure.structureType == "powerSpawn") {
 						if (room.createConstructionSite(structure.pos.x, structure.pos.y, "rampart") == OK) {
-							console.log(`<font color=\"#6065FF\">[Blueprint]</font> ${room.name} placing rampart over `
+							console.log(`[Blueprint] ${room.name} placing rampart over `
 								+ `${structure.structureType} at (${structure.pos.x}, ${structure.pos.y})`);
 							sites += 1;
 						}
@@ -361,7 +374,7 @@
 
 			let result = room.createConstructionSite(x, y, structureType);
 			if (result == OK) {
-				console.log(`<font color=\"#6065FF\">[Blueprint]</font> ${room.name} placing ${structureType} at `
+				console.log(`[Blueprint] ${room.name} placing ${structureType} at `
 					+ `(${origin.x + layout[structureType][i].x}, ${origin.y + layout[structureType][i].y})`);
 				sites += 1;
 			} else if (result == ERR_INVALID_TARGET) {
@@ -401,7 +414,7 @@
 		}
 
 		if (road > 0) {
-			console.log(`<font color=\"#6065FF\">[Blueprint]</font> ${room.name} placed ${road} construction sites for a road `
+			console.log(`[Blueprint] ${room.name} placed ${road} construction sites for a road `
 				+ `from (${from_pos.x}, ${from_pos.y}) to (${to_pos.x}, ${to_pos.y})`);
 			sites += road;
 		}
