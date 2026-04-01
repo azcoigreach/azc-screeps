@@ -28,8 +28,16 @@
 				});
 				
 				if (routeContainsDestination) {
-					// Use waypoint routing with the full destination
-					creep.travelToRoom(targetRoom, true);
+					// Determine direction: if target is earlier in route than current room,
+					// traverse backward (forward=false); otherwise traverse forward.
+					let getRouteRoom = function(entry) {
+						return _.isString(entry) ? (entry.indexOf("/") >= 0 ? entry.split("/")[1] : entry) : entry;
+					};
+					let targetIdx = _.findIndex(creep.memory.list_route, function(e) { return getRouteRoom(e) === baseRoom; });
+					let currentIdx = _.findIndex(creep.memory.list_route, function(e) { return getRouteRoom(e) === creep.room.name; });
+					// If target comes before current in route (lower index), go backward
+					let goForward = (currentIdx === -1 || targetIdx >= currentIdx);
+					creep.travelToRoom(targetRoom, goForward);
 				} else {
 					// Destination not in route - just go there directly
 					creep.travelToRoom(creep.memory.room, true);
