@@ -8,8 +8,9 @@
 
 	// If we just changed rooms, clear any stale pathing state so we recompute for the new room
 	let prevRoom = _.get(this, ["memory", "path", "last_room"]);
-	if (prevRoom && prevRoom !== this.room.name)
+	if (prevRoom && prevRoom !== this.room.name) {
 		this.travelClear();
+	}
 	_.set(this, ["memory", "path", "last_room"], this.room.name);
 
 	let pos_dest;
@@ -44,7 +45,7 @@
 			// Allow edge tiles when the destination itself is on the border (needed for exit tiles)
 			let destIsBorder = (pos_dest.x === 0 || pos_dest.x === 49 || pos_dest.y === 0 || pos_dest.y === 49);
 			path_array = this.pos.findPathTo(pos_dest, {
-				maxOps: Control.moveMaxOps(), reusePath: Control.moveReusePath(),
+				maxOps: Control.moveMaxOps(), reusePath: Control.moveReusePath(), maxRooms: 1,
 				ignoreCreeps: ignore_creeps, costCallback: function (roomName, costMatrix) {
 					_.each(_.get(Memory, ["hive", "paths", "prefer", "rooms", roomName]), p => {
 						costMatrix.set(p.x, p.y, 1);
@@ -374,54 +375,60 @@ Creep.prototype.travelToRoom = function travelToRoom(tgtRoom, forward, portalCal
 };
 
 Creep.prototype.travelToExitTile = function travelToExitTile(target_name) {
-	if (_.get(this, ["memory", "path", "exit_tile", "roomName"]) == this.room.name)
-		return this.travel(_.get(this, ["memory", "path", "exit_tile"]));
+	if (_.get(this, ["memory", "path", "exit_tile", "roomName"]) == this.room.name) {
+		let tile = _.get(this, ["memory", "path", "exit_tile"]);
+		// If already standing on the exit tile, force a move across the border using the
+		// actual map exit direction (handles corner tiles correctly).
+		if (this.pos.x === tile.x && this.pos.y === tile.y) {
+			let room_exits = Game.map.describeExits(this.room.name);
+			let exitDir = null;
+			for (let dir in room_exits) {
+				if (room_exits[dir] === target_name) {
+					exitDir = parseInt(dir);
+					break;
+				}
+			}
+			if (exitDir != null) {
+				let result = this.move(exitDir);
+				return (result == OK || result == ERR_TIRED) ? OK : ERR_NO_PATH;
+			}
+		}
+		return this.travel(tile);
+	}
 
 	let room_exits = Game.map.describeExits(this.room.name);
 	for (let i in room_exits) {
 		if (room_exits[i] == target_name) {
 			let exit_tiles = _.get(Memory, ["hive", "paths", "exits", "rooms", this.room.name]);
-			
-			// If exit tiles not cached (e.g., on shard1 colonized rooms), generate them on-demand
+
+			// Build a complete all-edges cache when missing so later directions still work.
 			if (exit_tiles == null) {
 				exit_tiles = [];
 				let terrain = new Room.Terrain(this.room.name);
-				
-				// Determine which edges to scan
-				let toScan = [];
-				switch (i) {
-					case '1': toScan = [{x: null, y: 0}]; break;     // Top (y=0)
-					case '3': toScan = [{x: 49, y: null}]; break;    // Right (x=49)
-					case '5': toScan = [{x: null, y: 49}]; break;    // Bottom (y=49)
-					case '7': toScan = [{x: 0, y: null}]; break;     // Left (x=0)
-				}
-				
-				// Scan edge for passable tiles
-				for (let edge of toScan) {
+				const allEdges = [
+					{x: null, y: 0},
+					{x: 49, y: null},
+					{x: null, y: 49},
+					{x: 0, y: null}
+				];
+				for (let edge of allEdges) {
 					if (edge.x !== null) {
-						// Vertical edge (x is fixed)
-						for (let y = 0; y < 50; y++) {
-							if (terrain.get(edge.x, y) !== TERRAIN_MASK_WALL && (y > 0 && y < 49)) {
+						for (let y = 1; y < 49; y++) {
+							if (terrain.get(edge.x, y) !== TERRAIN_MASK_WALL)
 								exit_tiles.push({x: edge.x, y: y, roomName: this.room.name});
-							}
 						}
 					} else {
-						// Horizontal edge (y is fixed)
-						for (let x = 0; x < 50; x++) {
-							if (terrain.get(x, edge.y) !== TERRAIN_MASK_WALL && (x > 0 && x < 49)) {
+						for (let x = 1; x < 49; x++) {
+							if (terrain.get(x, edge.y) !== TERRAIN_MASK_WALL)
 								exit_tiles.push({x: x, y: edge.y, roomName: this.room.name});
-							}
 						}
 					}
 				}
-				
-				// Cache the result for future use
-				if (exit_tiles.length > 0) {
+				if (exit_tiles.length > 0)
 					_.set(Memory, ["hive", "paths", "exits", "rooms", this.room.name], exit_tiles);
-				}
 			}
-			
-			if (exit_tiles == null || exit_tiles.length == 0)
+
+			if (!exit_tiles || exit_tiles.length === 0)
 				return ERR_NO_PATH;
 
 			let tile = null;
@@ -433,6 +440,15 @@ Creep.prototype.travelToExitTile = function travelToExitTile(target_name) {
 			}
 
 			if (tile != null) {
+				if (this.pos.x === tile.x && this.pos.y === tile.y) {
+					let result = this.move(parseInt(i));
+					if (result == OK || result == ERR_TIRED) {
+						_.set(this, ["memory", "path", "exit_tile"], tile);
+						return OK;
+					}
+					return ERR_NO_PATH;
+				}
+
 				let result = this.travel(new RoomPosition(tile.x, tile.y, tile.roomName));
 				if (result == OK || result == ERR_TIRED) {
 					_.set(this, ["memory", "path", "exit_tile"], tile);
@@ -443,8 +459,7 @@ Creep.prototype.travelToExitTile = function travelToExitTile(target_name) {
 			return ERR_NO_PATH;
 		}
 	}
-}
-
+};
 Creep.prototype.travelSwap = function travelSwap(target) {
 	// Swap tiles with another creep
 	// Priorities to prevent endless loops: Burrowers 1st, target task is null 2nd
@@ -471,6 +486,7 @@ Creep.prototype.travelClear = function travelClear() {
 	_.set(this, ["memory", "path", "route"], null);
 	_.set(this, ["memory", "path", "exit"], null);
 	_.set(this, ["memory", "path", "path_str"], null);
+	_.set(this, ["memory", "path", "exit_tile"], null);
 };
 
 Creep.prototype.travelTask = function travelTask(dest) {
