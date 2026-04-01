@@ -406,34 +406,57 @@ Creep.prototype.travelToExitTile = function travelToExitTile(target_name) {
 	let room_exits = Game.map.describeExits(this.room.name);
 	for (let i in room_exits) {
 		if (room_exits[i] == target_name) {
-			let exit_tiles = _.get(Memory, ["hive", "paths", "exits", "rooms", this.room.name]);
+			// User-defined preferred exits take priority; auto-generated cache is kept separate
+			// so it does not bloat visuals or interfere with path.exit_tile() console commands.
+			let preferred_tiles = _.get(Memory, ["hive", "paths", "exits", "rooms", this.room.name]);
+			let auto_tiles = _.get(Memory, ["hive", "paths", "exits_auto", "rooms", this.room.name]);
 
-			// Build a complete all-edges cache when missing so later directions still work.
-			if (exit_tiles == null) {
-				exit_tiles = [];
-				let terrain = new Room.Terrain(this.room.name);
-				const allEdges = [
-					{x: null, y: 0},
-					{x: 49, y: null},
-					{x: null, y: 49},
-					{x: 0, y: null}
-				];
-				for (let edge of allEdges) {
-					if (edge.x !== null) {
-						for (let y = 1; y < 49; y++) {
-							if (terrain.get(edge.x, y) !== TERRAIN_MASK_WALL)
-								exit_tiles.push({x: edge.x, y: y, roomName: this.room.name});
-						}
-					} else {
-						for (let x = 1; x < 49; x++) {
-							if (terrain.get(x, edge.y) !== TERRAIN_MASK_WALL)
-								exit_tiles.push({x: x, y: edge.y, roomName: this.room.name});
+			// Build (or rebuild) the all-edges auto cache when:
+			//   a) it has never been generated, OR
+			//   b) it is stale/partial (e.g. from old one-edge logic) and has no tiles for
+			//      the currently-needed direction – self-healing without manual Memory cleanup.
+			if (!preferred_tiles) {
+				let dirFilterEmpty = false;
+				if (auto_tiles) {
+					let dirFiltered = null;
+					switch (i) {
+						case '1': dirFiltered = _.filter(auto_tiles, t => t.y == 0); break;
+						case '3': dirFiltered = _.filter(auto_tiles, t => t.x == 49); break;
+						case '5': dirFiltered = _.filter(auto_tiles, t => t.y == 49); break;
+						case '7': dirFiltered = _.filter(auto_tiles, t => t.x == 0); break;
+						default:  dirFiltered = auto_tiles; break; // unknown direction; assume cache is valid
+					}
+					dirFilterEmpty = !dirFiltered || dirFiltered.length === 0;
+				}
+
+				if (!auto_tiles || dirFilterEmpty) {
+					auto_tiles = [];
+					let terrain = new Room.Terrain(this.room.name);
+					const allEdges = [
+						{x: null, y: 0},
+						{x: 49, y: null},
+						{x: null, y: 49},
+						{x: 0, y: null}
+					];
+					for (let edge of allEdges) {
+						if (edge.x !== null) {
+							for (let y = 1; y < 49; y++) {
+								if (terrain.get(edge.x, y) !== TERRAIN_MASK_WALL)
+									auto_tiles.push({x: edge.x, y: y, roomName: this.room.name});
+							}
+						} else {
+							for (let x = 1; x < 49; x++) {
+								if (terrain.get(x, edge.y) !== TERRAIN_MASK_WALL)
+									auto_tiles.push({x: x, y: edge.y, roomName: this.room.name});
+							}
 						}
 					}
+					if (auto_tiles.length > 0)
+						_.set(Memory, ["hive", "paths", "exits_auto", "rooms", this.room.name], auto_tiles);
 				}
-				if (exit_tiles.length > 0)
-					_.set(Memory, ["hive", "paths", "exits", "rooms", this.room.name], exit_tiles);
 			}
+
+			let exit_tiles = preferred_tiles || auto_tiles;
 
 			if (!exit_tiles || exit_tiles.length === 0)
 				return ERR_NO_PATH;
