@@ -261,6 +261,13 @@ Creep.prototype.travelToRoom = function travelToRoom(tgtRoom, forward, portalCal
 
 			// If current is the last hop in the full route
 			if (currentIndex === parsedRoute.length - 1 || (parsedRoute[currentIndex + 1] && parsedRoute[currentIndex + 1].shard !== Game.shard.name && shardRoute.length === 1)) {
+				// If tgtRoom is an earlier waypoint in the route (e.g. courier returning home after
+				// reaching the far-end pickup room), traverse backward instead of jumping directly
+				// to a non-adjacent target (which would fail with a null border tile).
+				let tgtIdx = _.findIndex(parsedRoute, r => r.shard === Game.shard.name && r.roomName === tgtRoomBase);
+				if (tgtIdx !== -1 && tgtIdx < currentIndex && currentIndex > 0) {
+					return moveTowardRoom(parsedRoute[currentIndex - 1].roomName);
+				}
 				return moveTowardRoom(tgtRoomBase);
 			}
 
