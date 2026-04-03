@@ -1,0 +1,28 @@
+{
+  "name": "azc-screeps",
+  "version": "0.2.0",
+  "description": "AZC-Screeps Bot – Semi-automated Screeps AI with colony management",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "server:start":  "cd test-server && docker compose up -d",
+    "server:stop":   "cd test-server && docker compose down",
+    "server:logs":   "cd test-server && docker compose logs -f screeps-server",
+    "server:status": "cd test-server && docker compose ps",
+    "server:reset":  "bash test-server/scripts/reset.sh",
+    "server:upload": "bash test-server/scripts/upload.sh",
+    "test":          "mocha",
+    "test:syntax":   "node tests/scripts/syntax-check.js"
+  },
+  "devDependencies": {
+    "mocha": "^11.7.5",
+    "screeps-server-mockup": "^1.5.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/azcoigreach/azc-screeps.git"
+  },
+  "license": "MIT"
+}

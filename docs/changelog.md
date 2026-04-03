@@ -1,3 +1,50 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+---
+
+## [0.2.0] – 2026-04-03
+
+### Added
+
+- **Versioning** – Introduced `package.json` with formal semver versioning starting at `0.2.0`. All future releases will follow the `major.minor.patch` scheme.
+
+- **Test Server** (`test-server/`) – Private Screeps server infrastructure based on `screepers/screeps-launcher` (Docker):
+  - `test-server/docker-compose.yml` – Single-command server start/stop.
+  - `test-server/screeps-launcher.yaml` – Server configuration with 2× compressed tick rate (`tickDuration: 500 ms`) and `screepsmod-admin-utils`.
+  - `test-server/scripts/start.sh` – Starts the server and waits for the health-check to pass.
+  - `test-server/scripts/stop.sh` – Stops the server while preserving world data.
+  - `test-server/scripts/reset.sh` – Wipes all world data for a clean slate.
+  - `test-server/scripts/upload.sh` – Uploads all `*.js` bot modules to the test server via the Screeps HTTP API.
+
+- **Test Framework** (`tests/`) – Two-tier testing infrastructure:
+  - `tests/scripts/syntax-check.js` – Dependency-free `node --check` syntax validation for every `*.js` file (usable in CI without `npm install`).
+  - `tests/basic.test.js` – Mocha test suite with syntax checks and a smoke test that runs the bot for 5 ticks via `screeps-server-mockup` and asserts no fatal errors occur.
+  - `tests/helpers/loader.js` – Helper that loads all bot modules for the mockup server.
+  - `.mocharc.yml` – Mocha configuration.
+
+- **Documentation** – `docs/test-server.md` covers quick-start, configuration reference, CI integration, and troubleshooting.
+
+### Fixed
+
+- `definitions_flag_controller.js` – Removed duplicate `let from` declaration (lines 71–72) that caused a `SyntaxError` in Node.js strict duplicate-binding checks. The null-safe version on line 72 was the intended declaration.
+
+### npm scripts
+
+| Script | Description |
+|--------|-------------|
+| `npm run server:start` | Start Docker test server |
+| `npm run server:stop` | Stop Docker test server |
+| `npm run server:logs` | Tail server logs |
+| `npm run server:status` | Show container health |
+| `npm run server:reset` | Wipe world data |
+| `npm run server:upload` | Upload bot code to test server |
+| `npm run test:syntax` | Syntax check (no dependencies) |
+| `npm test` | Full Mocha test suite |
+
+---
+
 # Documentation Update Changelog
 
 ## [2025-01-11] - Target Commitment System

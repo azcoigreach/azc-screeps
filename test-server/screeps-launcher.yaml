@@ -1,0 +1,53 @@
+# ============================================================
+#  AZC-Screeps Private Test Server – screeps-launcher config
+#  Docs: https://github.com/screepers/screeps-launcher
+# ============================================================
+
+# Steam API Key
+# Leave empty for local development (no Steam login required for bots).
+# Set to your Steam Web API key only when you want human players to log in
+# via Steam auth.
+steamKey: ""
+
+# ------------------------------------------------------------------
+# Tick duration (milliseconds per game tick)
+#   Production server : 1000 ms
+#   Testing / fast-forward: 200–500 ms
+# ------------------------------------------------------------------
+tickDuration: 500
+
+# ------------------------------------------------------------------
+# Mods
+#   screepsmod-admin-utils – admin CLI helpers, password-less login,
+#                            and bot account management tools.
+# ------------------------------------------------------------------
+mods:
+  - screepsmod-admin-utils
+
+# ------------------------------------------------------------------
+# Bots
+#   screeps-launcher will create the account, spawn the bot in the
+#   given room, and hot-reload code on server start.
+#
+#   The bot code is uploaded separately via the upload.sh script
+#   (which pushes all *.js files from the repo root to the server
+#   over the Screeps API using the credentials below).
+# ------------------------------------------------------------------
+bots:
+  azc-screeps:
+    username: AzcTestBot
+    password: testpass
+    spawnRoom: W5N5
+    x: 25
+    y: 25
+    gcl: 1
+    cpu: 100
+
+# ------------------------------------------------------------------
+# Server-wide settings
+# ------------------------------------------------------------------
+# Expose the server on all interfaces inside the container so Docker
+# can forward the port to the host.
+serverOptions:
+  host: "0.0.0.0"
+  port: 21025

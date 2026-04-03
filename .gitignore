@@ -203,3 +203,18 @@ $RECYCLE.BIN/
 #####
 # End of core ignore list, below put you custom 'per project' settings (patterns or path)
 #####
+
+# Node / npm
+node_modules/
+npm-debug.log*
+
+# Test artifacts
+.nyc_output/
+coverage/
+
+# Test-server runtime data (Docker volume is preferred, but local data dir is gitignored too)
+test-server/data/
+
+# Local credential / config overrides
+.env
+test-server/config.local.yaml

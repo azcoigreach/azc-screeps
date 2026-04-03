@@ -1,0 +1,27 @@
+services:
+  screeps-server:
+    image: screepers/screeps-launcher:main
+    container_name: azc-screeps-server
+    ports:
+      - "21025:21025"   # Game server (web client + API)
+      - "21026:21026"   # CLI port
+    volumes:
+      # Mount server config (read-only)
+      - ./screeps-launcher.yaml:/screeps/config.yaml:ro
+      # Persistent server data (world, accounts, code)
+      - screeps-data:/screeps/data
+      # Mount repo root as /bot so the upload script can reach it
+      - ..:/repo:ro
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:21025/api/version"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
+volumes:
+  screeps-data:
+    name: azc-screeps-test-data

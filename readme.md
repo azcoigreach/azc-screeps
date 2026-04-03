@@ -1,8 +1,32 @@
 # AZC-Screeps Bot
 
+![Version](https://img.shields.io/badge/version-0.2.0-blue)
+
 **A semi-automated Screeps AI that handles tedious colony management while you retain full strategic control.**
 
 This bot automates spawning, building, mining, resource management, and defense—but leaves expansion, economy, and combat decisions in your hands. Think of it as a **command-and-control interface** rather than a fully autonomous AI.
+
+---
+
+## 🧪 Test Server
+
+A private Screeps server is included for testing code changes before deploying to production.
+
+```bash
+# Start the test server (Docker required)
+npm run server:start
+
+# Upload your bot code to the test server
+npm run server:upload
+
+# Run syntax checks on all bot files (no dependencies)
+npm run test:syntax
+
+# Full test suite (requires npm install)
+npm test
+```
+
+See [docs/test-server.md](docs/test-server.md) for full documentation.
 
 ---
 
