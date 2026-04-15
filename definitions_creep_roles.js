@@ -1851,6 +1851,9 @@
 				return;
 			}
 
+			if (creep.memory.task && creep.memory.task.type == "wait" && _.get(creep.memory.task, "id") == null)
+				delete creep.memory.task;
+
 			creep.memory.task = creep.memory.task || creep.getTask_Boost();
 
 			if (!creep.memory.task && this.goToRoom(creep, creep.memory.room, true))
@@ -1875,10 +1878,16 @@
 				return;
 			}
 
+			if (creep.memory.task && creep.memory.task.type == "wait" && _.get(creep.memory.task, "id") == null)
+				delete creep.memory.task;
+
 			creep.memory.task = creep.memory.task || creep.getTask_Industry_Deposit();
 			creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("mineral"); // Deposit any commodities to storage
 			creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("energy");
-			creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+			let courierDeliverIdleStorage = creep.room.storage;
+			creep.memory.task = creep.memory.task || (courierDeliverIdleStorage
+				? { type: "wait", id: courierDeliverIdleStorage.id, timer: 10 }
+				: creep.getTask_Wait(10));
 
 			creep.runTask(creep);
 			return;
