@@ -68,7 +68,6 @@ global.FlagController = {
 
                 // Find closest owned room to serve as the origin colony
                 let colonies = _.filter(Game.rooms, r => _.get(r, ["controller", "my"]) && _.get(r, ["controller", "level"], 0) >= 3);
-                let from = _.min(colonies, r => Game.map.getRoomLinearDistance(r.name, target));
                 let from = colonies.length > 0 ? _.min(colonies, r => Game.map.getRoomLinearDistance(r.name, target)).name : null;
 
                 let origin = { x: flag.pos.x, y: flag.pos.y };
