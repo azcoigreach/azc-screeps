@@ -1699,7 +1699,16 @@
 				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Source_Link();
 				
 				// Final fallback: wait if no tasks available
-				creep.memory.task = creep.memory.task || creep.getTask_Wait(5);
+				// Idle at assigned source so burrower waits for energy regen there, not at spawn
+				if (!creep.memory.task) {
+					let burrowerSources = creep.room.find(FIND_SOURCES);
+					let assignedSource = _.head(_.filter(burrowerSources, s => {
+						return _.get(Memory, ["rooms", creep.room.name, "sources", s.id, "burrower"]) == creep.id;
+					}));
+					creep.memory.task = assignedSource
+						? { type: "wait", id: assignedSource.id, timer: 5 }
+						: creep.getTask_Wait(5);
+				}
 
 			} else if (creep.memory.role == "miner") {
 					// Miners are bootstrap creeps - can restart a room if other creeps die
@@ -1850,7 +1859,11 @@
 			creep.memory.task = creep.memory.task || creep.getTask_Industry_Withdraw();
 			creep.memory.task = creep.memory.task || creep.getTask_Withdraw_Storage_Link();
 			creep.memory.task = creep.memory.task || creep.getTask_Pickup(); // Pick up any dropped resources (prioritizes commodities)
-			creep.memory.task = creep.memory.task || creep.getTask_Wait(10);
+			// Idle near storage when nothing to collect, to avoid clustering at spawn
+			let courierIdleStorage = creep.room.storage;
+			creep.memory.task = creep.memory.task || (courierIdleStorage
+				? { type: "wait", id: courierIdleStorage.id, timer: 10 }
+				: creep.getTask_Wait(10));
 
 			creep.runTask(creep);
 			return;
@@ -1885,8 +1898,11 @@
 			s => s.structureType == "factory");
 		
 		if (factories.length == 0) {
-			// No factories, just wait
-			creep.memory.task = creep.memory.task || creep.getTask_Wait(50);
+			// No factory in room - idle near storage to avoid clustering at spawn
+			let storage = creep.room.storage;
+			creep.memory.task = creep.memory.task || (storage
+				? { type: "wait", id: storage.id, timer: 50 }
+				: creep.getTask_Wait(50));
 			creep.runTask(creep);
 			return;
 		}
@@ -1913,7 +1929,8 @@
 			};
 		} else {
 			// No commodities to move, just wait
-			creep.memory.task = creep.memory.task || creep.getTask_Wait(50);
+			// Idle near factory so creep stays at its work location, not at spawn
+			creep.memory.task = creep.memory.task || { type: "wait", id: factories[0].id, timer: 50 };
 		}
 
 		creep.runTask(creep);
