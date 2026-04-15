@@ -412,10 +412,12 @@
 			if (Memory["resources"] && Memory["resources"]["factories"]) {
 				delete Memory["resources"]["factories"]["assignments"];
 			}
-			// Trigger factory pulse to reassign factories based on priority (lab style)
-			if (Memory["hive"] && Memory["hive"]["pulses"]) {
-				delete Memory["hive"]["pulses"]["factory"];
-			}
+			// Trigger factory pulse to reassign factories based on priority.
+			// Pulses are stored in Memory.shard.pulses (not Memory.hive.pulses).
+			if (!Memory["shard"]) Memory["shard"] = {};
+			if (!Memory["shard"]["pulses"]) Memory["shard"]["pulses"] = {};
+			if (!Memory["shard"]["pulses"]["factory"]) Memory["shard"]["pulses"]["factory"] = {};
+			Memory["shard"]["pulses"]["factory"]["active"] = true;
 			return `[Factory] Factory assignments will be renewed next tick based on current priorities.`;
 		};
 
