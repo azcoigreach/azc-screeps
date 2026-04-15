@@ -2072,28 +2072,17 @@
 		
 			assignFactories: function (rmColony) {
 				// This function is called per room, but we need to do global assignment
-				// Only run the global assignment once per pulse using the first room
-				let factoryPulse = _.get(Memory, ["shard", "pulses", "factory"]);
-				if (!factoryPulse || !factoryPulse.active) {
-					return;
-				}
-				
-				// Use the first controlled room as the processing room for this pulse
-				let processingRoom = null;
-				for (let roomName in Game.rooms) {
-					let room = Game.rooms[roomName];
-					if (room.controller && room.controller.my) {
-						processingRoom = roomName;
-						break;
-					}
-				}
-				
-				// Only run assignment in the processing room
-				if (rmColony !== processingRoom) {
-					return;
-				}
-
-				// Build a live factory list each pulse. Never cache Game objects in Memory,
+			// Only run the global assignment once per pulse using a flag to prevent duplicate runs
+			let factoryPulse = _.get(Memory, ["shard", "pulses", "factory"]);
+			if (!factoryPulse || !factoryPulse.active) {
+				return;
+			}
+			
+			// Check if we've already processed assignments this pulse to avoid duplicate work
+			if (Memory._factoriesAssignedThisPulse) {
+				return;
+			}
+			Memory._factoriesAssignedThisPulse = true;
 				// because serialized objects can lose runtime properties (including valid ids).
 				let allFactories = [];
 				_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
@@ -2247,17 +2236,18 @@
 					}
 				}
 
-				// Update assignments
-				_.set(Memory, ["resources", "factories", "assignments"], newAssignments);
+			// Update assignments
+			_.set(Memory, ["resources", "factories", "assignments"], newAssignments);
 
-				// Clear factory pulse if assignments actually changed
-				if (assignmentsChanged) {
-					_.set(Memory, ["shard", "pulses", "factory", "active"], false);
-					// Show status table after assignments are renewed
-					if (typeof factories !== 'undefined' && factories.status) {
-						factories.status();
-					}
+			// Clear factory pulse if assignments actually changed
+			if (assignmentsChanged) {
+				Memory._factoriesAssignedThisPulse = false; // Reset flag for next pulse
+				_.set(Memory, ["shard", "pulses", "factory", "active"], false);
+				// Show status table after assignments are renewed
+				if (typeof factories !== 'undefined' && factories.status) {
+					factories.status();
 				}
+			}
 			},
 
 			createFactoryTasks: function (rmColony) {

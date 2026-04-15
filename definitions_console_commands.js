@@ -326,7 +326,7 @@
 
 			// Factory Assignments and Status Table
 			console.log(`[Factory] Factory Status:`);
-			let factoryTable = `	Room		Assignment		Cooldown		Store		Status	`;
+			console.log(`	Room		Assignment		Cooldown		Store		Status	`);
 			let totalFactories = 0;
 			let assignedFactories = 0;
 			let activeFactories = 0;
@@ -364,12 +364,10 @@
 							}
 						}
 						
-						factoryTable += `	${room.name}		${assignmentText}		${cooldownText}		${storeText}		${status}	`;
+						console.log(`	${room.name}		${assignmentText}		${cooldownText}		${storeText}		${status}	`);
 					});
 				}
 			});
-			factoryTable += "";
-			console.log(factoryTable);
 
 			// Summary
 			console.log(`[Factory] Summary: ${totalFactories} total factories, ${assignedFactories} assigned, ${activeFactories} active`);
