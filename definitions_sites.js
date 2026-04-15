@@ -2072,17 +2072,19 @@
 		
 			assignFactories: function (rmColony) {
 				// This function is called per room, but we need to do global assignment
-			// Only run the global assignment once per pulse using a flag to prevent duplicate runs
-			let factoryPulse = _.get(Memory, ["shard", "pulses", "factory"]);
-			if (!factoryPulse || !factoryPulse.active) {
-				return;
-			}
-			
-			// Check if we've already processed assignments this pulse to avoid duplicate work
-			if (Memory._factoriesAssignedThisPulse) {
-				return;
-			}
-			Memory._factoriesAssignedThisPulse = true;
+				// Only run the global assignment once per pulse using a flag to prevent duplicate runs
+				let factoryPulse = _.get(Memory, ["shard", "pulses", "factory"]);
+				if (!factoryPulse || !factoryPulse.active) {
+					return;
+				}
+
+				// Check if we've already processed assignments this pulse to avoid duplicate work.
+				if (Memory._factoriesAssignedThisPulse) {
+					return;
+				}
+				Memory._factoriesAssignedThisPulse = true;
+
+				try {
 				// because serialized objects can lose runtime properties (including valid ids).
 				let allFactories = [];
 				_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
@@ -2176,6 +2178,26 @@
 					});
 				}
 
+				// Fallback: if no commodity passed component availability checks,
+				// still assign based on priority so logistics can stage missing inputs.
+				if (commoditiesToProduce.length == 0) {
+					for (let target of sortedTargets) {
+						let commodity = target.commodity;
+						let current = commodityCounts[commodity] || 0;
+
+						if (current >= target.amount) continue;
+
+						let components = this.getCommodityComponents(commodity);
+						if (components == null) continue;
+
+						commoditiesToProduce.push({
+							commodity: commodity,
+							components: components,
+							priority: target.priority
+						});
+					}
+				}
+
 				// Round-robin assignment: cycle through commodities until all factories are assigned
 				let commodityIndex = 0;
 				let factoriesAssigned = 0;
@@ -2236,18 +2258,19 @@
 					}
 				}
 
-			// Update assignments
-			_.set(Memory, ["resources", "factories", "assignments"], newAssignments);
+				// Update assignments
+				_.set(Memory, ["resources", "factories", "assignments"], newAssignments);
 
-			// Clear factory pulse if assignments actually changed
-			if (assignmentsChanged) {
-				Memory._factoriesAssignedThisPulse = false; // Reset flag for next pulse
-				_.set(Memory, ["shard", "pulses", "factory", "active"], false);
 				// Show status table after assignments are renewed
-				if (typeof factories !== 'undefined' && factories.status) {
+				if (assignmentsChanged && typeof factories !== 'undefined' && factories.status) {
 					factories.status();
 				}
-			}
+				} finally {
+					// Always release the per-pulse guard and consume the factory pulse
+					// so future pulses can retry even when no assignments were created.
+					Memory._factoriesAssignedThisPulse = false;
+					_.set(Memory, ["shard", "pulses", "factory", "active"], false);
+				}
 			},
 
 			createFactoryTasks: function (rmColony) {
