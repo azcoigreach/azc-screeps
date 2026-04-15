@@ -410,6 +410,40 @@
 			if (Memory["resources"] && Memory["resources"]["factories"]) {
 				delete Memory["resources"]["factories"]["assignments"];
 			}
+
+			// Immediate assignment pass so renew works right away without waiting for pulse timing.
+			let targets = _.get(Memory, ["resources", "factories", "targets"]);
+			if (targets && Object.keys(targets).length > 0) {
+				let sortedTargets = _.sortBy(targets, "priority");
+				let fallbackTarget = _.find(sortedTargets, t => {
+					let commodity = _.get(t, "commodity");
+					if (!commodity) return false;
+					let current = _.get(Memory, ["_commodityCounts", commodity], 0);
+					return current < _.get(t, "amount", 0);
+				}) || _.head(sortedTargets);
+
+				let commodity = _.get(fallbackTarget, "commodity");
+				let components = null;
+				if (commodity && typeof Industry !== "undefined" && _.isFunction(_.get(Industry, "getCommodityComponents"))) {
+					components = Industry.getCommodityComponents(commodity);
+				}
+
+				if (commodity && components) {
+					let newAssignments = {};
+					_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+						let roomFactories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+						_.each(roomFactories, factory => {
+							newAssignments[factory.id] = {
+								commodity: commodity,
+								components: components,
+								room: room.name
+							};
+						});
+					});
+					_.set(Memory, ["resources", "factories", "assignments"], newAssignments);
+				}
+			}
+
 			// Force the factory pulse to fire on the next tick.
 			// Using last_tick is more reliable than directly toggling "active",
 			// because pulse initialization may overwrite manual active flags.

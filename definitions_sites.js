@@ -2289,6 +2289,39 @@
 					return;
 				}
 
+				// Defensive fallback: ensure each local factory has an assignment even if
+				// global pulse assignment was skipped this cycle.
+				let fallbackAssignments = _.get(Memory, ["resources", "factories", "assignments"], {});
+				let assignmentsUpdated = false;
+				let sortedTargets = _.sortBy(targets, "priority");
+				let fallbackTarget = _.find(sortedTargets, t => {
+					let commodity = _.get(t, "commodity");
+					if (!commodity) return false;
+					let current = _.get(Memory, ["_commodityCounts", commodity], 0);
+					return current < _.get(t, "amount", 0);
+				}) || _.head(sortedTargets);
+
+				if (fallbackTarget && _.get(fallbackTarget, "commodity") != null) {
+					let fallbackCommodity = fallbackTarget.commodity;
+					let fallbackComponents = this.getCommodityComponents(fallbackCommodity);
+					if (fallbackComponents) {
+						for (let factory of factories) {
+							if (!fallbackAssignments[factory.id]) {
+								fallbackAssignments[factory.id] = {
+									commodity: fallbackCommodity,
+									components: fallbackComponents,
+									room: rmColony
+								};
+								assignmentsUpdated = true;
+							}
+						}
+					}
+				}
+
+				if (assignmentsUpdated) {
+					_.set(Memory, ["resources", "factories", "assignments"], fallbackAssignments);
+				}
+
 				let storage = Game.rooms[rmColony].storage;
 				if (storage == null) {
 					// Debug logging removed for CPU optimization
