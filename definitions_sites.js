@@ -2073,7 +2073,7 @@
 			assignFactories: function (rmColony) {
 				// This function is called per room, but we need to do global assignment
 				// Only run the global assignment once per pulse using the first room
-				let factoryPulse = _.get(Memory, ["hive", "pulses", "factory"]);
+				let factoryPulse = _.get(Memory, ["shard", "pulses", "factory"]);
 				if (!factoryPulse || !factoryPulse.active) {
 					return;
 				}
@@ -2093,17 +2093,13 @@
 					return;
 				}
 
-				// Cache all factories to avoid repeated find() calls
-				if (!Memory._cachedAllFactories || Game.time % 20 == 0) {
-					Memory._cachedAllFactories = [];
-					_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
-						if (!room._cachedFactories) {
-							room._cachedFactories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
-						}
-						Memory._cachedAllFactories = Memory._cachedAllFactories.concat(room._cachedFactories);
-					});
-				}
-				let allFactories = Memory._cachedAllFactories;
+				// Build a live factory list each pulse. Never cache Game objects in Memory,
+				// because serialized objects can lose runtime properties (including valid ids).
+				let allFactories = [];
+				_.each(_.filter(Game.rooms, r => { return r.controller != null && r.controller.my; }), room => {
+					let roomFactories = _.filter(room.find(FIND_MY_STRUCTURES), s => s.structureType == "factory");
+					allFactories = allFactories.concat(roomFactories);
+				});
 				
 				// Removed: DEBUG: Log factories found
 				// console.log('[FACTORY DEBUG] Factories found:', allFactories.map(f => f.id));
@@ -2256,7 +2252,7 @@
 
 				// Clear factory pulse if assignments actually changed
 				if (assignmentsChanged) {
-					_.set(Memory, ["hive", "pulses", "factory", "active"], false);
+					_.set(Memory, ["shard", "pulses", "factory", "active"], false);
 					// Show status table after assignments are renewed
 					if (typeof factories !== 'undefined' && factories.status) {
 						factories.status();
