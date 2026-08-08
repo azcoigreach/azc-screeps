@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tools import _common
 from tools.screeps_deploy import collect_modules, main, validate_modules
 
 
@@ -34,6 +36,19 @@ class DeployTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "Refusing to overwrite production"):
                 main()
         build_client.assert_not_called()
+
+    def test_tools_prefer_ai_environment_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ai_env = root / "ai.env"
+            root_env = root / "root.env"
+            ai_env.write_text("SCREEPS_API_TOKEN=ai-value\n", encoding="utf-8")
+            root_env.write_text("SCREEPS_API_TOKEN=root-value\n", encoding="utf-8")
+            with patch.object(_common, "DEFAULT_ENV_FILES", (ai_env, root_env)), \
+                 patch.dict("os.environ", {}, clear=True):
+                loaded = _common.load_env_file()
+                self.assertEqual(loaded, ai_env)
+                self.assertEqual(os.environ["SCREEPS_API_TOKEN"], "ai-value")
 
 
 if __name__ == "__main__":
