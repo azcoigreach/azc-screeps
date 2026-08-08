@@ -9,6 +9,7 @@ from typing import Any
 
 from .history import HistoryStore
 from .openai_client import OpenAIAdvisoryResult, OpenAIAdvisorClient
+from .remote_ops import REMOTE_ACTIONS, RemoteEconomics, remote_snapshot
 from .schemas import Advisory, Telemetry
 from .transport import CommanderTransport, TransportError
 
@@ -22,18 +23,30 @@ Your doctrine is aggressive, expansionist, and evidence-driven: pursue growth
 when economic, logistical, intelligence, and security evidence supports it;
 avoid both pacifist paralysis and reckless attacks.
 
-This phase authorizes analysis and recommendations. The only possible real-world
-strategic action is SCOUT_ROOM, and even that requires execute mode plus an
-explicit in-game allowScouting policy. Do not emit commands. You may recommend
-scouting using the structured recommended_scouting field. Expansion, remote-
-mining changes, markets, production, claiming, reserving, and offensive combat
-remain execution-forbidden.
+This phase permits only bounded scouting and maintenance objectives for EXISTING
+remote mines. You may propose actions through recommended_actions and may copy
+only currently authorized proposals into executable_actions. SCOUT_ROOM requires
+execute mode, allowScouting, and automatic dispatch additionally requires
+autoScouting. REASSESS_REMOTE, ENSURE_REMOTE_RESERVATION,
+ENSURE_REMOTE_INFRASTRUCTURE, and REBALANCE_REMOTE_LOGISTICS require execute mode
+and allowRemoteMaintenance; automatic dispatch additionally requires
+autoRemoteMaintenance. The deterministic validator is authoritative. Starting or
+stopping remotes, expansion, markets, production, claiming, arbitrary Memory,
+and offensive combat remain forbidden.
 
 Treat telemetry as authoritative domain context. In particular, structure
 "allowed" counts and capability flags define what the colony can legally use at
 its current RCL. A terminal energy value of null means the capability is not yet
 available, not that a working terminal is empty. GCL availableClaimSlots is the
 authoritative legal claim capacity.
+
+Player/relation fields are already classified as SELF, ALLY, NEUTRAL, HOSTILE,
+or UNKNOWN. Never infer identity from the English appearance of a username.
+Population expected/desired values are active AZC demand, and each role carries a
+deterministic state. assignedTotal includes roles outside the current demand;
+aliveTotal covers demanded roles. A queueDepth observed after spawn processing
+may be zero while a role's persisted queued count records the latest demand pulse.
+Remote health and diagnostic reasons are deterministic inputs, not LLM scores.
 
 Keep these concepts separate:
 - strategic expansion readiness: whether the empire should be preparing or ready
@@ -57,9 +70,10 @@ does not collect. Every recommended_scouting room and origin must contain only
 an exact Screeps room name such as W38N10 or W37N11; put all explanation in reason.
 
 Set execution_authorization to SCOUTING_ONLY only when currentState.authority.mode
-is execute and currentState.authority.execution.scouting is true. Otherwise set
-it to ADVISOR_ONLY, even though scouting may still be recommended for a human to
-authorize later.
+is execute and only scouting is authorized. Set it to
+EXISTING_REMOTE_MAINTENANCE when existing-remote maintenance is authorized.
+Otherwise set it to ADVISOR_ONLY. Automatic flags control dispatch, not whether a
+human may send an otherwise allowed action.
 
 Write rich, readable operator prose. Explain colony health, population demand,
 remote health and contribution, energy direction, RCL capabilities, defenses,
@@ -77,6 +91,7 @@ class AdvisoryRun:
     recommendation_id: str
     result: OpenAIAdvisoryResult
     explanation_command_id: str | None
+    action_command_id: str | None
 
 
 class AdvisorService:
@@ -103,6 +118,7 @@ class AdvisorService:
                 "available": False,
                 "reason": "No historical trend context was supplied",
             },
+            "remoteEconomics": RemoteEconomics(self.history).build(telemetry),
             "interpretationRules": {
                 "currentStateSource": "Screeps Memory Segment 90",
                 "historicalTrendSource": "Python calculations over SQLite observations",
@@ -130,7 +146,36 @@ class AdvisorService:
         )
 
         explanation_command_id = None
-        if writeback and self.transport is not None:
+        action_command_id = None
+        if self.transport is not None:
+            proposal = self._authorized_automatic_action(result.advisory, telemetry)
+            if proposal is not None:
+                parameters = {"room": proposal.target}
+                if proposal.action == "SCOUT_ROOM":
+                    parameters["origin"] = proposal.origin
+                try:
+                    order = self.transport.send_safe_command(
+                        proposal.action,
+                        parameters,
+                        reason=proposal.reason,
+                    )
+                    action_command_id = order.id
+                    if proposal.action in REMOTE_ACTIONS:
+                        baseline = remote_snapshot(telemetry, proposal.target)
+                        if baseline is not None:
+                            self.history.create_operation(
+                                f"op-{order.id}", order.id, "; ".join(proposal.evidence),
+                                proposal.target, proposal.action, proposal.reason,
+                                proposal.confidence, telemetry.tick, baseline,
+                                proposal.expectedOutcome,
+                                telemetry.tick + proposal.evaluationWindowTicks,
+                            )
+                except TransportError as exc:
+                    self.history.record_event(
+                        "automatic_action_deferred", str(exc),
+                        {"action": proposal.action, "target": proposal.target},
+                    )
+        if writeback and self.transport is not None and action_command_id is None:
             explanation = self._explanation(result.advisory)
             try:
                 order = self.transport.send_safe_command(
@@ -145,7 +190,43 @@ class AdvisorService:
                     str(exc),
                     {"recommendation_id": recommendation_id},
                 )
-        return AdvisoryRun(recommendation_id, result, explanation_command_id)
+        return AdvisoryRun(recommendation_id, result, explanation_command_id, action_command_id)
+
+    @staticmethod
+    def _authorized_automatic_action(advisory: Advisory, telemetry: Telemetry):
+        if telemetry.authority.mode != "execute":
+            return None
+        owned = set(telemetry.colonies)
+        remotes = {remote.room: remote for remote in telemetry.operations.remoteMining}
+        unknown = set(telemetry.intelligence.unknownRooms) | set(telemetry.intelligence.staleRooms)
+        for proposal in advisory.executable_actions:
+            if proposal.action == "SCOUT_ROOM":
+                if (
+                    telemetry.authority.execution.scouting
+                    and telemetry.authority.execution.autoScouting
+                    and proposal.target in unknown
+                    and proposal.origin in owned
+                ):
+                    return proposal
+                continue
+            if proposal.action in REMOTE_ACTIONS:
+                if not (
+                    telemetry.authority.execution.remoteMaintenance
+                    and telemetry.authority.execution.autoRemoteMaintenance
+                    and proposal.target in remotes
+                ):
+                    continue
+                remote = remotes[proposal.target]
+                reasons = set(remote.reasons)
+                required = {
+                    "ENSURE_REMOTE_INFRASTRUCTURE": {"NO_CONTAINER", "CONTAINER_DAMAGED"},
+                    "ENSURE_REMOTE_RESERVATION": {"RESERVER_SHORTAGE", "RESERVATION_EXPIRING"},
+                    "REBALANCE_REMOTE_LOGISTICS": {"ENERGY_BACKLOG", "HAULER_SHORTAGE"},
+                    "REASSESS_REMOTE": {"STALE_INTEL", "ROUTE_FAILURE"},
+                }[proposal.action]
+                if reasons & required:
+                    return proposal
+        return None
 
     @staticmethod
     def _explanation(advisory: Advisory) -> str:
@@ -237,4 +318,6 @@ def format_advisory(run: AdvisoryRun, tick: int) -> str:
     ])
     if run.explanation_command_id:
         lines.append(f"Explanation writeback queued: {run.explanation_command_id}")
+    if run.action_command_id:
+        lines.append(f"Authorized operational action queued: {run.action_command_id}")
     return "\n".join(lines)

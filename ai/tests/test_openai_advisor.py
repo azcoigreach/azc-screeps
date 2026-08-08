@@ -18,6 +18,8 @@ def advisory() -> Advisory:
         "status": "healthy",
         "phase": "RCL6 consolidation",
         "summary": "The colony is stable and supports three remote rooms.",
+        "observations": ["The colony and three remotes are operational."],
+        "assessment": "Measured delivery is stable while territorial intelligence remains incomplete.",
         "strategic_assessment": "The economy appears stable, but expansion intelligence is incomplete.",
         "narrative": "W1N1 is steadily consolidating RCL6 while its remote network supplies energy.",
         "colony_assessments": [{
@@ -37,6 +39,16 @@ def advisory() -> Advisory:
             "recommendation": "Gather nearby room intelligence.",
             "reason": "No claim-candidate telemetry is available.",
         }],
+        "recommended_actions": [{
+            "action": "SCOUT_ROOM", "target": "W0N1", "origin": "W1N1",
+            "confidence": 0.8, "evidence": ["W0N1 is unknown"],
+            "reason": "Refresh adjacent intelligence.",
+            "expectedOutcome": "W0N1 becomes known.", "evaluationWindowTicks": 500,
+        }],
+        "executable_actions": [],
+        "uncertainty": ["W0N1 has not been observed."],
+        "expected_outcome": "A scout should close the adjacent intelligence gap.",
+        "follow_up": "Reassess expansion readiness after the scout completes.",
         "concerns": [],
         "questions": ["Which adjacent neutral rooms have two sources?"],
         "expansion_readiness": "INSUFFICIENT_INTEL",
@@ -51,6 +63,7 @@ def advisory() -> Advisory:
         "recommended_review_ticks": 500,
         "confidence": 0.8,
         "journal_entry": "The empire held a stable RCL6 position and identified nearby intelligence as its next strategic need.",
+        "journal_narrative": "The empire held a stable RCL6 position and identified nearby intelligence as its next strategic need. It will reassess after a bounded scout returns.",
     })
 
 
@@ -140,6 +153,39 @@ class OpenAIAdvisorTests(unittest.TestCase):
             self.assertIn("ADVISOR_ONLY", output)
             self.assertIn("$0.000450", output)
             history.close()
+
+    def test_automatic_action_validator_requires_mode_policy_existing_remote_and_diagnostic(self) -> None:
+        value = advisory().model_dump()
+        action = {
+            "action": "REBALANCE_REMOTE_LOGISTICS", "target": "W1N2", "origin": None,
+            "confidence": 0.9, "evidence": ["ENERGY_BACKLOG"],
+            "reason": "Reduce the measured backlog.",
+            "expectedOutcome": "Backlog falls while delivery continues.",
+            "evaluationWindowTicks": 1000,
+        }
+        value["executable_actions"] = [action]
+        candidate = Advisory.model_validate(value)
+        payload = telemetry_payload()
+        payload["operations"]["remoteMining"][0]["reasons"] = ["ENERGY_BACKLOG"]
+        payload["operations"]["remoteMining"][0]["diagnostics"] = [{
+            "diagnostic": "ENERGY_BACKLOG", "severity": "HIGH",
+            "evidence": {"energyWaiting": 5000},
+        }]
+        telemetry = Telemetry.model_validate(payload)
+        self.assertIsNone(AdvisorService._authorized_automatic_action(candidate, telemetry))
+
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"]["remoteMaintenance"] = True
+        payload["authority"]["execution"]["autoRemoteMaintenance"] = True
+        telemetry = Telemetry.model_validate(payload)
+        proposal = AdvisorService._authorized_automatic_action(candidate, telemetry)
+        self.assertIsNotNone(proposal)
+        self.assertEqual(proposal.action, "REBALANCE_REMOTE_LOGISTICS")
+
+        value["executable_actions"][0]["target"] = "W9N9"
+        self.assertIsNone(
+            AdvisorService._authorized_automatic_action(Advisory.model_validate(value), telemetry)
+        )
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from .config import CommanderConfig
 from .health import CommanderHealth
 from .history import HistoryStore
 from .observer import ObservationProcessor, ObservationUpdate, TelemetryError
+from .remote_ops import evaluate_operation
 from .schemas import InboxEnvelope, StatusEnvelope, StrategicOrder
 from .screeps_client import ScreepsAPIClient, ScreepsAPIError
 from .segments import INBOX_SEGMENT, SAFE_ACTIONS, SCHEMA_VERSION, STATUS_SEGMENT, TELEMETRY_SEGMENT
@@ -71,6 +72,10 @@ class CommanderTransport:
                 self.history.record_event("status_malformed", self.health.last_error, {})
 
         self._expire_local_commands()
+        if self.health.telemetry is not None:
+            for operation in self.history.due_operations(self.health.telemetry.tick):
+                outcome, result, reason = evaluate_operation(operation, self.health.telemetry)
+                self.history.complete_operation(operation["operation_id"], self.health.telemetry.tick, outcome, result, reason)
         return self.health
 
     def heartbeat(self) -> bool:
@@ -112,6 +117,13 @@ class CommanderTransport:
             origin = params.get("origin")
             if set(params) != {"room", "origin"} or not self._room_name(room) or not self._room_name(origin):
                 raise TransportError("SCOUT_ROOM requires valid room and origin room names")
+        if action in {
+            "REASSESS_REMOTE", "ENSURE_REMOTE_RESERVATION",
+            "ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS",
+        }:
+            room = params.get("room")
+            if set(params) != {"room"} or not self._room_name(room):
+                raise TransportError(f"{action} requires one valid remote room name")
         identifier = f"py-{self.config.screeps_shard}-{tick}-{uuid.uuid4().hex[:10]}"
         order = StrategicOrder(
             schemaVersion=SCHEMA_VERSION,
@@ -140,8 +152,10 @@ class CommanderTransport:
 
     def _correlate_results(self, status: StatusEnvelope) -> None:
         for result in status.orders.recentResults:
-            state = "completed" if result.status == "completed" else "rejected"
+            state = result.status
             self.history.update_command(result.id, state, result.model_dump())
+            if state == "completed":
+                self.history.mark_operation_executed(result.id, result.tick)
 
     def _expire_local_commands(self) -> None:
         tick = self.health.current_tick

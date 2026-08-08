@@ -26,6 +26,7 @@ class GCLState(StrictModel):
 
 
 class EmpireState(StrictModel):
+    player: str | None
     gcl: GCLState
     creeps: int
     credits: float
@@ -121,18 +122,32 @@ class DefenseState(StrictModel):
 
 class PopulationRole(StrictModel):
     expected: int
+    desired: int
     alive: int
     spawning: int
     queued: int
     dyingSoon: int
+    state: Literal[
+        "SATISFIED", "UNDERSTAFFED", "REPLACEMENT_PENDING",
+        "INTENTIONALLY_DISABLED", "NOT_REQUIRED", "MISCONFIGURED"
+    ]
 
 
 class PopulationState(StrictModel):
     roles: dict[str, PopulationRole]
+    source: str
+    state: Literal[
+        "SATISFIED", "UNDERSTAFFED", "REPLACEMENT_PENDING",
+        "INTENTIONALLY_DISABLED", "NOT_REQUIRED", "MISCONFIGURED"
+    ]
     expectedTotal: int
+    desiredTotal: int
     aliveTotal: int
+    assignedTotal: int
     spawningTotal: int
+    queuedTotal: int
     dyingSoonTotal: int
+    lastDemandTick: int | None
     demandSatisfaction: float | None
 
 
@@ -160,7 +175,12 @@ class RouteState(StrictModel):
 
 class ReservationState(StrictModel):
     username: str | None
+    relation: Literal["SELF", "ALLY", "NEUTRAL", "HOSTILE", "UNKNOWN"]
     ticksToEnd: int | None
+    warningTicks: int
+    reserverPresent: int
+    reserverSpawning: int
+    reserverQueued: int
 
 
 class RemoteMiningState(StrictModel):
@@ -168,6 +188,8 @@ class RemoteMiningState(StrictModel):
     sourceEnergy: int
     minimumRegenerationTicks: int | None
     containers: int
+    containerSites: int
+    expectedSourceContainers: int | None
     containerEnergy: int
     containerHits: HitSummary
     droppedEnergy: int
@@ -192,6 +214,17 @@ class RemoteSecurityState(StrictModel):
     lastHostileSightingTick: int | None
 
 
+class RemoteDiagnostic(StrictModel):
+    diagnostic: Literal[
+        "NO_CONTAINER", "CONTAINER_DAMAGED", "ENERGY_BACKLOG", "MINER_SHORTAGE",
+        "HAULER_SHORTAGE", "RESERVER_SHORTAGE", "RESERVATION_EXPIRING",
+        "HOSTILE_INTERRUPTION", "STALE_INTEL", "ROUTE_FAILURE",
+        "HIGH_CREEP_LOSSES", "LOW_DELIVERY"
+    ]
+    severity: Literal["LOW", "MEDIUM", "HIGH"]
+    evidence: dict[str, Any]
+
+
 class RemoteMiningOperation(StrictModel):
     room: str
     colony: str | None
@@ -209,6 +242,10 @@ class RemoteMiningOperation(StrictModel):
     delivery: RemoteDeliveryState
     losses: RemoteLossState
     security: RemoteSecurityState
+    health: Literal["HEALTHY", "DEGRADED", "FAILING", "UNSAFE", "STALE_INTEL", "PAUSED", "UNKNOWN"]
+    reasons: list[str]
+    diagnostics: list[RemoteDiagnostic]
+    objectives: list[str]
 
 
 class CombatOperation(StrictModel):
@@ -220,12 +257,18 @@ class CombatOperation(StrictModel):
 
 class ScoutingOperation(StrictModel):
     id: str
+    orderId: str | None
     origin: str
     room: str | None
-    status: str
+    status: Literal["QUEUED", "SPAWNING", "EN_ROUTE", "OBSERVED", "COMPLETED", "FAILED", "EXPIRED"]
     createdTick: int | None
+    requestedTick: int | None
     observedTick: int | None
+    completedTick: int | None
+    intelLastSeenTick: int | None
+    scoutCreep: str | None
     activeScouts: int
+    failureReason: str | None
 
 
 class OperationsState(StrictModel):
@@ -238,7 +281,9 @@ class OperationsState(StrictModel):
 class IntelController(StrictModel):
     status: Literal["none", "owned", "owned_other", "reserved", "neutral"]
     owner: str | None
+    ownerRelation: Literal["SELF", "ALLY", "NEUTRAL", "HOSTILE", "UNKNOWN"]
     reservation: str | None
+    reservationRelation: Literal["SELF", "ALLY", "NEUTRAL", "HOSTILE", "UNKNOWN"]
     reservationTicks: int | None
     rcl: int
     safeMode: int | None
@@ -264,6 +309,7 @@ class RoomIntel(StrictModel):
     structures: IntelStructures
     hostileCreeps: int
     hostilePlayers: list[str]
+    playerRelations: list[dict[str, str]]
     lastHostileSightingTick: int | None
     hostileSightingsTotal: int
     nearestColony: str | None
@@ -297,11 +343,20 @@ class ExpansionCandidate(StrictModel):
     intelAgeTicks: int
     disqualified: bool
     disqualifiers: list[str]
+    currentOperationalRole: Literal[
+        "OUR_COLONY", "OUR_REMOTE", "NEUTRAL_SCOUTED", "NEUTRAL_UNKNOWN",
+        "SELF_RESERVED", "ALLY_RESERVED", "FOREIGN_RESERVED", "HOSTILE_OWNED",
+        "ALLY_OWNED", "SOURCE_KEEPER", "HIGHWAY", "OTHER"
+    ]
+    claimCandidateStatus: Literal["ELIGIBLE", "NEEDS_FRESH_INTEL", "DISQUALIFIED"]
 
 
 class ExecutionAuthority(StrictModel):
     scouting: bool
+    autoScouting: bool
     expansion: bool
+    remoteMaintenance: bool
+    autoRemoteMaintenance: bool
     remoteMiningChanges: bool
     market: bool
     production: bool
@@ -310,8 +365,12 @@ class ExecutionAuthority(StrictModel):
 
 class AuthorityState(StrictModel):
     mode: Literal["observe", "execute"]
-    allowedActions: list[Literal["NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SCOUT_ROOM"]]
+    allowedActions: list[Literal[
+        "NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SCOUT_ROOM", "REASSESS_REMOTE",
+        "ENSURE_REMOTE_RESERVATION", "ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS"
+    ]]
     execution: ExecutionAuthority
+    matrix: dict[str, dict[str, bool]]
 
 
 class ObserverMetrics(StrictModel):
@@ -320,7 +379,7 @@ class ObserverMetrics(StrictModel):
 
 
 class Telemetry(StrictModel):
-    schemaVersion: Literal[2]
+    schemaVersion: Literal[3]
     tick: int
     shard: str
     cpu: CPUState
@@ -349,10 +408,11 @@ class InterfaceState(StrictModel):
 class OrderResult(StrictModel):
     id: str
     action: str
-    status: Literal["completed", "rejected"]
+    status: Literal["completed", "rejected", "failed", "expired"]
     tick: int
     message: str | None = None
     reason: str | None = None
+    details: dict[str, Any] | None = None
 
 
 class OrderStatus(StrictModel):
@@ -391,7 +451,10 @@ class StrategicOrder(StrictModel):
     id: str
     createdTick: int
     expiresTick: int
-    action: Literal["NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SCOUT_ROOM"]
+    action: Literal[
+        "NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SCOUT_ROOM", "REASSESS_REMOTE",
+        "ENSURE_REMOTE_RESERVATION", "ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS"
+    ]
     parameters: dict[str, Any]
     reason: str
 
@@ -431,16 +494,38 @@ class ScoutRecommendation(StrictModel):
     reason: str = Field(min_length=1, max_length=1000)
 
 
+class StrategicActionProposal(StrictModel):
+    action: Literal[
+        "SCOUT_ROOM", "REASSESS_REMOTE", "ENSURE_REMOTE_RESERVATION",
+        "ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS",
+        "START_REMOTE_MINING", "STOP_REMOTE_MINING", "COLONIZE_ROOM", "ATTACK_ROOM"
+    ]
+    target: str = Field(pattern=r"^[WE]\d+[NS]\d+$")
+    origin: str | None = Field(default=None, pattern=r"^[WE]\d+[NS]\d+$")
+    confidence: float = Field(ge=0.0, le=1.0)
+    evidence: list[str] = Field(max_length=12)
+    reason: str = Field(min_length=1, max_length=1600)
+    expectedOutcome: str = Field(min_length=1, max_length=1600)
+    evaluationWindowTicks: int = Field(ge=50, le=20000)
+
+
 class Advisory(StrictModel):
     status: Literal["healthy", "stable", "strained", "critical", "unknown"]
     phase: str = Field(min_length=1, max_length=120)
     summary: str = Field(min_length=1, max_length=1800)
+    observations: list[str] = Field(max_length=20)
+    assessment: str = Field(min_length=1, max_length=4000)
     strategic_assessment: str = Field(min_length=1, max_length=4000)
     narrative: str = Field(min_length=1, max_length=6000)
     colony_assessments: list[ColonyAssessment] = Field(max_length=20)
     remote_assessments: list[RemoteAssessment] = Field(max_length=40)
     territory_assessment: str = Field(min_length=1, max_length=3000)
     priorities: list[AdvisoryPriority] = Field(max_length=10)
+    recommended_actions: list[StrategicActionProposal] = Field(max_length=8)
+    executable_actions: list[StrategicActionProposal] = Field(max_length=4)
+    uncertainty: list[str] = Field(max_length=16)
+    expected_outcome: str = Field(min_length=1, max_length=2400)
+    follow_up: str = Field(min_length=1, max_length=2400)
     concerns: list[str] = Field(max_length=16)
     questions: list[str] = Field(max_length=16)
     expansion_readiness: Literal[
@@ -448,8 +533,9 @@ class Advisory(StrictModel):
         "BLOCKED_BY_ECONOMY", "BLOCKED_BY_THREAT"
     ]
     expansion_execution_allowed: bool
-    execution_authorization: Literal["ADVISOR_ONLY", "SCOUTING_ONLY"]
+    execution_authorization: Literal["ADVISOR_ONLY", "SCOUTING_ONLY", "EXISTING_REMOTE_MAINTENANCE"]
     recommended_scouting: list[ScoutRecommendation] = Field(max_length=8)
     recommended_review_ticks: int = Field(ge=50, le=20000)
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     journal_entry: str = Field(min_length=1, max_length=5000)
+    journal_narrative: str = Field(min_length=1, max_length=6000)

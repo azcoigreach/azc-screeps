@@ -106,6 +106,27 @@ class HistoryStore:
                 created_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_journal_tick ON journal(screeps_tick DESC, id DESC);
+
+            CREATE TABLE IF NOT EXISTS operations (
+                operation_id TEXT PRIMARY KEY,
+                command_id TEXT UNIQUE,
+                trigger_text TEXT NOT NULL,
+                room TEXT NOT NULL,
+                action TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                confidence REAL,
+                created_tick INTEGER NOT NULL,
+                executed_tick INTEGER,
+                baseline_json TEXT NOT NULL,
+                expected_outcome TEXT NOT NULL,
+                evaluation_tick INTEGER NOT NULL,
+                result_json TEXT,
+                outcome TEXT,
+                outcome_reason TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_operations_state ON operations(outcome, evaluation_tick);
             """
         )
         self._ensure_column("recommendations", "expansion_readiness", "TEXT")
@@ -253,7 +274,7 @@ class HistoryStore:
                 json.dumps([item.model_dump() for item in advisory.priorities], separators=(",", ":")),
                 json.dumps(advisory.questions, separators=(",", ":")),
                 1 if advisory.expansion_readiness == "READY" else 0,
-                advisory.expansion_readiness, advisory.journal_entry, advisory.confidence,
+                advisory.expansion_readiness, advisory.journal_narrative, advisory.confidence,
                 usage.get("input_tokens"), usage.get("output_tokens"), usage.get("total_tokens"),
                 estimated_cost_usd, utc_now(),
             ),
@@ -262,7 +283,7 @@ class HistoryStore:
             observation_tick,
             "ai_review",
             "AI strategic review",
-            advisory.journal_entry,
+            advisory.journal_narrative,
             {"status": advisory.status, "expansionReadiness": advisory.expansion_readiness},
             model=model,
             recommendation_id=recommendation_id,
@@ -354,18 +375,120 @@ class HistoryStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def create_operation(
+        self,
+        operation_id: str,
+        command_id: str,
+        trigger: str,
+        room: str,
+        action: str,
+        reason: str,
+        confidence: float | None,
+        created_tick: int,
+        baseline: dict[str, Any],
+        expected_outcome: str,
+        evaluation_tick: int,
+    ) -> None:
+        now = utc_now()
+        self.connection.execute(
+            """
+            INSERT INTO operations (
+                operation_id, command_id, trigger_text, room, action, reason, confidence,
+                created_tick, executed_tick, baseline_json, expected_outcome,
+                evaluation_tick, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+            """,
+            (
+                operation_id, command_id, trigger, room, action, reason, confidence,
+                created_tick, json.dumps(baseline, separators=(",", ":")), expected_outcome,
+                evaluation_tick, now, now,
+            ),
+        )
+        self.append_journal(
+            created_tick,
+            "commander_action",
+            f"Commander intervened in {room}",
+            f"The commander identified {trigger}. It authorized {action} for the existing remote "
+            f"{room} through AZC's deterministic controller. Expected outcome: {expected_outcome} "
+            f"The operation will be evaluated at or after tick {evaluation_tick}.",
+            {"operationId": operation_id, "action": action, "baseline": baseline},
+            dedupe_key=f"operation:{operation_id}:started",
+        )
+        self.connection.commit()
+
+    def mark_operation_executed(self, command_id: str, tick: int) -> None:
+        self.connection.execute(
+            "UPDATE operations SET executed_tick = COALESCE(executed_tick, ?), updated_at = ? WHERE command_id = ?",
+            (tick, utc_now(), command_id),
+        )
+        self.connection.commit()
+
+    def due_operations(self, tick: int) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT * FROM operations WHERE outcome IS NULL AND evaluation_tick <= ? ORDER BY evaluation_tick",
+            (tick,),
+        ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["baseline"] = json.loads(item.pop("baseline_json"))
+            result.append(item)
+        return result
+
+    def complete_operation(
+        self,
+        operation_id: str,
+        tick: int,
+        outcome: str,
+        result: dict[str, Any],
+        reason: str,
+    ) -> None:
+        self.connection.execute(
+            """
+            UPDATE operations SET result_json = ?, outcome = ?, outcome_reason = ?, updated_at = ?
+            WHERE operation_id = ?
+            """,
+            (json.dumps(result, separators=(",", ":")), outcome, reason, utc_now(), operation_id),
+        )
+        operation = self.connection.execute(
+            "SELECT room, action FROM operations WHERE operation_id = ?", (operation_id,)
+        ).fetchone()
+        if operation:
+            self.append_journal(
+                tick,
+                "commander_evaluation",
+                f"{operation['room']} intervention evaluated: {outcome}",
+                f"The deterministic evaluation of {operation['action']} in {operation['room']} "
+                f"produced {outcome}. {reason}",
+                {"operationId": operation_id, "outcome": outcome, "result": result},
+                dedupe_key=f"operation:{operation_id}:evaluated",
+            )
+        self.connection.commit()
+
+    def recent_operations(self, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT * FROM operations ORDER BY created_tick DESC LIMIT ?", (limit,)
+        ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["baseline"] = json.loads(item.pop("baseline_json"))
+            item["result"] = json.loads(item.pop("result_json")) if item.get("result_json") else None
+            result.append(item)
+        return result
+
     def _journal_observation_changes(self, previous: dict[str, Any] | None, telemetry: Telemetry) -> None:
         current = telemetry.model_dump(by_alias=True)
-        if previous is None or previous["telemetry"].get("schemaVersion") != 2:
+        if previous is None or previous["telemetry"].get("schemaVersion") != 3:
             rooms = ", ".join(sorted(telemetry.colonies)) or "no owned rooms"
             self.append_journal(
                 telemetry.tick,
                 "telemetry_baseline",
                 "Strategic telemetry baseline established",
-                f"The commander established its first detailed Phase 3 baseline for {rooms}. "
+                f"The commander established its first detailed Phase 4 baseline for {rooms}. "
                 f"It can now compare colony energy, population, remote delivery counters, territory, and threats over time.",
                 {"rooms": sorted(telemetry.colonies)},
-                dedupe_key=f"baseline:{telemetry.shard}:2",
+                dedupe_key=f"baseline:{telemetry.shard}:3",
             )
             return
 

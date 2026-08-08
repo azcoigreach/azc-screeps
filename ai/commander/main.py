@@ -14,6 +14,7 @@ from .schemas import Telemetry
 from .screeps_client import ScreepsAPIClient, ScreepsAPIError
 from .transport import CommanderTransport, TransportError
 from .trends import TrendAnalyzer
+from .remote_ops import REMOTE_ACTIONS, RemoteEconomics, remote_snapshot
 
 
 def parser() -> argparse.ArgumentParser:
@@ -33,9 +34,20 @@ def parser() -> argparse.ArgumentParser:
     journal.add_argument("--last", type=int, default=20)
     journal.add_argument("--since-tick", type=int)
     commands.add_parser("cost", help="show cumulative OpenAI advisory cost")
+    commands.add_parser("operations", help="show active and evaluated AI operations")
+    commands.add_parser("remotes", help="show deterministic remote health and economics")
+    commands.add_parser("intel", help="show known, stale, and unknown territorial intelligence")
     scout = commands.add_parser("scout", help="queue the guarded SCOUT_ROOM action")
     scout.add_argument("room", help="room to observe, for example W38N10")
     scout.add_argument("origin", help="owned origin colony, for example W37N11")
+    for name, action in (
+        ("reassess-remote", "REASSESS_REMOTE"),
+        ("ensure-remote-reservation", "ENSURE_REMOTE_RESERVATION"),
+        ("ensure-remote-infrastructure", "ENSURE_REMOTE_INFRASTRUCTURE"),
+        ("rebalance-remote-logistics", "REBALANCE_REMOTE_LOGISTICS"),
+    ):
+        command = commands.add_parser(name, help=f"queue guarded {action}")
+        command.add_argument("room")
     return root
 
 
@@ -74,6 +86,7 @@ def display_status(transport: CommanderTransport) -> str:
         lines.extend([
             "",
             "Empire:",
+            f"Player: {telemetry.empire.player or 'UNKNOWN'}",
             f"Owned rooms: {telemetry.empire.gcl.ownedRooms}",
             f"Creeps: {telemetry.empire.creeps}",
             f"GCL: {telemetry.empire.gcl.level} ({telemetry.empire.gcl.availableClaimSlots} claim slots available)",
@@ -86,7 +99,9 @@ def display_status(transport: CommanderTransport) -> str:
         for room, colony in telemetry.colonies.items():
             lines.append(
                 f"{room}: RCL{colony.controller.rcl}, storage {colony.energy.storageEnergy:,}, "
-                f"population {colony.population.aliveTotal}/{colony.population.expectedTotal or '?'}"
+                f"population {colony.population.state} "
+                f"({colony.population.aliveTotal}/{colony.population.desiredTotal or '?'}, "
+                f"queued {colony.population.queuedTotal})"
             )
     if health.last_error:
         lines.extend(["", f"Last error: {health.last_error}"])
@@ -195,17 +210,86 @@ def show_cost(history: HistoryStore) -> None:
     print(f"Average advisory: ${float(cost['average'] or 0):.6f}")
 
 
+def show_operations(history: HistoryStore) -> None:
+    print("=== AI OPERATIONS ===")
+    operations = history.recent_operations()
+    if not operations:
+        print("No operational interventions stored.")
+        return
+    for operation in operations:
+        state = operation["outcome"] or (
+            "EVALUATING" if operation["executed_tick"] is not None else "AWAITING_EXECUTION"
+        )
+        print(f"\n{operation['room']} — {operation['action']} — {state}")
+        print(f"  Operation: {operation['operation_id']}")
+        print(f"  Trigger: {operation['trigger_text']}")
+        print(f"  Evaluation tick: {operation['evaluation_tick']}")
+        if operation["outcome_reason"]:
+            print(f"  Result: {operation['outcome_reason']}")
+
+
+def show_remotes(history: HistoryStore, telemetry: Telemetry) -> None:
+    print("=== REMOTE OPERATIONS ===")
+    economics = RemoteEconomics(history).build(telemetry)
+    for remote in telemetry.operations.remoteMining:
+        print(f"\n{remote.room}\n{remote.health}")
+        print(
+            f"Staffing: {remote.population.state} "
+            f"({remote.population.aliveTotal}/{remote.population.desiredTotal}, "
+            f"queued {remote.population.queuedTotal})"
+        )
+        reservation = remote.reservation
+        print(
+            f"Reservation: {reservation.relation} "
+            f"{reservation.username or 'none'}, {reservation.ticksToEnd or 0} ticks"
+        )
+        print(
+            f"Backlog: {remote.mining.energyWaiting:,}; containers "
+            f"{remote.mining.containers} + {remote.mining.containerSites} sites; "
+            f"losses {remote.losses.creepLossesTotal}"
+        )
+        window = economics[remote.room]["windows"]["1000"]
+        if window.get("available"):
+            delivery = window["grossDeliveryPer1000Ticks"]["value"]
+            uptime = window["operationalUptimePercent"]["value"]
+            print(f"Measured delivery / 1,000 ticks: {delivery if delivery is not None else 'unknown'}")
+            print(f"Operational uptime: {uptime if uptime is not None else 'unknown'}%")
+            print(f"Delivery efficiency: {window['measuredDeliveryEfficiency']}")
+        else:
+            print(f"Economics: {window['reason']}")
+        if remote.diagnostics:
+            print("Diagnostics:")
+            for diagnostic in remote.diagnostics:
+                print(f"- {diagnostic.diagnostic} ({diagnostic.severity})")
+
+
+def show_intel(telemetry: Telemetry) -> None:
+    print("=== TERRITORIAL INTELLIGENCE ===")
+    print(f"Player: {telemetry.empire.player or 'UNKNOWN'}")
+    print(f"Known rooms: {len(telemetry.intelligence.knownRooms)}")
+    print("Unknown: " + (", ".join(telemetry.intelligence.unknownRooms) or "none"))
+    print("Stale: " + (", ".join(telemetry.intelligence.staleRooms) or "none"))
+    for room in telemetry.intelligence.knownRooms:
+        print(
+            f"- {room.room}: {room.controller.status}; owner "
+            f"{room.controller.ownerRelation}; reservation {room.controller.reservationRelation}; "
+            f"intel age {room.intelAgeTicks}"
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         config = CommanderConfig.from_env()
-        if args.command in {"history", "journal", "cost"}:
+        if args.command in {"history", "journal", "cost", "operations"}:
             history = HistoryStore(config.database_path)
             try:
                 if args.command == "history":
                     show_history(history, max(1, args.limit))
                 elif args.command == "journal":
                     show_journal(history, max(1, args.last), args.since_tick)
+                elif args.command == "operations":
+                    show_operations(history)
                 else:
                     show_cost(history)
                 return 0
@@ -220,6 +304,14 @@ def main(argv: list[str] | None = None) -> int:
             if args.command == "status":
                 print(display_status(transport))
                 return 0 if health.screeps_online else 1
+            if args.command in {"remotes", "intel"}:
+                if health.telemetry is None:
+                    raise TransportError("No valid telemetry is available")
+                if args.command == "remotes":
+                    show_remotes(history, health.telemetry)
+                else:
+                    show_intel(health.telemetry)
+                return 0
             if health.current_tick is None:
                 raise TransportError("No Phase 1 telemetry/status tick is available; activate ai-test first")
             if args.command == "advise":
@@ -239,8 +331,28 @@ def main(argv: list[str] | None = None) -> int:
                 order = transport.send_safe_command(
                     "SCOUT_ROOM",
                     {"room": args.room, "origin": args.origin},
-                    reason=f"Manual Phase 3 intelligence request for {args.room}",
+                    reason=f"Manual Phase 4 intelligence request for {args.room}",
                 )
+            elif args.command in {
+                "reassess-remote", "ensure-remote-reservation",
+                "ensure-remote-infrastructure", "rebalance-remote-logistics",
+            }:
+                action = {
+                    "reassess-remote": "REASSESS_REMOTE",
+                    "ensure-remote-reservation": "ENSURE_REMOTE_RESERVATION",
+                    "ensure-remote-infrastructure": "ENSURE_REMOTE_INFRASTRUCTURE",
+                    "rebalance-remote-logistics": "REBALANCE_REMOTE_LOGISTICS",
+                }[args.command]
+                order = transport.send_safe_command(
+                    action, {"room": args.room}, reason=f"Manual existing-remote objective for {args.room}"
+                )
+                baseline = remote_snapshot(health.telemetry, args.room) if health.telemetry else None
+                if baseline is not None:
+                    history.create_operation(
+                        f"op-{order.id}", order.id, "manual operator request", args.room,
+                        action, f"Manual existing-remote objective for {args.room}", None,
+                        health.telemetry.tick, baseline, "remote health should improve", health.telemetry.tick + 1000,
+                    )
             else:
                 raise TransportError(f"Unsupported command {args.command}")
             print(f"Queued {order.action}: {order.id}")

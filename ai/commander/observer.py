@@ -65,6 +65,8 @@ class ObservationProcessor:
             remotes[remote.room] = {
                 "active": remote.active,
                 "visible": remote.visible,
+                "health": remote.health,
+                "diagnostics": [item.model_dump() for item in remote.diagnostics],
                 "population": remote.population.model_dump(),
                 "waitingEnergyBand": remote.mining.energyWaiting // 500,
                 "deliveryBand": remote.delivery.energyDeliveredTotal // 5000,
@@ -74,6 +76,7 @@ class ObservationProcessor:
         material = {
             "shard": telemetry.shard,
             "empire": {
+                "player": telemetry.empire.player,
                 "gclLevel": telemetry.empire.gcl.level,
                 "claimSlots": telemetry.empire.gcl.availableClaimSlots,
                 "creepBand": telemetry.empire.creeps // 5,
