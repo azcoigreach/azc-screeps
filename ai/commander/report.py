@@ -101,7 +101,10 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
     lines.extend(["", "API cost"])
     lines.append(
         f"Today ${float(cost['today'] or 0):.6f}; lifetime ${float(cost['lifetime'] or 0):.6f}; "
-        f"{int(cost['advisories'] or 0)} advisories."
+        f"{int(cost['advisories'] or 0)} advisories ({int(cost['reviews_today'] or 0)} today); "
+        f"scheduler triggered/suppressed/coalesced "
+        f"{int(cost['reviews_triggered'] or 0)}/{int(cost['reviews_suppressed'] or 0)}/"
+        f"{int(cost['events_coalesced'] or 0)}."
     )
     try:
         database_bytes = history.path.stat().st_size

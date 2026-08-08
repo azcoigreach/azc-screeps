@@ -24,6 +24,7 @@ class ObservationUpdate:
     material_hash: str
     is_new: bool
     material_change: bool
+    previous_telemetry: Telemetry | None = None
 
 
 class ObservationProcessor:
@@ -38,11 +39,21 @@ class ObservationProcessor:
         telemetry_hash = content_hash(raw)
         material_hash = self.material_hash(telemetry)
         previous = self.history.latest_observation()
+        previous_telemetry = None
+        if previous is not None:
+            try:
+                previous_telemetry = Telemetry.model_validate(previous["telemetry"])
+            except ValidationError:
+                # Old history rows must never prevent fresh telemetry processing.
+                previous_telemetry = None
         is_new = previous is None or previous["telemetry_hash"] != telemetry_hash
         material_change = previous is None or previous["material_hash"] != material_hash
         if is_new:
             self.history.save_observation(telemetry, telemetry_hash, material_hash)
-        return ObservationUpdate(telemetry, telemetry_hash, material_hash, is_new, material_change)
+        return ObservationUpdate(
+            telemetry, telemetry_hash, material_hash, is_new, material_change,
+            previous_telemetry,
+        )
 
     @staticmethod
     def material_hash(telemetry: Telemetry) -> str:

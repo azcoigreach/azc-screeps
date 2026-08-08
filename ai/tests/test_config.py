@@ -52,6 +52,10 @@ class ConfigTests(unittest.TestCase):
                 self.assertEqual(config.openai_timeout_seconds, 120.0)
                 self.assertEqual(config.heartbeat_interval_seconds, 120.0)
                 self.assertEqual(config.rate_limit_safety_seconds, 2.0)
+                self.assertEqual(config.review_min_interval_seconds, 900.0)
+                self.assertEqual(config.review_max_idle_interval_seconds, 3600.0)
+                self.assertEqual(config.review_event_debounce_seconds, 120.0)
+                self.assertEqual(config.daily_cost_warning_usd, 2.0)
                 self.assertNotIn("OPENAI_API_KEY", os.environ)
 
     def test_environment_overrides_env_file(self) -> None:
@@ -70,6 +74,17 @@ class ConfigTests(unittest.TestCase):
     def test_rejects_negative_rate_limit_safety_margin(self) -> None:
         with patch.dict(os.environ, {"SCREEPS_RATE_LIMIT_SAFETY_SECONDS": "-1"}, clear=True):
             with self.assertRaisesRegex(ValueError, "cannot be negative"):
+                CommanderConfig.from_env(Path("/nonexistent"))
+
+    def test_rejects_review_cadence_that_can_restore_poll_driven_spend(self) -> None:
+        with patch.dict(os.environ, {"AI_REVIEW_MIN_INTERVAL_SECONDS": "300"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "at least 600"):
+                CommanderConfig.from_env(Path("/nonexistent"))
+        with patch.dict(os.environ, {
+            "AI_REVIEW_MIN_INTERVAL_SECONDS": "900",
+            "AI_REVIEW_MAX_IDLE_INTERVAL_SECONDS": "600",
+        }, clear=True):
+            with self.assertRaisesRegex(ValueError, "at least the minimum"):
                 CommanderConfig.from_env(Path("/nonexistent"))
 
 

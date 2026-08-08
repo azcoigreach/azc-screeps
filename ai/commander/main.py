@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import os
+import socket
 import sys
 import time
+import uuid
 from datetime import UTC, datetime
 
 from .advisor import AdvisorService, format_advisory
@@ -18,6 +21,7 @@ from .trends import TrendAnalyzer
 from .remote_ops import REMOTE_ACTIONS, RemoteEconomics, remote_snapshot
 from .autonomy import AutonomyController
 from .report import build_report
+from .review_scheduler import ReviewScheduler
 
 
 def parser() -> argparse.ArgumentParser:
@@ -196,14 +200,43 @@ def run_advice(
 
 
 def watch(config: CommanderConfig, history: HistoryStore, transport: CommanderTransport) -> int:
-    history.record_event("commander_startup", "Commander watch loop started", {"shard": config.screeps_shard})
+    lease_key = f"commander_watch_lease:{config.screeps_shard}"
+    lease_owner = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:12]}"
+    lease_ttl = max(180.0, config.poll_interval_seconds * 4)
+    acquired, existing_lease = history.acquire_lease(
+        lease_key, lease_owner, ttl_seconds=lease_ttl,
+    )
+    if not acquired:
+        raise TransportError(
+            "Another commander watcher owns the active SQLite lease until "
+            f"{datetime.fromtimestamp(float(existing_lease['expires_at']), UTC).isoformat(timespec='seconds')}"
+        )
+    history.record_event(
+        "commander_startup", "Commander watch loop started",
+        {"shard": config.screeps_shard, "leaseOwner": lease_owner},
+    )
     last_heartbeat = 0.0
-    last_review = 0.0
     autonomy = AutonomyController(history, transport)
-    print(f"Watching {config.screeps_shard}; poll={config.poll_interval_seconds:.0f}s, review={config.review_interval_seconds:.0f}s")
+    scheduler = ReviewScheduler(
+        history,
+        min_interval_seconds=config.review_min_interval_seconds,
+        max_idle_interval_seconds=config.review_max_idle_interval_seconds,
+        debounce_seconds=config.review_event_debounce_seconds,
+    )
+    print(
+        f"Watching {config.screeps_shard}; poll={config.poll_interval_seconds:.0f}s, "
+        f"review=min {config.review_min_interval_seconds / 60:.0f}m/"
+        f"max {config.review_max_idle_interval_seconds / 60:.0f}m/"
+        f"debounce {config.review_event_debounce_seconds / 60:.0f}m"
+    )
     try:
         while True:
             try:
+                renewed, _ = history.acquire_lease(
+                    lease_key, lease_owner, ttl_seconds=lease_ttl,
+                )
+                if not renewed:
+                    raise TransportError("Commander watcher lost its process-ownership lease")
                 health = transport.poll()
                 now = time.monotonic()
                 queued_order = transport.flush_queued_command()
@@ -221,22 +254,16 @@ def watch(config: CommanderConfig, history: HistoryStore, transport: CommanderTr
                     if transport.heartbeat():
                         last_heartbeat = now
                 update = transport.last_observation
-                should_review = (
-                    update is not None
-                    and update.telemetry is not None
-                    and (
-                        last_review == 0.0
-                        or (update.is_new and update.material_change)
-                        or now - last_review >= config.review_interval_seconds
-                    )
-                )
-                if should_review and config.openai_token:
+                decision = scheduler.evaluate(update) if update is not None and config.openai_token else None
+                if decision is not None and decision.should_review:
                     try:
+                        event_names = ", ".join(event.key for event in decision.events) or "periodic fallback"
+                        print(f"Strategic review due: {decision.reason}; events={event_names}")
                         run_advice(config, history, transport, update.telemetry, writeback=True)
-                        last_review = now
+                        scheduler.mark_success(decision.strategic_hash, reason=decision.reason)
                     except OpenAIAdvisorError as exc:
                         print(f"Advisor error: {exc}", file=sys.stderr)
-                        last_review = now
+                        scheduler.mark_failure(str(exc))
                 elif update is not None and update.is_new:
                     print(display_status(transport))
             except ScreepsAPIError as exc:
@@ -252,6 +279,8 @@ def watch(config: CommanderConfig, history: HistoryStore, transport: CommanderTr
         history.record_event("commander_shutdown", "Commander watch loop stopped", {})
         print("\nCommander stopped; Screeps deterministic automation continues independently.")
         return 0
+    finally:
+        history.release_lease(lease_key, lease_owner)
 
 
 def show_history(history: HistoryStore, limit: int) -> None:
@@ -285,14 +314,33 @@ def show_journal(history: HistoryStore, limit: int, since_tick: int | None) -> N
             print(f"Advisor: {entry['model']}")
 
 
-def show_cost(history: HistoryStore) -> None:
+def show_cost(history: HistoryStore, warning_threshold: float = 2.0) -> None:
     cost = history.cost_summary()
     print("=== OPENAI ADVISORY COST ===")
     print(f"\nToday:       ${float(cost['today'] or 0):.6f}")
     print(f"Last 7 days: ${float(cost['week'] or 0):.6f}")
     print(f"Lifetime:    ${float(cost['lifetime'] or 0):.6f}")
-    print(f"\nAdvisories: {int(cost['advisories'] or 0)}")
+    print(f"\nAdvisories: {int(cost['advisories'] or 0)} ({int(cost['reviews_today'] or 0)} today)")
     print(f"Average advisory: ${float(cost['average'] or 0):.6f}")
+    interval = cost.get("average_interval_seconds")
+    print(f"Average interval (24h): {_duration_seconds(interval) if interval else 'n/a'}")
+    estimated = cost.get("estimated_daily_cost")
+    print(f"Estimated daily cost: {f'${float(estimated):.6f}' if estimated is not None else 'n/a'}")
+    print(
+        f"Scheduler: {int(cost['reviews_triggered'] or 0)} triggered, "
+        f"{int(cost['reviews_suppressed'] or 0)} suppressed, "
+        f"{int(cost['events_coalesced'] or 0)} events coalesced"
+    )
+    if float(cost["today"] or 0) >= warning_threshold:
+        print(f"WARNING: today's cost has reached the ${warning_threshold:.2f} warning threshold.")
+
+
+def _duration_seconds(seconds: float) -> str:
+    if seconds >= 3600:
+        return f"{seconds / 3600:.1f}h"
+    if seconds >= 60:
+        return f"{seconds / 60:.1f}m"
+    return f"{seconds:.0f}s"
 
 
 def show_operations(history: HistoryStore) -> None:
@@ -433,7 +481,7 @@ def main(argv: list[str] | None = None) -> int:
                 elif args.command == "operations":
                     show_operations(history)
                 else:
-                    show_cost(history)
+                    show_cost(history, config.daily_cost_warning_usd)
                 return 0
             finally:
                 history.close()
@@ -464,6 +512,15 @@ def main(argv: list[str] | None = None) -> int:
                 if health.telemetry is None:
                     raise TransportError("No valid telemetry is available for advisory analysis")
                 run_advice(config, history, transport, health.telemetry, writeback=not args.no_writeback)
+                ReviewScheduler(
+                    history,
+                    min_interval_seconds=config.review_min_interval_seconds,
+                    max_idle_interval_seconds=config.review_max_idle_interval_seconds,
+                    debounce_seconds=config.review_event_debounce_seconds,
+                ).mark_success(
+                    ReviewScheduler.strategic_hash(health.telemetry),
+                    reason="manual CLI request", manual=True,
+                )
                 return 0
             if args.command == "request-status":
                 order = transport.send_safe_command("REQUEST_STATUS", reason="Manual CLI status request")

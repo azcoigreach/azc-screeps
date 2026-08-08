@@ -44,9 +44,9 @@ and Python caches are ignored by Git and excluded from the Docker build
 context.
 
 The default shard is `shard0`. Override `SCREEPS_SHARD` if the test colony is
-on another shard. `OPENAI_MODEL`, polling, heartbeat, strategic review interval,
-the separate OpenAI request timeout, database location, and cost rates are
-configurable using `ai/.env.example`.
+on another shard. `OPENAI_MODEL`, polling, heartbeat, strategic review cadence,
+the separate OpenAI request timeout, database location, cost rates, and daily
+cost warning are configurable using `ai/.env.example`.
 
 ## Commands
 
@@ -71,10 +71,16 @@ PYTHONPATH=ai ai/.venv/bin/python -m commander.main report --hours 24
 Alternatively, from `ai/`, omit `PYTHONPATH=ai` and run the selected module with
 `python -m commander.main ...`.
 
-`watch` polls every 30 seconds, sends a heartbeat no more often than every two
-minutes, and reviews on startup, material change, or after five minutes. It does
-not call OpenAI on every poll. `Ctrl-C` stops only the external commander; the
-existing deterministic Screeps bot continues independently.
+`watch` polls every 30 seconds and sends a heartbeat no more often than every two
+minutes. Paid reviews are event-driven: material changes are coalesced for two
+minutes and reviewed no more often than every 15 minutes, a quiet empire gets a
+fallback review after one hour, and only urgent events such as an owned-room
+attack or protection transition bypass the normal success cadence. Normalized
+strategic-state hashes suppress transient reversals and unchanged restarts.
+Scheduler state and metrics persist in SQLite, and an expiring ownership lease
+prevents two watcher processes from running against the same shard/database.
+Manual `advise` requests always run. `Ctrl-C` stops only the external commander;
+the existing deterministic Screeps bot continues independently.
 
 Memory-segment writes use a persistent quota budget shared through the SQLite
 database. Server `X-RateLimit-*` headers override the conservative local
@@ -95,8 +101,8 @@ docker compose logs -f commander
 docker compose down
 ```
 
-Compose exposes no ports, retries fatal exits at most five times, reads the root
-`.env`, and persists SQLite data in `ai/data/`. Transient Screeps API failures
+Compose exposes no ports, retries fatal exits at most five times, reads
+`ai/.env`, and persists SQLite data in `ai/data/`. Transient Screeps API failures
 are handled inside `watch` and therefore do not consume those restart attempts.
 
 ## Tests

@@ -65,6 +65,10 @@ class CommanderConfig:
     poll_interval_seconds: float
     heartbeat_interval_seconds: float
     review_interval_seconds: float
+    review_min_interval_seconds: float
+    review_max_idle_interval_seconds: float
+    review_event_debounce_seconds: float
+    daily_cost_warning_usd: float
     http_timeout_seconds: float
     openai_timeout_seconds: float
     command_expiry_ticks: int
@@ -91,6 +95,10 @@ class CommanderConfig:
             poll_interval_seconds=_float("AI_POLL_INTERVAL_SECONDS", 30.0),
             heartbeat_interval_seconds=_float("AI_HEARTBEAT_INTERVAL_SECONDS", 120.0),
             review_interval_seconds=_float("AI_REVIEW_INTERVAL_SECONDS", 300.0),
+            review_min_interval_seconds=_float("AI_REVIEW_MIN_INTERVAL_SECONDS", 900.0),
+            review_max_idle_interval_seconds=_float("AI_REVIEW_MAX_IDLE_INTERVAL_SECONDS", 3600.0),
+            review_event_debounce_seconds=_float("AI_REVIEW_EVENT_DEBOUNCE_SECONDS", 120.0),
+            daily_cost_warning_usd=_float("AI_DAILY_COST_WARNING_USD", 2.0),
             http_timeout_seconds=_float("SCREEPS_HTTP_TIMEOUT", 10.0),
             openai_timeout_seconds=_float("OPENAI_TIMEOUT_SECONDS", 120.0),
             command_expiry_ticks=_int("AI_COMMAND_EXPIRY_TICKS", 1000),
@@ -106,6 +114,14 @@ class CommanderConfig:
             raise ValueError("AI_HEARTBEAT_INTERVAL_SECONDS must be at least 60")
         if config.review_interval_seconds < 60:
             raise ValueError("AI_REVIEW_INTERVAL_SECONDS must be at least 60")
+        if config.review_min_interval_seconds < 600:
+            raise ValueError("AI_REVIEW_MIN_INTERVAL_SECONDS must be at least 600")
+        if config.review_max_idle_interval_seconds < config.review_min_interval_seconds:
+            raise ValueError("AI_REVIEW_MAX_IDLE_INTERVAL_SECONDS must be at least the minimum interval")
+        if not 60 <= config.review_event_debounce_seconds <= 300:
+            raise ValueError("AI_REVIEW_EVENT_DEBOUNCE_SECONDS must be between 60 and 300")
+        if config.daily_cost_warning_usd <= 0:
+            raise ValueError("AI_DAILY_COST_WARNING_USD must be positive")
         if config.openai_timeout_seconds <= 0:
             raise ValueError("OPENAI_TIMEOUT_SECONDS must be positive")
         if config.rate_limit_safety_seconds < 0:

@@ -60,6 +60,24 @@ class TransportHistoryTests(unittest.TestCase):
         self.assertEqual(row["hostile_count"], 0)
         self.assertEqual(len(json.loads(row["remote_mining_summary"])), 3)
 
+    def test_cross_process_lease_prevents_duplicate_watchers_and_expires(self) -> None:
+        acquired, _ = self.history.acquire_lease(
+            "watch:shard0", "owner-a", ttl_seconds=180, now_epoch=1000,
+        )
+        self.assertTrue(acquired)
+        acquired, state = self.history.acquire_lease(
+            "watch:shard0", "owner-b", ttl_seconds=180, now_epoch=1100,
+        )
+        self.assertFalse(acquired)
+        self.assertEqual(state["owner"], "owner-a")
+        acquired, state = self.history.acquire_lease(
+            "watch:shard0", "owner-b", ttl_seconds=180, now_epoch=1181,
+        )
+        self.assertTrue(acquired)
+        self.assertEqual(state["owner"], "owner-b")
+        self.assertFalse(self.history.release_lease("watch:shard0", "owner-a"))
+        self.assertTrue(self.history.release_lease("watch:shard0", "owner-b"))
+
     def test_malformed_telemetry_is_rejected(self) -> None:
         with self.assertRaises(TelemetryError):
             ObservationProcessor(self.history).process('{"schemaVersion":1}')

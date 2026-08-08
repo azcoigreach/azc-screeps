@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -289,6 +290,61 @@ class HistoryStore:
         )
         self.connection.commit()
 
+    def acquire_lease(
+        self,
+        key: str,
+        owner: str,
+        *,
+        ttl_seconds: float,
+        now_epoch: float | None = None,
+    ) -> tuple[bool, dict[str, Any]]:
+        """Acquire or renew an expiring cross-process lease atomically."""
+        now = time.time() if now_epoch is None else now_epoch
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.connection.execute(
+                "SELECT value_json FROM transport_state WHERE key = ?", (key,)
+            ).fetchone()
+            state = {} if row is None else json.loads(row["value_json"])
+            current_owner = state.get("owner")
+            expires_at = float(state.get("expires_at") or 0)
+            acquired = current_owner == owner or expires_at <= now
+            if acquired:
+                state = {"owner": owner, "acquired_at": now, "expires_at": now + ttl_seconds}
+                self.connection.execute(
+                    """
+                    INSERT INTO transport_state (key, value_json, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value_json = excluded.value_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    (key, json.dumps(state, separators=(",", ":")), utc_now()),
+                )
+            self.connection.commit()
+            return acquired, state
+        except Exception:
+            self.connection.rollback()
+            raise
+
+    def release_lease(self, key: str, owner: str) -> bool:
+        """Release a lease only when it is still owned by this process."""
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.connection.execute(
+                "SELECT value_json FROM transport_state WHERE key = ?", (key,)
+            ).fetchone()
+            state = {} if row is None else json.loads(row["value_json"])
+            if state.get("owner") != owner:
+                self.connection.rollback()
+                return False
+            self.connection.execute("DELETE FROM transport_state WHERE key = ?", (key,))
+            self.connection.commit()
+            return True
+        except Exception:
+            self.connection.rollback()
+            raise
+
     def reserve_segment_write(
         self,
         key: str,
@@ -487,12 +543,52 @@ class HistoryStore:
                 COALESCE(SUM(CASE WHEN created_at >= ? THEN estimated_cost_usd ELSE 0 END), 0) AS week,
                 COALESCE(SUM(estimated_cost_usd), 0) AS lifetime,
                 COUNT(*) AS advisories,
-                AVG(estimated_cost_usd) AS average
+                AVG(estimated_cost_usd) AS average,
+                SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS reviews_today
             FROM recommendations
             """,
-            (today, week),
+            (today, week, today),
         ).fetchone()
-        return dict(row)
+        result = dict(row)
+        recent_rows = self.connection.execute(
+            "SELECT created_at, estimated_cost_usd FROM recommendations "
+            "WHERE created_at >= ? ORDER BY created_at",
+            ((now - timedelta(hours=24)).isoformat(),),
+        ).fetchall()
+        timestamps = []
+        for item in recent_rows:
+            try:
+                timestamps.append(datetime.fromisoformat(item["created_at"]).timestamp())
+            except (TypeError, ValueError):
+                continue
+        intervals = [later - earlier for earlier, later in zip(timestamps, timestamps[1:]) if later > earlier]
+        average_interval = sum(intervals) / len(intervals) if intervals else None
+        recent_costs = [float(item["estimated_cost_usd"]) for item in recent_rows if item["estimated_cost_usd"] is not None]
+        average_recent_cost = sum(recent_costs) / len(recent_costs) if recent_costs else float(result["average"] or 0)
+        result["average_interval_seconds"] = average_interval
+        result["estimated_daily_cost"] = (
+            average_recent_cost * 86400 / average_interval if average_interval else None
+        )
+
+        scheduler_state = self.transport_state("llm_review_scheduler_v1") or {}
+        metrics = scheduler_state.get("metrics", {})
+        result["reviews_suppressed"] = int(metrics.get("suppressed", 0))
+        result["events_coalesced"] = int(metrics.get("coalesced", 0))
+        result["reviews_triggered"] = int(metrics.get("triggered", 0))
+        result["last_review_at"] = scheduler_state.get("last_review_at")
+        event_counts = self.connection.execute(
+            """
+            SELECT event_type, COUNT(*) AS count FROM events
+            WHERE created_at >= ? AND event_type IN ('review_suppressed', 'review_coalesced', 'review_triggered')
+            GROUP BY event_type
+            """,
+            (today,),
+        ).fetchall()
+        today_counts = {item["event_type"]: item["count"] for item in event_counts}
+        result["reviews_suppressed_today"] = int(today_counts.get("review_suppressed", 0))
+        result["events_coalesced_today"] = int(today_counts.get("review_coalesced", 0))
+        result["reviews_triggered_today"] = int(today_counts.get("review_triggered", 0))
+        return result
 
     def record_event(self, event_type: str, message: str, details: dict[str, Any] | None = None) -> None:
         self.connection.execute(
