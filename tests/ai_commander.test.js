@@ -263,6 +263,7 @@ test("SCOUT_ROOM queues one one-shot mission through the existing scout framewor
 	assert.strictEqual(requests[0].ai_managed, true);
 	assert.strictEqual(requests[0].respawn, false);
 	assert.strictEqual(requests[0].count, 1);
+	assert.strictEqual(requests[0].custom.priority, 14);
 	assert.strictEqual(requests[0].dest_pos.roomName, "W1N2");
 	assert.strictEqual(requests[0].status, "QUEUED");
 	assert.deepStrictEqual(requests[0].list_route, ["W1N1", "W1N2"]);

@@ -459,7 +459,7 @@ global.AIInterface = {
 			requested_tick: Game.time,
 			rally_pos: rallyPos,
 			dest_pos: { x: 25, y: 25, roomName: roomName, shard: _.get(Game, ["shard", "name"], "sim") },
-			custom: { priority: 22, level: 1, body: "scout", name: null },
+			custom: { priority: 14, level: 1, body: "scout", name: null },
 			list_route: _.uniq(route),
 			spawn_rooms: null,
 			creeps: [],

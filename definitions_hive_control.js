@@ -659,6 +659,10 @@
 
 		_.each(requests, request => {
 			request.count = Math.max(1, _.get(request, "count", 1));
+			// One-part, concurrency-capped AI scouts may match remote logistics but
+			// never outrank defense or critical miner requests.
+			if (request.ai_managed === true)
+				_.set(request, ["custom", "priority"], 14);
 			request.respawn = _.get(request, "respawn", true) !== false;
 			request.wait_for_full_rally = _.get(request, "wait_for_full_rally", true) !== false;
 			request.spawned_total = _.get(request, "spawned_total", 0);
