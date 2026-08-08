@@ -361,6 +361,7 @@ test("telemetry schema v2 reports RCL capabilities, defense, territory, and exac
 	assert.strictEqual(snapshot.colonies.W1N1.structures.terminal.allowed, 0);
 	assert.strictEqual(snapshot.colonies.W1N1.capabilities.canUseTerminal, false);
 	assert.strictEqual(snapshot.colonies.W1N1.defense.hostileCreeps, 1);
+	assert.strictEqual(snapshot.intelligence.knownRooms[0].structures.hostile, 0);
 	assert.strictEqual(snapshot.empire.creeps, 1);
 	assert.strictEqual(snapshot.empire.gcl.availableClaimSlots, 3);
 	assert.strictEqual(snapshot.observer.payloadBytes, Buffer.byteLength(serialized, "utf8"));

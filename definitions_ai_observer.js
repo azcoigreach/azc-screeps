@@ -455,8 +455,9 @@ global.AIObserver = {
 			let structures = this._find(room, typeof FIND_STRUCTURES !== "undefined" ? FIND_STRUCTURES : null);
 			let hostiles = this._find(room, typeof FIND_HOSTILE_CREEPS !== "undefined" ? FIND_HOSTILE_CREEPS : null);
 			hostiles = _.filter(hostiles, creep => _.get(creep, ["owner", "username"]) !== "Source Keeper");
-			let hostileStructures = _.filter(structures, structure => _.get(structure, "my", false) !== true
-				&& !_.includes(["controller", "keeperLair", "portal", "road", "container"], structure.structureType));
+			let hostileStructures = this._find(room, typeof FIND_HOSTILE_STRUCTURES !== "undefined" ? FIND_HOSTILE_STRUCTURES : null);
+			hostileStructures = _.filter(hostileStructures, structure =>
+				!_.includes(["controller", "keeperLair", "portal", "road", "container"], structure.structureType));
 			let sources = room.findSources ? room.findSources() : this._find(room, typeof FIND_SOURCES !== "undefined" ? FIND_SOURCES : null);
 			let minerals = this._find(room, typeof FIND_MINERALS !== "undefined" ? FIND_MINERALS : null);
 			let controller = _.get(room, "controller", null);
