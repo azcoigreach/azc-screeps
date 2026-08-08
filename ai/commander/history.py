@@ -1,10 +1,10 @@
-"""Bounded SQLite history for observations, commands, advisories, and events."""
+"""Bounded SQLite history, trends, recommendations, events, and colony journal."""
 
 from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +73,8 @@ class HistoryStore:
                 recommended_actions_json TEXT NOT NULL,
                 questions_json TEXT NOT NULL,
                 ready_for_expansion INTEGER NOT NULL,
+                expansion_readiness TEXT,
+                journal_entry TEXT,
                 confidence REAL,
                 input_tokens INTEGER,
                 output_tokens INTEGER,
@@ -90,31 +92,57 @@ class HistoryStore:
                 created_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS journal (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                screeps_tick INTEGER NOT NULL,
+                entry_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                narrative TEXT NOT NULL,
+                details_json TEXT NOT NULL,
+                model TEXT,
+                recommendation_id TEXT,
+                dedupe_key TEXT UNIQUE,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_journal_tick ON journal(screeps_tick DESC, id DESC);
             """
         )
+        self._ensure_column("recommendations", "expansion_readiness", "TEXT")
+        self._ensure_column("recommendations", "journal_entry", "TEXT")
         self.connection.commit()
+
+    def _ensure_column(self, table: str, column: str, declaration: str) -> None:
+        names = {row["name"] for row in self.connection.execute(f"PRAGMA table_info({table})")}
+        if column not in names:
+            self.connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
     def close(self) -> None:
         self.connection.close()
 
     def save_observation(self, telemetry: Telemetry, telemetry_hash: str, material_hash: str) -> bool:
-        colony_levels = [colony.rcl for colony in telemetry.colonies.values()]
-        hostile_count = sum(colony.hostiles for colony in telemetry.colonies.values())
+        previous = self.latest_observation()
+        colony_levels = [colony.controller.rcl for colony in telemetry.colonies.values()]
+        hostile_count = sum(colony.defense.hostileCreeps for colony in telemetry.colonies.values())
         remote_summary = [item.model_dump(by_alias=True) for item in telemetry.operations.remoteMining]
         summary = {
             "colonies": {
                 name: {
-                    "rcl": colony.rcl,
-                    "storageEnergy": colony.storageEnergy,
-                    "terminalEnergy": colony.terminalEnergy,
-                    "hostiles": colony.hostiles,
+                    "rcl": colony.controller.rcl,
+                    "controllerProgress": colony.controller.progress,
+                    "storageEnergy": colony.energy.storageEnergy,
+                    "terminalEnergy": colony.energy.terminalEnergy,
+                    "hostiles": colony.defense.hostileCreeps,
+                    "population": colony.population.model_dump(),
                 }
                 for name, colony in telemetry.colonies.items()
             },
+            "gcl": telemetry.empire.gcl.model_dump(),
             "operationCounts": {
                 "colonizations": len(telemetry.operations.colonizations),
                 "remoteMining": len(telemetry.operations.remoteMining),
                 "combat": len(telemetry.operations.combat),
+                "scouting": len(telemetry.operations.scouting),
             },
             "alerts": telemetry.alerts,
         }
@@ -128,23 +156,38 @@ class HistoryStore:
             """,
             (
                 utc_now(), telemetry.tick, telemetry.shard, telemetry_hash, material_hash,
-                max(colony_levels, default=0), telemetry.empire.ownedRooms, telemetry.empire.creeps,
-                telemetry.cpu.used, telemetry.cpu.bucket, telemetry.empire.gcl, telemetry.empire.credits,
+                max(colony_levels, default=0), telemetry.empire.gcl.ownedRooms, telemetry.empire.creeps,
+                telemetry.cpu.used, telemetry.cpu.bucket, telemetry.empire.gcl.level, telemetry.empire.credits,
                 json.dumps(remote_summary, separators=(",", ":")), hostile_count,
-                json.dumps(summary, separators=(",", ":")),
-                telemetry.model_dump_json(by_alias=True),
+                json.dumps(summary, separators=(",", ":")), telemetry.model_dump_json(by_alias=True),
             ),
         )
         self.connection.commit()
         if cursor.rowcount:
+            self._journal_observation_changes(previous, telemetry)
             self.prune()
             return True
         return False
 
     def latest_observation(self) -> dict[str, Any] | None:
+        row = self.connection.execute("SELECT * FROM observations ORDER BY id DESC LIMIT 1").fetchone()
+        return self._observation_row(row)
+
+    def observation_at_or_before(self, tick: int) -> dict[str, Any] | None:
         row = self.connection.execute(
-            "SELECT * FROM observations ORDER BY id DESC LIMIT 1"
+            "SELECT * FROM observations WHERE screeps_tick <= ? ORDER BY screeps_tick DESC, id DESC LIMIT 1",
+            (tick,),
         ).fetchone()
+        return self._observation_row(row)
+
+    def observations_since(self, tick: int) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT * FROM observations WHERE screeps_tick >= ? ORDER BY screeps_tick, id", (tick,)
+        ).fetchall()
+        return [item for row in rows if (item := self._observation_row(row)) is not None]
+
+    @staticmethod
+    def _observation_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
         if row is None:
             return None
         result = dict(row)
@@ -170,12 +213,7 @@ class HistoryStore:
     def update_command(self, command_id: str, state: str, acknowledgement: dict[str, Any] | None = None) -> None:
         self.connection.execute(
             "UPDATE commands SET state = ?, acknowledgement_json = ?, updated_at = ? WHERE command_id = ?",
-            (
-                state,
-                None if acknowledgement is None else json.dumps(acknowledgement, separators=(",", ":")),
-                utc_now(),
-                command_id,
-            ),
+            (state, None if acknowledgement is None else json.dumps(acknowledgement, separators=(",", ":")), utc_now(), command_id),
         )
         self.connection.commit()
 
@@ -205,19 +243,30 @@ class HistoryStore:
             INSERT INTO recommendations (
                 recommendation_id, observation_tick, model, summary, strategic_assessment,
                 concerns_json, recommended_actions_json, questions_json, ready_for_expansion,
-                confidence, input_tokens, output_tokens, total_tokens, estimated_cost_usd, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                expansion_readiness, journal_entry, confidence, input_tokens, output_tokens,
+                total_tokens, estimated_cost_usd, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                recommendation_id, observation_tick, model, advisory.summary,
-                advisory.strategic_assessment,
+                recommendation_id, observation_tick, model, advisory.summary, advisory.strategic_assessment,
                 json.dumps(advisory.concerns, separators=(",", ":")),
                 json.dumps([item.model_dump() for item in advisory.priorities], separators=(",", ":")),
                 json.dumps(advisory.questions, separators=(",", ":")),
-                1 if advisory.ready_for_expansion else 0, advisory.confidence,
+                1 if advisory.expansion_readiness == "READY" else 0,
+                advisory.expansion_readiness, advisory.journal_entry, advisory.confidence,
                 usage.get("input_tokens"), usage.get("output_tokens"), usage.get("total_tokens"),
                 estimated_cost_usd, utc_now(),
             ),
+        )
+        self.append_journal(
+            observation_tick,
+            "ai_review",
+            "AI strategic review",
+            advisory.journal_entry,
+            {"status": advisory.status, "expansionReadiness": advisory.expansion_readiness},
+            model=model,
+            recommendation_id=recommendation_id,
+            dedupe_key=f"advisory:{recommendation_id}",
         )
         self.connection.commit()
         self.prune()
@@ -234,6 +283,63 @@ class HistoryStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def append_journal(
+        self,
+        screeps_tick: int,
+        entry_type: str,
+        title: str,
+        narrative: str,
+        details: dict[str, Any] | None = None,
+        *,
+        model: str | None = None,
+        recommendation_id: str | None = None,
+        dedupe_key: str | None = None,
+    ) -> None:
+        self.connection.execute(
+            """
+            INSERT OR IGNORE INTO journal (
+                screeps_tick, entry_type, title, narrative, details_json, model,
+                recommendation_id, dedupe_key, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                screeps_tick, entry_type, title, narrative,
+                json.dumps(details or {}, separators=(",", ":")), model,
+                recommendation_id, dedupe_key, utc_now(),
+            ),
+        )
+        self.connection.commit()
+
+    def recent_journal(self, limit: int = 20, since_tick: int | None = None) -> list[dict[str, Any]]:
+        if since_tick is None:
+            rows = self.connection.execute(
+                "SELECT * FROM journal ORDER BY screeps_tick DESC, id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        else:
+            rows = self.connection.execute(
+                "SELECT * FROM journal WHERE screeps_tick >= ? ORDER BY screeps_tick DESC, id DESC LIMIT ?",
+                (since_tick, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def cost_summary(self) -> dict[str, float | int | None]:
+        now = datetime.now(UTC)
+        today = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        week = (now - timedelta(days=7)).isoformat()
+        row = self.connection.execute(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN created_at >= ? THEN estimated_cost_usd ELSE 0 END), 0) AS today,
+                COALESCE(SUM(CASE WHEN created_at >= ? THEN estimated_cost_usd ELSE 0 END), 0) AS week,
+                COALESCE(SUM(estimated_cost_usd), 0) AS lifetime,
+                COUNT(*) AS advisories,
+                AVG(estimated_cost_usd) AS average
+            FROM recommendations
+            """,
+            (today, week),
+        ).fetchone()
+        return dict(row)
+
     def record_event(self, event_type: str, message: str, details: dict[str, Any] | None = None) -> None:
         self.connection.execute(
             "INSERT INTO events (event_type, message, details_json, created_at) VALUES (?, ?, ?, ?)",
@@ -247,6 +353,91 @@ class HistoryStore:
             "SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def _journal_observation_changes(self, previous: dict[str, Any] | None, telemetry: Telemetry) -> None:
+        current = telemetry.model_dump(by_alias=True)
+        if previous is None:
+            rooms = ", ".join(sorted(telemetry.colonies)) or "no owned rooms"
+            self.append_journal(
+                telemetry.tick,
+                "telemetry_baseline",
+                "Strategic telemetry baseline established",
+                f"The commander established its first detailed Phase 3 baseline for {rooms}. "
+                f"It can now compare colony energy, population, remote delivery counters, territory, and threats over time.",
+                {"rooms": sorted(telemetry.colonies)},
+                dedupe_key=f"baseline:{telemetry.shard}:2",
+            )
+            return
+
+        old = previous["telemetry"]
+        old_colonies = old.get("colonies", {})
+        for room, colony in current["colonies"].items():
+            old_colony = old_colonies.get(room)
+            if not old_colony:
+                self.append_journal(
+                    telemetry.tick, "colony_observed", f"Colony {room} entered strategic telemetry",
+                    f"{room} is now represented in the commander's detailed strategic record.",
+                    {"room": room}, dedupe_key=f"colony:{room}:{telemetry.tick}",
+                )
+                continue
+            old_rcl = old_colony.get("controller", {}).get("rcl", old_colony.get("rcl", 0))
+            new_rcl = colony["controller"]["rcl"]
+            if new_rcl > old_rcl:
+                self.append_journal(
+                    telemetry.tick, "rcl_increased", f"{room} reached RCL {new_rcl}",
+                    f"The controller in {room} advanced from RCL {old_rcl} to RCL {new_rcl}, unlocking a broader set of deterministic colony capabilities.",
+                    {"room": room, "from": old_rcl, "to": new_rcl},
+                    dedupe_key=f"rcl:{room}:{new_rcl}",
+                )
+            old_storage = old_colony.get("energy", {}).get("storageEnergy", old_colony.get("storageEnergy", 0))
+            new_storage = colony["energy"]["storageEnergy"]
+            if new_storage // 250000 != old_storage // 250000:
+                direction = "rose above" if new_storage > old_storage else "fell below"
+                threshold = max(new_storage, old_storage) // 250000 * 250000
+                self.append_journal(
+                    telemetry.tick, "storage_threshold", f"{room} storage crossed an energy threshold",
+                    f"Storage in {room} {direction} the {threshold:,}-energy band and now contains {new_storage:,} energy.",
+                    {"room": room, "before": old_storage, "after": new_storage},
+                    dedupe_key=f"storage:{room}:{telemetry.tick}:{new_storage // 250000}",
+                )
+
+        old_gcl = old.get("empire", {}).get("gcl", {})
+        if isinstance(old_gcl, int):
+            old_gcl = {"level": old_gcl, "availableClaimSlots": max(0, old_gcl - old.get("empire", {}).get("ownedRooms", 0))}
+        new_gcl = current["empire"]["gcl"]
+        if new_gcl["level"] > old_gcl.get("level", 0):
+            self.append_journal(
+                telemetry.tick, "gcl_increased", f"Empire reached GCL {new_gcl['level']}",
+                f"The empire reached GCL {new_gcl['level']} and now has {new_gcl['availableClaimSlots']} unused claim slots.",
+                new_gcl, dedupe_key=f"gcl:{new_gcl['level']}",
+            )
+
+        old_remotes = {item.get("room"): item for item in old.get("operations", {}).get("remoteMining", [])}
+        for remote in current["operations"]["remoteMining"]:
+            prior = old_remotes.get(remote["room"])
+            if prior and prior.get("security", {}).get("isSafe", True) and not remote["security"]["isSafe"]:
+                self.append_journal(
+                    telemetry.tick, "remote_interrupted", f"Remote {remote['room']} was interrupted",
+                    f"The remote operation in {remote['room']} is no longer reporting a safe operating state. Deterministic defenses and population handling remain in control.",
+                    {"room": remote["room"], "hostiles": remote["security"]["hostileCreeps"]},
+                    dedupe_key=f"remote-interruption:{remote['room']}:{telemetry.tick}",
+                )
+            if prior and not prior.get("security", {}).get("isSafe", False) and remote["security"]["isSafe"]:
+                self.append_journal(
+                    telemetry.tick, "remote_recovered", f"Remote {remote['room']} recovered",
+                    f"The remote operation in {remote['room']} has returned to a safe operating state.",
+                    {"room": remote["room"]}, dedupe_key=f"remote-recovery:{remote['room']}:{telemetry.tick}",
+                )
+
+        old_intel = {item.get("room") for item in old.get("intelligence", {}).get("knownRooms", [])}
+        for intel in current["intelligence"]["knownRooms"]:
+            if intel["room"] not in old_intel:
+                self.append_journal(
+                    telemetry.tick, "room_first_observed", f"Room {intel['room']} entered the intelligence record",
+                    f"Fresh intelligence was recorded for {intel['room']}: {intel['sourceCount']} sources, "
+                    f"classification {intel['classification']}, controller status {intel['controller']['status']}.",
+                    {"room": intel["room"]}, dedupe_key=f"room-intel:{intel['room']}",
+                )
 
     def prune(self) -> None:
         self.connection.execute(
@@ -262,6 +453,9 @@ class HistoryStore:
         )
         self.connection.execute(
             "DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT 5000)"
+        )
+        self.connection.execute(
+            "DELETE FROM journal WHERE id NOT IN (SELECT id FROM journal ORDER BY id DESC LIMIT 5000)"
         )
         self.connection.execute(
             """

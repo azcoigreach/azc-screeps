@@ -13,6 +13,7 @@ from .openai_client import OpenAIAdvisorClient, OpenAIAdvisorError
 from .schemas import Telemetry
 from .screeps_client import ScreepsAPIClient, ScreepsAPIError
 from .transport import CommanderTransport, TransportError
+from .trends import TrendAnalyzer
 
 
 def parser() -> argparse.ArgumentParser:
@@ -28,6 +29,13 @@ def parser() -> argparse.ArgumentParser:
     explain.add_argument("text")
     history = commands.add_parser("history", help="show recent recommendations and commands")
     history.add_argument("--limit", type=int, default=10)
+    journal = commands.add_parser("journal", help="show the human-readable colony journal")
+    journal.add_argument("--last", type=int, default=20)
+    journal.add_argument("--since-tick", type=int)
+    commands.add_parser("cost", help="show cumulative OpenAI advisory cost")
+    scout = commands.add_parser("scout", help="queue the guarded SCOUT_ROOM action")
+    scout.add_argument("room", help="room to observe, for example W38N10")
+    scout.add_argument("origin", help="owned origin colony, for example W37N11")
     return root
 
 
@@ -62,18 +70,24 @@ def display_status(transport: CommanderTransport) -> str:
         ])
     if health.telemetry:
         telemetry = health.telemetry
-        hostile_count = sum(colony.hostiles for colony in telemetry.colonies.values())
+        hostile_count = sum(colony.defense.hostileCreeps for colony in telemetry.colonies.values())
         lines.extend([
             "",
             "Empire:",
-            f"Owned rooms: {telemetry.empire.ownedRooms}",
+            f"Owned rooms: {telemetry.empire.gcl.ownedRooms}",
             f"Creeps: {telemetry.empire.creeps}",
-            f"GCL: {telemetry.empire.gcl}",
+            f"GCL: {telemetry.empire.gcl.level} ({telemetry.empire.gcl.availableClaimSlots} claim slots available)",
             f"Credits: {telemetry.empire.credits:,.0f}",
             f"Remote mining rooms: {len(telemetry.operations.remoteMining)}",
             f"Hostiles: {hostile_count}",
             f"CPU: {telemetry.cpu.used:.2f}/{telemetry.cpu.limit:.0f}, bucket {telemetry.cpu.bucket}",
+            f"Observer: {telemetry.observer.cpuUsed:.3f} CPU, {telemetry.observer.payloadBytes:,} bytes",
         ])
+        for room, colony in telemetry.colonies.items():
+            lines.append(
+                f"{room}: RCL{colony.controller.rcl}, storage {colony.energy.storageEnergy:,}, "
+                f"population {colony.population.aliveTotal}/{colony.population.expectedTotal or '?'}"
+            )
     if health.last_error:
         lines.extend(["", f"Last error: {health.last_error}"])
     return "\n".join(lines)
@@ -89,8 +103,13 @@ def run_advice(
 ) -> None:
     client = OpenAIAdvisorClient(config)
     service = AdvisorService(client, history, transport)
+    trends = TrendAnalyzer(history).build(telemetry)
     try:
-        result = service.advise(telemetry, writeback=writeback and config.write_explanation)
+        result = service.advise(
+            telemetry,
+            trends,
+            writeback=writeback and config.write_explanation,
+        )
     except OpenAIAdvisorError as exc:
         history.record_event("openai_call_failure", str(exc), {"model": config.openai_model})
         raise
@@ -152,14 +171,43 @@ def show_history(history: HistoryStore, limit: int) -> None:
         print(f"- {item['command_id']} | {item['action']} | {item['state']}")
 
 
+def show_journal(history: HistoryStore, limit: int, since_tick: int | None) -> None:
+    print("=== AZC COLONY JOURNAL ===")
+    entries = history.recent_journal(limit, since_tick)
+    if not entries:
+        print("No journal entries stored.")
+        return
+    for entry in reversed(entries):
+        date = entry["created_at"][:10]
+        print(f"\n{date} — Tick {entry['screeps_tick']} — {entry['title']}")
+        print(entry["narrative"])
+        if entry["model"]:
+            print(f"Advisor: {entry['model']}")
+
+
+def show_cost(history: HistoryStore) -> None:
+    cost = history.cost_summary()
+    print("=== OPENAI ADVISORY COST ===")
+    print(f"\nToday:       ${float(cost['today'] or 0):.6f}")
+    print(f"Last 7 days: ${float(cost['week'] or 0):.6f}")
+    print(f"Lifetime:    ${float(cost['lifetime'] or 0):.6f}")
+    print(f"\nAdvisories: {int(cost['advisories'] or 0)}")
+    print(f"Average advisory: ${float(cost['average'] or 0):.6f}")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         config = CommanderConfig.from_env()
-        if args.command == "history":
+        if args.command in {"history", "journal", "cost"}:
             history = HistoryStore(config.database_path)
             try:
-                show_history(history, max(1, args.limit))
+                if args.command == "history":
+                    show_history(history, max(1, args.limit))
+                elif args.command == "journal":
+                    show_journal(history, max(1, args.last), args.since_tick)
+                else:
+                    show_cost(history)
                 return 0
             finally:
                 history.close()
@@ -186,6 +234,12 @@ def main(argv: list[str] | None = None) -> int:
             elif args.command == "explain":
                 order = transport.send_safe_command(
                     "SET_EXPLANATION", {"explanation": args.text}, reason="Manual CLI explanation"
+                )
+            elif args.command == "scout":
+                order = transport.send_safe_command(
+                    "SCOUT_ROOM",
+                    {"room": args.room, "origin": args.origin},
+                    reason=f"Manual Phase 3 intelligence request for {args.room}",
                 )
             else:
                 raise TransportError(f"Unsupported command {args.command}")

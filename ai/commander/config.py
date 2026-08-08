@@ -66,6 +66,7 @@ class CommanderConfig:
     http_timeout_seconds: float
     command_expiry_ticks: int
     write_explanation: bool
+    auto_scout: bool
     openai_input_cost_per_million: float
     openai_output_cost_per_million: float
 
@@ -89,6 +90,7 @@ class CommanderConfig:
             http_timeout_seconds=_float("SCREEPS_HTTP_TIMEOUT", 10.0),
             command_expiry_ticks=_int("AI_COMMAND_EXPIRY_TICKS", 1000),
             write_explanation=_bool("AI_WRITE_EXPLANATION", True),
+            auto_scout=_bool("AI_AUTO_SCOUT", False),
             openai_input_cost_per_million=_float("OPENAI_INPUT_COST_PER_MILLION", 0.20),
             openai_output_cost_per_million=_float("OPENAI_OUTPUT_COST_PER_MILLION", 1.25),
         )

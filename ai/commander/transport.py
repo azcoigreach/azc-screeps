@@ -91,7 +91,7 @@ class CommanderTransport:
         reason: str,
     ) -> StrategicOrder:
         if action not in SAFE_ACTIONS:
-            raise TransportError(f"Action {action!r} is not in the Phase 1 safe-action whitelist")
+            raise TransportError(f"Action {action!r} is not in the commander safe-action whitelist")
         pending = self.history.pending_commands()
         if pending:
             raise TransportError(
@@ -107,6 +107,11 @@ class CommanderTransport:
             explanation = params.get("explanation")
             if set(params) != {"explanation"} or not isinstance(explanation, str) or not 1 <= len(explanation) <= 2000:
                 raise TransportError("SET_EXPLANATION requires a 1-2000 character explanation")
+        if action == "SCOUT_ROOM":
+            room = params.get("room")
+            origin = params.get("origin")
+            if set(params) != {"room", "origin"} or not self._room_name(room) or not self._room_name(origin):
+                raise TransportError("SCOUT_ROOM requires valid room and origin room names")
         identifier = f"py-{self.config.screeps_shard}-{tick}-{uuid.uuid4().hex[:10]}"
         order = StrategicOrder(
             schemaVersion=SCHEMA_VERSION,
@@ -126,6 +131,12 @@ class CommanderTransport:
             raise
         self.history.update_command(order.id, "sent")
         return order
+
+    @staticmethod
+    def _room_name(value: Any) -> bool:
+        import re
+
+        return isinstance(value, str) and re.fullmatch(r"[WE]\d+[NS]\d+", value) is not None
 
     def _correlate_results(self, status: StatusEnvelope) -> None:
         for result in status.orders.recentResults:

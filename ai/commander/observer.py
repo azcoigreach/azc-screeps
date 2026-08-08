@@ -46,14 +46,52 @@ class ObservationProcessor:
 
     @staticmethod
     def material_hash(telemetry: Telemetry) -> str:
+        colonies = {}
+        for name, colony in sorted(telemetry.colonies.items()):
+            colonies[name] = {
+                "rcl": colony.controller.rcl,
+                "storageBand": colony.energy.storageEnergy // 25000,
+                "terminalBand": None if colony.energy.terminalEnergy is None else colony.energy.terminalEnergy // 10000,
+                "population": colony.population.model_dump(),
+                "structureCounts": {
+                    key: value["count"] for key, value in colony.structures.model_dump().items()
+                },
+                "constructionTypes": colony.construction.byType,
+                "hostiles": colony.defense.hostileCreeps,
+                "safeMode": colony.controller.safeMode is not None,
+            }
+        remotes = {}
+        for remote in telemetry.operations.remoteMining:
+            remotes[remote.room] = {
+                "active": remote.active,
+                "visible": remote.visible,
+                "population": remote.population.model_dump(),
+                "waitingEnergyBand": remote.mining.energyWaiting // 500,
+                "deliveryBand": remote.delivery.energyDeliveredTotal // 5000,
+                "losses": remote.losses.model_dump(),
+                "security": remote.security.model_dump(),
+            }
         material = {
             "shard": telemetry.shard,
-            "empire": telemetry.empire.model_dump(),
-            "colonies": {
-                name: colony.model_dump()
-                for name, colony in sorted(telemetry.colonies.items())
+            "empire": {
+                "gclLevel": telemetry.empire.gcl.level,
+                "claimSlots": telemetry.empire.gcl.availableClaimSlots,
+                "creepBand": telemetry.empire.creeps // 5,
             },
-            "operations": telemetry.operations.model_dump(),
+            "colonies": colonies,
+            "remotes": remotes,
+            "scouting": telemetry.operations.scouting,
+            "knownIntel": {
+                room.room: {
+                    "sources": room.sourceCount,
+                    "controller": room.controller.model_dump(),
+                    "hostiles": room.hostileCreeps,
+                    "structures": room.structures.model_dump(),
+                }
+                for room in telemetry.intelligence.knownRooms
+            },
+            "unknownRooms": telemetry.intelligence.unknownRooms,
+            "candidateScores": {candidate.room: candidate.score for candidate in telemetry.expansionCandidates},
             "alerts": telemetry.alerts,
             "cpuBucketBand": telemetry.cpu.bucket // 1000,
         }
