@@ -2,9 +2,11 @@
 
 This Python 3.12 service observes the live AZC Screeps empire through Memory
 Segments 90 and 92, stores bounded strategic history in SQLite, maintains a
-heartbeat through Segment 91, and requests structured OpenAI advisories. The
-OpenAI model is an advisor only: it cannot issue expansion, mining, market,
-production, colonization, or combat orders.
+heartbeat through Segment 91, and requests structured OpenAI advisories.
+Deterministic Phase 5 policy can continuously maintain existing remotes and map
+territory; a separately authorized model proposal may select one prevalidated new
+remote. Arbitrary state writes, automatic claiming, abandonment, markets,
+production, and offensive combat remain unavailable.
 
 ## Setup
 
@@ -50,6 +52,8 @@ PYTHONPATH=ai ai/.venv/bin/python -m commander.main explain "Testing external co
 PYTHONPATH=ai ai/.venv/bin/python -m commander.main history
 PYTHONPATH=ai ai/.venv/bin/python -m commander.main journal --last 20
 PYTHONPATH=ai ai/.venv/bin/python -m commander.main cost
+PYTHONPATH=ai ai/.venv/bin/python -m commander.main candidates
+PYTHONPATH=ai ai/.venv/bin/python -m commander.main report --hours 24
 ```
 
 Alternatively, from `ai/`, omit `PYTHONPATH=ai` and run the selected module with

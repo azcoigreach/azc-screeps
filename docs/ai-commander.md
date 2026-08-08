@@ -1,5 +1,92 @@
 # AI Commander
 
+## Phase 5 remote expansion
+
+Phase 5 promotes the closed loop into continuous operations while retaining
+explicit human authority boundaries.
+
+```text
+deterministic diagnostics -> routine maintenance policy -> existing AZC controller
+fresh territorial intel -> separate remote/claim scoring -> guarded major action
+predicted economics -> measured lifecycle -> deterministic outcome -> journal/report
+```
+
+New policy switches default to off:
+
+```javascript
+Memory.ai.policy.allowNewRemotes = false;
+Memory.ai.policy.autoNewRemotes = false;
+Memory.ai.policy.allowColonization = false;
+Memory.ai.policy.autoColonization = false;
+```
+
+`START_REMOTE_MINING` accepts only an owned origin and neutral target. It requires
+fresh intel, an acceptable route, an eligible remote-candidate score, sufficient
+home population/spawn capacity, execute mode, separate new-remote authority, one
+free establishment slot, and an elapsed cooldown. It writes the same
+`Memory.sites.mining` shape as `empire.remote_mining`; AZC still chooses bodies,
+spawns, tasks, paths, reservation, hauling, and infrastructure. Repeating the
+same target is idempotent.
+
+`COLONIZE_ROOM` is implemented against the existing `Memory.sites.colonization`
+API. It additionally requires a GCL slot and a layout selected from cached
+terrain-valid `def_hor`, `def_vert`, or `def_comp` origins. Automatic claiming
+remains off. `STOP_REMOTE_MINING` remains human-gated; stop-loss recommendations
+never delete configuration.
+
+Remote continuity is deterministic. For reservers, miners/burrowers, and
+carriers, AZC combines configured/measured route travel, the actual configured
+body spawn time, a role safety margin, current TTL, and already-spawning capacity.
+A creep that cannot survive until its replacement arrives no longer satisfies
+future demand. Urgent reservation replacement uses bounded priority 13, below
+home emergencies, and normal spawn aging retains its priority floor.
+
+Territorial intelligence now retains source/mineral positions, terrain burden,
+route rooms, controller relations, structures and fortifications, hostile body
+and boost summaries, cached layout feasibility, and persistent player history.
+Non-allied ownership is `NEUTRAL` unless the player is explicitly listed in
+`Memory.hive.enemies`; ownership alone is not treated as hostility.
+
+Remote economics cover 1,000, 5,000, 20,000, and lifetime windows. Delivery,
+losses, and interruptions are measured; rates and uptime are derived; miner,
+hauler, reserver, and loss costs are explicit estimates; unavailable harvest,
+defender, and infrastructure costs remain unknown. The exposed value category is
+`EXCELLENT`, `GOOD`, `MARGINAL`, `POOR`, `LOSING`, or `UNKNOWN`, with component
+values and confidence rather than an opaque score.
+
+Establishment lifecycle is `CONFIGURING`, `RESERVING`, `BOOTSTRAPPING`, `ACTIVE`,
+`EVALUATING`, `HEALTHY`/`DEGRADED`, or `FAILED`. Configuration alone is not
+success; deterministic evaluation requires actual operating evidence. Stop-loss
+progresses across multiple windows through `ACTIVE`, `WATCH`, `PROBATION`,
+`PAUSE_RECOMMENDED`, and `ABANDON_RECOMMENDED`.
+
+Continuous `watch` evaluates obvious maintenance and scouting rules before any
+scheduled OpenAI review and sends at most one command per poll. The LLM handles
+ambiguity and strategic selection, including a separately authorized eligible
+new remote. Major operations are one-at-a-time and cooled down.
+
+Useful Phase 5 controls:
+
+```javascript
+ai.newRemotes(true|false)
+ai.autoNewRemotes(true|false)
+ai.colonization(true|false)
+ai.roomPolicy("W38N10", "PRIORITIZE"|"EXCLUDE"|"NO_REMOTE"|"NO_COLONY"|"NONE")
+```
+
+```bash
+python -m commander.main candidates
+python -m commander.main report --hours 24
+python -m commander.main set-authority --scouting AUTO --remotes AUTO --new-remotes OFF --colonization OFF
+python -m commander.main start-remote W38N10 W37N11
+python -m commander.main colonize W38N10 W37N11 def_hor 20 20
+```
+
+For the live gate, run maintenance and bounded radius-two scouting first, review
+candidate rankings and an advisory, then enable new-remotes for exactly one
+operation. Disable it again after dispatch. Keep colonization, abandonment,
+combat, market, and production authority off.
+
 ## Phase 4 architecture
 
 The commander is a constrained strategic layer around AZC. Responsibility is
@@ -64,8 +151,9 @@ is also true.
 | `ENSURE_REMOTE_INFRASTRUCTURE` | existing remote | execute + remote maintenance | Forces the existing deterministic source-container placement check. |
 | `REBALANCE_REMOTE_LOGISTICS` | existing remote | execute + remote maintenance | Lets AZC translate confirmed backlog into one bounded hauling slot. |
 
-Prepared but disabled actions are `START_REMOTE_MINING`, `STOP_REMOTE_MINING`,
-`COLONIZE_ROOM`, and `ATTACK_ROOM`. They are not accepted by the transport.
+Phase 4 prepared these actions without accepting them. Phase 5 accepts guarded
+`START_REMOTE_MINING` and human-authorized `COLONIZE_ROOM`; `STOP_REMOTE_MINING`
+and `ATTACK_ROOM` remain unavailable.
 
 ## Memory Segments and fail-closed behavior
 
@@ -213,7 +301,8 @@ FOREIGN_RESERVED  HOSTILE_OWNED  ALLY_OWNED  SOURCE_KEEPER  HIGHWAY
 Claim status is `ELIGIBLE`, `NEEDS_FRESH_INTEL`, or `DISQUALIFIED`. An
 `OUR_REMOTE` may still be a future permanent-claim candidate. GCL slots,
 candidate factors, stale/unknown rooms, and expansion readiness continue to be
-calculated, but permanent claiming remains disabled for Phase 4.
+calculated. Phase 5 adds separate remote/claim models above; automatic permanent
+claiming remains disabled.
 
 ## Structured advisory and journal
 
