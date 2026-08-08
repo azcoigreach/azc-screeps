@@ -18,7 +18,22 @@
     }
     
     getUsername = function () {
-        return _.find({...Game.structures, ...Game.creeps, ...Game.constructionSites}).owner.username;
+        // Controllers are the authoritative source and remain available even
+        // when a recovering colony temporarily has no creeps or structures.
+        let ownedRoom = _.find(_.get(Game, "rooms", {}), room => {
+            return _.get(room, ["controller", "my"], false) === true
+                && _.isString(_.get(room, ["controller", "owner", "username"]));
+        });
+        if (ownedRoom)
+            return ownedRoom.controller.owner.username;
+
+        let owned = _.find({
+            ..._.get(Game, "spawns", {}),
+            ..._.get(Game, "structures", {}),
+            ..._.get(Game, "creeps", {}),
+            ..._.get(Game, "constructionSites", {})
+        }, object => _.isString(_.get(object, ["owner", "username"])));
+        return _.get(owned, ["owner", "username"], null);
     }
 
     hasCPU = function () {

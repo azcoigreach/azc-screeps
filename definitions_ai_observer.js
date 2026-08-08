@@ -6,7 +6,7 @@
 // individual creep state, and long time-series histories stay out of segments.
 global.AIObserver = {
 
-	SCHEMA_VERSION: 2,
+	SCHEMA_VERSION: 3,
 	MAX_HOSTILE_EVENTS: 50,
 	MAX_INTEL_ROOMS: 150,
 	STRUCTURE_TYPES: [
@@ -16,6 +16,7 @@ global.AIObserver = {
 
 	buildSnapshot: function () {
 		this._populationCache = null;
+		this._player = this._playerName();
 		let alerts = [];
 		let ownedRooms = _.filter(_.get(Game, "rooms", {}), room => {
 			return _.get(room, ["controller", "my"], false) === true;
@@ -47,6 +48,7 @@ global.AIObserver = {
 				bucket: _.get(Game, ["cpu", "bucket"], 0)
 			},
 			empire: {
+				player: this._player,
 				gcl: {
 					level: gclLevel,
 					progress: _.get(Game, ["gcl", "progress"], 0),
@@ -68,14 +70,32 @@ global.AIObserver = {
 			expansionCandidates: territory.candidates,
 			authority: {
 				mode: _.get(Memory, ["ai", "mode"], "observe"),
-				allowedActions: ["NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SCOUT_ROOM"],
+				allowedActions: [
+					"NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SCOUT_ROOM",
+					"REASSESS_REMOTE", "ENSURE_REMOTE_RESERVATION",
+					"ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS"
+				],
 				execution: {
 					scouting: _.get(Memory, ["ai", "policy", "allowScouting"], false) === true,
+					autoScouting: _.get(Memory, ["ai", "policy", "autoScouting"], false) === true,
 					expansion: false,
+					remoteMaintenance: _.get(Memory, ["ai", "policy", "allowRemoteMaintenance"], false) === true,
+					autoRemoteMaintenance: _.get(Memory, ["ai", "policy", "autoRemoteMaintenance"], false) === true,
 					remoteMiningChanges: false,
 					market: false,
 					production: false,
 					offensiveCombat: false
+				},
+				matrix: {
+					SCOUT_ROOM: { allowed: _.get(Memory, ["ai", "policy", "allowScouting"], false) === true, automatic: _.get(Memory, ["ai", "policy", "autoScouting"], false) === true },
+					REASSESS_REMOTE: { allowed: _.get(Memory, ["ai", "policy", "allowRemoteMaintenance"], false) === true, automatic: _.get(Memory, ["ai", "policy", "autoRemoteMaintenance"], false) === true },
+					ENSURE_REMOTE_RESERVATION: { allowed: _.get(Memory, ["ai", "policy", "allowRemoteMaintenance"], false) === true, automatic: _.get(Memory, ["ai", "policy", "autoRemoteMaintenance"], false) === true },
+					ENSURE_REMOTE_INFRASTRUCTURE: { allowed: _.get(Memory, ["ai", "policy", "allowRemoteMaintenance"], false) === true, automatic: _.get(Memory, ["ai", "policy", "autoRemoteMaintenance"], false) === true },
+					REBALANCE_REMOTE_LOGISTICS: { allowed: _.get(Memory, ["ai", "policy", "allowRemoteMaintenance"], false) === true, automatic: _.get(Memory, ["ai", "policy", "autoRemoteMaintenance"], false) === true },
+					START_REMOTE_MINING: { allowed: false, automatic: false },
+					STOP_REMOTE_MINING: { allowed: false, automatic: false },
+					COLONIZE_ROOM: { allowed: false, automatic: false },
+					ATTACK_ROOM: { allowed: false, automatic: false }
 				}
 			},
 			alerts: alerts
@@ -120,16 +140,27 @@ global.AIObserver = {
 		return bytes;
 	},
 
-	recordPopulationTarget: function (scope, colony, room, target) {
+	recordPopulationTarget: function (scope, colony, room, target, actual, source) {
 		let expected = {};
 		_.each(target || {}, (settings, role) => {
 			let amount = _.get(settings, "amount", 0);
 			if (_.isNumber(amount) && amount > 0)
 				expected[role] = amount;
 		});
+		let requested = {};
+		_.each(_.get(Memory, ["shard", "spawn_requests"], []), request => {
+			let args = _.get(request, "args", {});
+			if (_.get(request, "room") === colony && _.get(args, "room") === room) {
+				let role = _.get(args, "role", "unknown");
+				requested[role] = _.get(requested, role, 0) + 1;
+			}
+		});
 		_.set(Memory, ["ai", "metrics", "population", scope, room], {
 			colony: colony,
 			expected: expected,
+			actual: _.cloneDeep(actual || {}),
+			requested: requested,
+			source: source || "AZC_ACTIVE_TARGET",
 			updatedTick: Game.time
 		});
 	},
@@ -286,34 +317,54 @@ global.AIObserver = {
 			this._buildPopulationCache();
 		let key = `${colonyName}|${roomName}`;
 		let actual = _.get(this._populationCache, key, {});
-		let queued = {};
+		let metric = _.get(Memory, ["ai", "metrics", "population", roomName === colonyName ? "colonies" : "remotes", roomName], {});
+		let queued = _.cloneDeep(_.get(metric, "requested", {}));
 		_.each(this._spawnQueue(colonyName), request => {
 			let args = _.get(request, "args", {});
 			if (_.get(args, "room") !== roomName)
 				return;
 			let role = _.get(args, "role", _.get(request, "role", "unknown"));
-			queued[role] = _.get(queued, role, 0) + 1;
+			queued[role] = Math.max(_.get(queued, role, 0), 1);
 		});
 		let roles = {};
 		let names = _.uniq(_.keys(expected || {}).concat(_.keys(actual), _.keys(queued)));
 		_.each(names, role => {
 			let state = _.get(actual, role, { alive: 0, spawning: 0, dyingSoon: 0 });
+			let desired = _.get(expected, role, 0);
+			let available = state.alive + state.spawning;
+			let roleState = desired <= 0
+				? (available > 0 ? "NOT_REQUIRED" : "INTENTIONALLY_DISABLED")
+				: (available >= desired
+					? ((state.dyingSoon > 0 && _.get(queued, role, 0) > 0) ? "REPLACEMENT_PENDING" : "SATISFIED")
+					: (_.get(queued, role, 0) > 0 || state.spawning > 0 ? "REPLACEMENT_PENDING" : "UNDERSTAFFED"));
 			roles[role] = {
-				expected: _.get(expected, role, 0),
+				expected: desired,
+				desired: desired,
 				alive: state.alive,
 				spawning: state.spawning,
 				queued: _.get(queued, role, 0),
-				dyingSoon: state.dyingSoon
+				dyingSoon: state.dyingSoon,
+				state: roleState
 			};
 		});
 		let expectedTotal = _.sum(_.map(roles, role => role.expected));
 		let staffed = _.sum(_.map(roles, role => Math.min(role.expected, role.alive + role.spawning)));
+		let demandedRoles = _.filter(_.values(roles), role => role.expected > 0);
+		let overallState = expectedTotal === 0 ? "NOT_REQUIRED"
+			: (_.some(demandedRoles, role => role.state === "UNDERSTAFFED") ? "UNDERSTAFFED"
+				: (_.some(demandedRoles, role => role.state === "REPLACEMENT_PENDING") ? "REPLACEMENT_PENDING" : "SATISFIED"));
 		return {
 			roles: roles,
+			source: _.get(metric, "source", "AZC_ACTIVE_TARGET"),
+			state: overallState,
 			expectedTotal: expectedTotal,
-			aliveTotal: _.sum(_.map(roles, role => role.alive)),
-			spawningTotal: _.sum(_.map(roles, role => role.spawning)),
-			dyingSoonTotal: _.sum(_.map(roles, role => role.dyingSoon)),
+			desiredTotal: expectedTotal,
+			aliveTotal: _.sum(_.map(demandedRoles, role => role.alive)),
+			assignedTotal: _.sum(_.map(roles, role => role.alive)),
+			spawningTotal: _.sum(_.map(demandedRoles, role => role.spawning)),
+			queuedTotal: _.sum(_.map(demandedRoles, role => role.queued)),
+			dyingSoonTotal: _.sum(_.map(demandedRoles, role => role.dyingSoon)),
+			lastDemandTick: _.get(metric, "updatedTick", null),
 			demandSatisfaction: expectedTotal > 0 ? Math.round(staffed * 10000 / expectedTotal) / 100 : null
 		};
 	},
@@ -361,6 +412,8 @@ global.AIObserver = {
 			let sources = visible ? (room.findSources ? room.findSources() : this._find(room, typeof FIND_SOURCES !== "undefined" ? FIND_SOURCES : null)) : [];
 			let structures = visible ? this._find(room, typeof FIND_STRUCTURES !== "undefined" ? FIND_STRUCTURES : null) : [];
 			let containers = _.filter(structures, structure => structure.structureType === "container");
+			let construction = visible ? this._find(room, typeof FIND_MY_CONSTRUCTION_SITES !== "undefined" ? FIND_MY_CONSTRUCTION_SITES : null) : [];
+			let containerSites = _.filter(construction, site => site.structureType === "container");
 			let dropped = visible ? this._find(room, typeof FIND_DROPPED_RESOURCES !== "undefined" ? FIND_DROPPED_RESOURCES : null) : [];
 			let expected = _.get(Memory, ["ai", "metrics", "population", "remotes", roomName, "expected"], {});
 			let metrics = _.get(Memory, ["ai", "metrics", "remotes", roomName], {});
@@ -368,8 +421,9 @@ global.AIObserver = {
 			let reservation = _.get(room, ["controller", "reservation"], null);
 			let hostileCount = _.size(_.get(site, ["defense", "hostiles"], []));
 			let route = _.isArray(_.get(site, "list_route")) ? site.list_route.slice(0, 12) : [];
+			let population = this._populationSummary(roomName, colony, expected);
 
-			result.push({
+			let remote = {
 				room: roomName,
 				colony: colony,
 				configured: true,
@@ -382,14 +436,21 @@ global.AIObserver = {
 				route: { length: route.length > 0 ? route.length - 1 : null, rooms: route },
 				reservation: {
 					username: _.get(reservation, "username", null),
-					ticksToEnd: _.get(reservation, "ticksToEnd", null)
+					relation: this._relation(_.get(reservation, "username", null)),
+					ticksToEnd: _.get(reservation, "ticksToEnd", null),
+					warningTicks: _.get(Memory, ["ai", "policy", "reservationWarningTicks"], 2000),
+					reserverPresent: _.get(population, ["roles", "reserver", "alive"], 0),
+					reserverSpawning: _.get(population, ["roles", "reserver", "spawning"], 0),
+					reserverQueued: _.get(population, ["roles", "reserver", "queued"], 0)
 				},
-				population: this._populationSummary(roomName, colony, expected),
+				population: population,
 				mining: {
 					visibleSources: sources.length,
 					sourceEnergy: _.sum(_.map(sources, source => _.get(source, "energy", 0))),
 					minimumRegenerationTicks: sources.length > 0 ? _.min(_.map(sources, source => _.get(source, "ticksToRegeneration", 0))) : null,
 					containers: containers.length,
+					containerSites: containerSites.length,
+					expectedSourceContainers: visible ? sources.length : _.get(site, ["survey", "source_amount"], null),
 					containerEnergy: visible ? _.sum(_.map(containers, container => this._resource(container, "energy"))) : _.get(site, "store_total", 0),
 					containerHits: this._hitSummary(containers),
 					droppedEnergy: _.sum(_.map(dropped, resource => _.get(resource, "resourceType") === "energy" ? _.get(resource, "amount", 0) : 0)),
@@ -410,10 +471,79 @@ global.AIObserver = {
 					isSafe: _.get(site, ["defense", "is_safe"], false) === true,
 					hostileCreeps: hostileCount,
 					lastHostileSightingTick: _.get(intel, "lastHostileSightingTick", null)
-				}
-			});
+				},
+				objectives: _.keys(_.get(Memory, ["ai", "remoteObjectives", roomName], {}))
+			};
+			let assessment = this._remoteHealth(remote);
+			remote.health = assessment.health;
+			remote.reasons = assessment.reasons;
+			remote.diagnostics = assessment.diagnostics;
+			result.push(remote);
 		});
 		return result;
+	},
+
+	_remoteHealth: function (remote) {
+		let diagnostics = [];
+		let add = (code, severity, evidence) => diagnostics.push({ diagnostic: code, severity: severity, evidence: evidence || {} });
+		let staleLimit = _.get(Memory, ["ai", "policy", "intelStaleTicks"], 10000);
+		if (!remote.visible && remote.intelAgeTicks == null)
+			add("STALE_INTEL", "HIGH", { intelAgeTicks: null, staleAfterTicks: staleLimit });
+		else if (!remote.visible && remote.intelAgeTicks > staleLimit)
+			add("STALE_INTEL", "MEDIUM", { intelAgeTicks: remote.intelAgeTicks, staleAfterTicks: staleLimit });
+		if (remote.route.length == null || remote.route.rooms.length < 2)
+			add("ROUTE_FAILURE", "HIGH", { route: remote.route.rooms });
+		if (!remote.security.isSafe || remote.security.hostileCreeps > 0)
+			add("HOSTILE_INTERRUPTION", "HIGH", { hostileCreeps: remote.security.hostileCreeps });
+		if (remote.visible && remote.mining.expectedSourceContainers > 0
+			&& remote.mining.containers + remote.mining.containerSites < remote.mining.expectedSourceContainers)
+			add("NO_CONTAINER", "HIGH", {
+				containers: remote.mining.containers,
+				containerSites: remote.mining.containerSites,
+				expectedSourceContainers: remote.mining.expectedSourceContainers
+			});
+		if (remote.mining.containerHits.min != null && remote.mining.containerHits.min < 50000)
+			add("CONTAINER_DAMAGED", "MEDIUM", { minimumHits: remote.mining.containerHits.min });
+		if (remote.mining.energyWaiting >= 2000)
+			add("ENERGY_BACKLOG", remote.mining.energyWaiting >= 4000 ? "HIGH" : "MEDIUM", { energyWaiting: remote.mining.energyWaiting });
+		let roles = remote.population.roles;
+		let miners = ["burrower", "miner"];
+		let minerDesired = _.sum(_.map(miners, role => _.get(roles, [role, "desired"], 0)));
+		let minerAvailable = _.sum(_.map(miners, role => _.get(roles, [role, "alive"], 0) + _.get(roles, [role, "spawning"], 0)));
+		if (minerAvailable < minerDesired)
+			add("MINER_SHORTAGE", "HIGH", { desired: minerDesired, available: minerAvailable });
+		let carrierDesired = _.get(roles, ["carrier", "desired"], 0);
+		let carrierAvailable = _.get(roles, ["carrier", "alive"], 0) + _.get(roles, ["carrier", "spawning"], 0);
+		if (carrierAvailable < carrierDesired)
+			add("HAULER_SHORTAGE", remote.mining.energyWaiting >= 2000 ? "HIGH" : "MEDIUM", { desired: carrierDesired, available: carrierAvailable });
+		let reserverDesired = _.get(roles, ["reserver", "desired"], 0);
+		let reserverAvailable = remote.reservation.reserverPresent + remote.reservation.reserverSpawning + remote.reservation.reserverQueued;
+		if (reserverDesired > 0 && reserverAvailable < 1 && remote.reservation.relation !== "SELF")
+			add("RESERVER_SHORTAGE", "MEDIUM", { desired: reserverDesired, available: reserverAvailable });
+		if (remote.reservation.relation === "SELF" && remote.reservation.ticksToEnd != null
+			&& remote.reservation.ticksToEnd < remote.reservation.warningTicks)
+			add("RESERVATION_EXPIRING", "MEDIUM", { ticksToEnd: remote.reservation.ticksToEnd, warningTicks: remote.reservation.warningTicks });
+		if (remote.losses.creepLossesTotal >= 5 && remote.losses.lastCreepLossTick != null
+			&& Game.time - remote.losses.lastCreepLossTick <= 5000)
+			add("HIGH_CREEP_LOSSES", "MEDIUM", { total: remote.losses.creepLossesTotal, lastLossAge: Game.time - remote.losses.lastCreepLossTick });
+		if (remote.active && remote.delivery.lastDeliveryTick != null && Game.time - remote.delivery.lastDeliveryTick > 1500)
+			add("LOW_DELIVERY", "MEDIUM", { ticksSinceDelivery: Game.time - remote.delivery.lastDeliveryTick });
+		let reasons = _.map(diagnostics, diagnostic => diagnostic.diagnostic);
+		let high = _.filter(diagnostics, diagnostic => diagnostic.severity === "HIGH").length;
+		let health = "HEALTHY";
+		if (!remote.visible && remote.intelAgeTicks == null)
+			health = "UNKNOWN";
+		else if (_.includes(reasons, "STALE_INTEL"))
+			health = "STALE_INTEL";
+		else if (_.includes(reasons, "HOSTILE_INTERRUPTION"))
+			health = "UNSAFE";
+		else if (!remote.active && remote.visible)
+			health = "PAUSED";
+		else if (high >= 2 || _.includes(reasons, "MINER_SHORTAGE"))
+			health = "FAILING";
+		else if (diagnostics.length > 0)
+			health = "DEGRADED";
+		return { health: health, reasons: reasons, diagnostics: diagnostics };
 	},
 
 	_combat: function () {
@@ -433,14 +563,39 @@ global.AIObserver = {
 					return;
 				result.push({
 					id: request.id,
+					orderId: _.get(request, "ai_order_id", null),
 					origin: origin,
 					room: _.get(request, ["dest_pos", "roomName"], null),
-					status: _.get(request, "status", "queued"),
+					status: _.get(request, "status", "QUEUED"),
 					createdTick: _.get(request, "created", null),
+					requestedTick: _.get(request, "requested_tick", _.get(request, "created", null)),
 					observedTick: _.get(request, "observed_tick", null),
-					activeScouts: _.get(request, "active", 0)
+					completedTick: _.get(request, "completed_tick", null),
+					intelLastSeenTick: _.get(request, "intel_last_seen_tick", null),
+					scoutCreep: _.get(request, "scout_creep", _.head(_.get(request, "creeps", [])) || null),
+					activeScouts: _.get(request, "active", 0),
+					failureReason: _.get(request, "failure_reason", null)
 				});
 			});
+		});
+		_.each(_.get(Memory, ["ai", "scoutHistory"], []), item => {
+			if (!_.some(result, current => current.orderId === item.orderId)) {
+				result.push({
+					id: item.missionId,
+					orderId: item.orderId,
+					origin: item.origin,
+					room: item.targetRoom,
+					status: item.status,
+					createdTick: item.requestedTick,
+					requestedTick: item.requestedTick,
+					observedTick: item.observedTick,
+					completedTick: item.completedTick,
+					intelLastSeenTick: item.intelLastSeenTick,
+					scoutCreep: item.scoutCreep,
+					activeScouts: 0,
+					failureReason: item.failureReason
+				});
+			}
 		});
 		return result;
 	},
@@ -489,7 +644,9 @@ global.AIObserver = {
 				controller: {
 					status: !controller ? "none" : (_.get(controller, "my", false) ? "owned" : (_.get(controller, ["owner", "username"]) ? "owned_other" : (_.get(controller, ["reservation", "username"]) ? "reserved" : "neutral"))),
 					owner: _.get(controller, ["owner", "username"], null),
+					ownerRelation: this._relation(_.get(controller, ["owner", "username"], null)),
 					reservation: _.get(controller, ["reservation", "username"], null),
+					reservationRelation: this._relation(_.get(controller, ["reservation", "username"], null)),
 					reservationTicks: _.get(controller, ["reservation", "ticksToEnd"], null),
 					rcl: _.get(controller, "level", 0),
 					safeMode: _.get(controller, "safeMode", null)
@@ -504,6 +661,7 @@ global.AIObserver = {
 				},
 				hostileCreeps: hostiles.length,
 				hostilePlayers: usernames,
+				playerRelations: _.map(usernames, username => ({ username: username, relation: this._relation(username) })),
 				lastHostileSightingTick: hostiles.length > 0 ? Game.time : _.get(previous, "lastHostileSightingTick", null),
 				hostileSightingsTotal: _.get(previous, "hostileSightingsTotal", 0) + ((hostiles.length > 0 && _.get(previous, "hostileCreeps", 0) === 0) ? 1 : 0),
 				nearestColony: nearest ? nearest.room : null,
@@ -535,8 +693,9 @@ global.AIObserver = {
 		_.each(_.get(Memory, "rooms", {}), roomMemory => {
 			_.each(_.get(roomMemory, "scout_requests", []), request => {
 				if (request && request.ai_managed === true && _.get(request, ["dest_pos", "roomName"]) === roomName) {
-					request.status = "observed";
+					request.status = "OBSERVED";
 					request.observed_tick = Game.time;
+					request.intel_last_seen_tick = Game.time;
 				}
 			});
 		});
@@ -635,8 +794,59 @@ global.AIObserver = {
 			factors: factors,
 			intelAgeTicks: intel.intelAgeTicks,
 			disqualified: disqualified,
-			disqualifiers: reasons
+			disqualifiers: reasons,
+			currentOperationalRole: this._operationalRole(intel),
+			claimCandidateStatus: disqualified ? "DISQUALIFIED" : (_.get(intel, "stale", false) ? "NEEDS_FRESH_INTEL" : "ELIGIBLE")
 		};
+	},
+
+	_operationalRole: function (intel) {
+		let room = _.get(intel, "room");
+		if (_.has(Memory, ["sites", "mining", room])
+			&& _.get(Memory, ["sites", "mining", room, "colony"]) !== room)
+			return "OUR_REMOTE";
+		if (_.get(intel, ["controller", "ownerRelation"]) === "SELF")
+			return "OUR_COLONY";
+		if (_.get(intel, "classification") === "source_keeper" || _.get(intel, "classification") === "sector_center")
+			return "SOURCE_KEEPER";
+		if (_.get(intel, "classification") === "highway")
+			return "HIGHWAY";
+		let owner = _.get(intel, ["controller", "ownerRelation"]);
+		let reservation = _.get(intel, ["controller", "reservationRelation"]);
+		if (owner === "ALLY") return "ALLY_OWNED";
+		if (owner === "HOSTILE") return "HOSTILE_OWNED";
+		if (reservation === "SELF") return "SELF_RESERVED";
+		if (reservation === "ALLY") return "ALLY_RESERVED";
+		if (reservation === "HOSTILE") return "FOREIGN_RESERVED";
+		return "NEUTRAL_SCOUTED";
+	},
+
+	_playerName: function () {
+		let room = _.find(_.get(Game, "rooms", {}), candidate => {
+			return _.get(candidate, ["controller", "my"], false) === true
+				&& _.isString(_.get(candidate, ["controller", "owner", "username"]));
+		});
+		if (room)
+			return room.controller.owner.username;
+		let object = _.find({
+			..._.get(Game, "spawns", {}),
+			..._.get(Game, "structures", {}),
+			..._.get(Game, "creeps", {})
+		}, candidate => _.isString(_.get(candidate, ["owner", "username"])));
+		return _.get(object, ["owner", "username"], null);
+	},
+
+	_relation: function (username) {
+		if (!_.isString(username) || username.length === 0)
+			return "NEUTRAL";
+		let player = this._player === undefined ? this._playerName() : this._player;
+		if (player && username === player)
+			return "SELF";
+		if (_.includes(_.get(Memory, ["hive", "allies"], []), username))
+			return "ALLY";
+		if (username === "Invader" || username === "Source Keeper")
+			return "HOSTILE";
+		return player ? "HOSTILE" : "UNKNOWN";
 	},
 
 	_nearestColony: function (roomName, ownedNames) {

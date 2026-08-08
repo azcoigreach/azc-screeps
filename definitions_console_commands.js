@@ -114,6 +114,41 @@
 			return `[AI] Scouting policy ${allowed ? "enabled" : "disabled"} by human operator.`;
 		};
 
+		help_ai.push("ai.autoScouting(true|false) - Allow or deny strategist-created scout missions");
+		ai.autoScouting = function (allowed) {
+			AIInterface.initMemory();
+			if (!_.isBoolean(allowed))
+				return `[AI] Error: automatic scouting policy must be true or false.`;
+			_.set(Memory, ["ai", "policy", "autoScouting"], allowed);
+			return `[AI] Automatic scouting ${allowed ? "enabled" : "disabled"} by human operator.`;
+		};
+
+		help_ai.push("ai.remoteOps(true|false) - Allow or deny maintenance of existing remotes");
+		ai.remoteOps = function (allowed) {
+			AIInterface.initMemory();
+			if (allowed === undefined)
+				return AIInterface.consoleRemoteOps();
+			if (!_.isBoolean(allowed))
+				return `[AI] Error: remote maintenance policy must be true or false.`;
+			_.set(Memory, ["ai", "policy", "allowRemoteMaintenance"], allowed);
+			return `[AI] Existing remote maintenance ${allowed ? "enabled" : "disabled"} by human operator.`;
+		};
+
+		help_ai.push("ai.autoRemoteOps(true|false) - Allow or deny strategist-created remote maintenance");
+		ai.autoRemoteOps = function (allowed) {
+			AIInterface.initMemory();
+			if (!_.isBoolean(allowed))
+				return `[AI] Error: automatic remote maintenance policy must be true or false.`;
+			_.set(Memory, ["ai", "policy", "autoRemoteMaintenance"], allowed);
+			return `[AI] Automatic existing-remote maintenance ${allowed ? "enabled" : "disabled"} by human operator.`;
+		};
+
+		help_ai.push("ai.authority() - Show the complete AI authority matrix");
+		ai.authority = function () { return AIInterface.consoleAuthority(); };
+
+		help_ai.push("ai.operations() - Show active strategic orders and objectives");
+		ai.operations = function () { return AIInterface.consoleOperations(); };
+
 
 
 		help_allies.push("allies.add(ally)");

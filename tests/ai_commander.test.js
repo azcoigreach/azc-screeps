@@ -223,20 +223,34 @@ test("SCOUT_ROOM queues one one-shot mission through the existing scout framewor
 	Game.spawns.Spawn1 = { room: { name: "W1N1" }, pos: { x: 20, y: 21 } };
 	putInbox(order("scout-queue-1", "SCOUT_ROOM", { parameters: { room: "W1N2", origin: "W1N1" } }));
 	let requests = Memory.rooms.W1N1.scout_requests;
-	assert.strictEqual(Memory.ai.orders.completed.length, 1);
+	assert.strictEqual(Memory.ai.orders.completed.length, 0);
+	assert.strictEqual(Memory.ai.orders.active.length, 1);
 	assert.strictEqual(requests.length, 1);
 	assert.strictEqual(requests[0].id, "ai-scout:scout-queue-1");
 	assert.strictEqual(requests[0].ai_managed, true);
 	assert.strictEqual(requests[0].respawn, false);
 	assert.strictEqual(requests[0].count, 1);
 	assert.strictEqual(requests[0].dest_pos.roomName, "W1N2");
+	assert.strictEqual(requests[0].status, "QUEUED");
 	assert.deepStrictEqual(requests[0].list_route, ["W1N1", "W1N2"]);
 	assert.deepStrictEqual(Memory.sites, { mining: {}, colonization: {}, combat: {} });
 
 	RawMemory.segments[91] = "";
 	putInbox(order("scout-queue-2", "SCOUT_ROOM", { parameters: { room: "W1N2", origin: "W1N1" } }));
 	assert.strictEqual(Memory.rooms.W1N1.scout_requests.length, 1);
-	assert.ok(Memory.ai.orders.completed[1].message.indexOf("already covers") >= 0);
+	assert.strictEqual(Memory.ai.orders.rejected[0].status, "rejected");
+
+	Game.time++;
+	Game.rooms.W1N2 = {
+		name: "W1N2", controller: null,
+		findSources: function () { return []; }, find: function () { return []; }
+	};
+	AIInterface.run();
+	assert.strictEqual(Memory.ai.orders.active.length, 0);
+	assert.strictEqual(Memory.ai.orders.completed.length, 1);
+	assert.strictEqual(Memory.ai.orders.completed[0].details.targetRoom, "W1N2");
+	assert.strictEqual(Memory.ai.orders.completed[0].details.intelLastSeenTick, Game.time);
+	assert.strictEqual(Memory.ai.scoutHistory[0].status, "COMPLETED");
 });
 
 test("duplicate, expired, and paused SCOUT_ROOM commands fail closed", function () {
@@ -324,7 +338,7 @@ test("human console functions remain available", function () {
 	assert.ok(ai.explain().indexOf("No explanation") >= 0);
 });
 
-test("telemetry schema v2 reports RCL capabilities, defense, territory, and exact byte size", function () {
+test("telemetry schema v3 reports identity, capabilities, defense, territory, and exact byte size", function () {
 	reset();
 	let structures = [
 		{ structureType: "spawn", my: true, spawning: null },
@@ -335,7 +349,7 @@ test("telemetry schema v2 reports RCL capabilities, defense, territory, and exac
 	];
 	Game.rooms.W1N1 = {
 		name: "W1N1",
-		controller: { my: true, level: 5, progress: 1000, progressTotal: 10000, ticksToDowngrade: 50000, safeModeAvailable: 1 },
+		controller: { my: true, owner: { username: "tester" }, level: 5, progress: 1000, progressTotal: 10000, ticksToDowngrade: 50000, safeModeAvailable: 1 },
 		energyAvailable: 900,
 		energyCapacityAvailable: 1800,
 		storage: { store: { energy: 240000 } },
@@ -354,7 +368,8 @@ test("telemetry schema v2 reports RCL capabilities, defense, territory, and exac
 	Memory.rooms.W1N1 = { defense: { hostiles: [{ id: "enemy" }] } };
 	let serialized = AIObserver.serialize();
 	let snapshot = JSON.parse(serialized);
-	assert.strictEqual(snapshot.schemaVersion, 2);
+	assert.strictEqual(snapshot.schemaVersion, 3);
+	assert.strictEqual(snapshot.empire.player, "tester");
 	assert.strictEqual(snapshot.colonies.W1N1.controller.rcl, 5);
 	assert.strictEqual(snapshot.colonies.W1N1.energy.storageEnergy, 240000);
 	assert.strictEqual(snapshot.colonies.W1N1.energy.terminalEnergy, null);
@@ -367,7 +382,8 @@ test("telemetry schema v2 reports RCL capabilities, defense, territory, and exac
 	assert.strictEqual(snapshot.observer.payloadBytes, Buffer.byteLength(serialized, "utf8"));
 	assert.ok(snapshot.observer.payloadBytes < 100000);
 	assert.deepStrictEqual(snapshot.authority.execution, {
-		scouting: false, expansion: false, remoteMiningChanges: false,
+		scouting: false, autoScouting: false, expansion: false,
+		remoteMaintenance: false, autoRemoteMaintenance: false, remoteMiningChanges: false,
 		market: false, production: false, offensiveCombat: false
 	});
 });
@@ -470,6 +486,173 @@ test("observer reuses cached strategic routes on later snapshots", function () {
 	Game.time++;
 	AIObserver.buildSnapshot();
 	assert.strictEqual(routeCalls, 1);
+});
+
+test("identity detection classifies self, ally, foreign, and neutral reservations", function () {
+	reset();
+	AIInterface.initMemory();
+	Memory.hive = { allies: ["Friendly"] };
+	Game.map.describeExits = function (room) {
+		if (room === "W1N1") return { 1: "W1N2", 3: "W2N1", 5: "W2N2" };
+		return {};
+	};
+	Game.rooms.W1N1 = {
+		name: "W1N1", controller: { my: true, owner: { username: "Stranger" }, level: 5 },
+		findSources: function () { return []; }, find: function () { return []; }
+	};
+	["W1N2", "W2N1", "W2N2"].forEach(function (name, index) {
+		let users = ["Stranger", "Friendly", "OtherPlayer"];
+		Game.rooms[name] = {
+			name: name, controller: { reservation: { username: users[index], ticksToEnd: 500 } },
+			findSources: function () { return []; }, find: function () { return []; }
+		};
+	});
+	let snapshot = AIObserver.buildSnapshot();
+	assert.strictEqual(snapshot.empire.player, "Stranger");
+	let intel = _.keyBy(snapshot.intelligence.knownRooms, "room");
+	assert.strictEqual(intel.W1N2.controller.reservationRelation, "SELF");
+	assert.strictEqual(intel.W2N1.controller.reservationRelation, "ALLY");
+	assert.strictEqual(intel.W2N2.controller.reservationRelation, "HOSTILE");
+	assert.strictEqual(intel.W1N1.controller.reservationRelation, "NEUTRAL");
+});
+
+test("population reports active demand, replacements, and undemanded roles without false satisfaction", function () {
+	reset();
+	AIInterface.initMemory();
+	Game.rooms.W1N1 = {
+		name: "W1N1", controller: { my: true, owner: { username: "tester" }, level: 5 },
+		findSources: function () { return []; }, find: function () { return []; }
+	};
+	Memory.ai.metrics.population = { colonies: { W1N1: {
+		expected: { worker: 2, upgrader: 1 }, requested: { worker: 1 },
+		source: "AZC_DYNAMIC_COLONY_TARGET", updatedTick: Game.time
+	} } };
+	Game.creeps.worker = { memory: { room: "W1N1", colony: "W1N1", role: "worker" }, ticksToLive: 1000 };
+	Game.creeps.carrier = { memory: { room: "W1N1", colony: "W1N1", role: "carrier" }, ticksToLive: 1000 };
+	let population = AIObserver.buildSnapshot().colonies.W1N1.population;
+	assert.strictEqual(population.state, "UNDERSTAFFED");
+	assert.strictEqual(population.roles.worker.state, "REPLACEMENT_PENDING");
+	assert.strictEqual(population.roles.upgrader.state, "UNDERSTAFFED");
+	assert.strictEqual(population.roles.carrier.state, "NOT_REQUIRED");
+	assert.strictEqual(population.aliveTotal, 1);
+	assert.strictEqual(population.assignedTotal, 2);
+	assert.strictEqual(population.demandSatisfaction, 33.33);
+});
+
+test("remote health exposes deterministic backlog, infrastructure, staffing, reservation, and safety diagnostics", function () {
+	reset();
+	AIInterface.initMemory();
+	Game.rooms.W1N1 = {
+		name: "W1N1", controller: { my: true, owner: { username: "tester" }, level: 5 },
+		findSources: function () { return []; }, find: function () { return []; }
+	};
+	Memory.sites.mining.W1N2 = {
+		colony: "W1N1", can_mine: true, list_route: ["W1N1", "W1N2"],
+		defense: { is_safe: true, hostiles: [] }, survey: { source_amount: 2 }
+	};
+	Memory.ai.metrics.population = { remotes: { W1N2: {
+		expected: { burrower: 2, carrier: 2, reserver: 1 }, requested: {}, updatedTick: Game.time
+	} } };
+	Game.rooms.W1N2 = {
+		name: "W1N2", controller: { reservation: { username: "tester", ticksToEnd: 500 } },
+		findSources: function () { return [{}, {}]; },
+		find: function (constant) {
+			if (constant === FIND_DROPPED_RESOURCES) return [{ resourceType: "energy", amount: 5000 }];
+			return [];
+		}
+	};
+	let remote = AIObserver.buildSnapshot().operations.remoteMining[0];
+	assert.strictEqual(remote.health, "FAILING");
+	assert.ok(remote.reasons.indexOf("NO_CONTAINER") >= 0);
+	assert.ok(remote.reasons.indexOf("ENERGY_BACKLOG") >= 0);
+	assert.ok(remote.reasons.indexOf("MINER_SHORTAGE") >= 0);
+	assert.ok(remote.reasons.indexOf("HAULER_SHORTAGE") >= 0);
+	assert.ok(remote.reasons.indexOf("RESERVATION_EXPIRING") >= 0);
+
+	Memory.sites.mining.W1N2.defense.is_safe = false;
+	remote = AIObserver.buildSnapshot().operations.remoteMining[0];
+	assert.strictEqual(remote.health, "UNSAFE");
+});
+
+test("remote health distinguishes healthy and stale-intelligence operations", function () {
+	reset({ time: 20000 });
+	AIInterface.initMemory();
+	Game.rooms.W1N1 = {
+		name: "W1N1", controller: { my: true, owner: { username: "tester" }, level: 5 },
+		findSources: function () { return []; }, find: function () { return []; }
+	};
+	Memory.sites.mining.W1N2 = {
+		colony: "W1N1", can_mine: true, list_route: ["W1N1", "W1N2"],
+		defense: { is_safe: true, hostiles: [] }, survey: { source_amount: 1 }
+	};
+	Memory.ai.metrics.population = { remotes: { W1N2: {
+		expected: { burrower: 1, carrier: 1 }, requested: {}, updatedTick: Game.time
+	} } };
+	Game.creeps.b = { memory: { colony: "W1N1", room: "W1N2", role: "burrower" }, ticksToLive: 1000 };
+	Game.creeps.c = { memory: { colony: "W1N1", room: "W1N2", role: "carrier" }, ticksToLive: 1000 };
+	Game.rooms.W1N2 = {
+		name: "W1N2", controller: null,
+		findSources: function () { return [{ energy: 3000, ticksToRegeneration: 100 }]; },
+		find: function (constant) {
+			if (constant === FIND_STRUCTURES) return [{ structureType: "container", hits: 200000, store: { energy: 100, getCapacity: function () { return 2000; } } }];
+			return [];
+		}
+	};
+	let remote = AIObserver.buildSnapshot().operations.remoteMining[0];
+	assert.strictEqual(remote.health, "HEALTHY");
+
+	delete Game.rooms.W1N2;
+	Memory.ai.intelligence.rooms.W1N2.lastSeenTick = 1;
+	remote = AIObserver.buildSnapshot().operations.remoteMining[0];
+	assert.strictEqual(remote.health, "STALE_INTEL");
+	assert.ok(remote.reasons.indexOf("STALE_INTEL") >= 0);
+});
+
+test("remote maintenance actions require authority and delegate only existing-remote objectives", function () {
+	reset();
+	configureExecution();
+	Game.rooms.W1N1 = { name: "W1N1", controller: { my: true } };
+	Memory.sites.mining.W1N2 = { colony: "W1N1" };
+	putInbox(order("remote-denied-1", "REBALANCE_REMOTE_LOGISTICS", { parameters: { room: "W1N2" } }));
+	assert.strictEqual(Memory.ai.orders.rejected[0].reason, "Existing remote maintenance is not authorized by policy");
+
+	reset();
+	configureExecution();
+	Memory.ai.policy.allowRemoteMaintenance = true;
+	Game.rooms.W1N1 = { name: "W1N1", controller: { my: true } };
+	Memory.sites.mining.W1N2 = { colony: "W1N1" };
+	putInbox(order("remote-ok-1", "ENSURE_REMOTE_INFRASTRUCTURE", { parameters: { room: "W1N2" } }));
+	assert.strictEqual(Memory.ai.orders.completed[0].action, "ENSURE_REMOTE_INFRASTRUCTURE");
+	assert.strictEqual(Memory.ai.remoteObjectives.W1N2.infrastructure.orderId, "remote-ok-1");
+	assert.deepStrictEqual(Memory.sites.mining.W1N2, { colony: "W1N1" });
+
+	RawMemory.segments[91] = "";
+	putInbox(order("remote-bad-1", "REASSESS_REMOTE", { parameters: { room: "W9N9" } }));
+	assert.ok(Memory.ai.orders.rejected[0].reason.indexOf("not an existing remote") >= 0);
+});
+
+test("scout terminal failure and expiry do not report successful observation", function () {
+	reset();
+	configureExecution();
+	Memory.ai.policy.allowScouting = true;
+	Game.rooms.W1N1 = { name: "W1N1", controller: { my: true } };
+	putInbox(order("scout-fail-1", "SCOUT_ROOM", { parameters: { room: "W1N2", origin: "W1N1" } }));
+	Memory.rooms.W1N1.scout_requests[0].status = "FAILED";
+	Memory.rooms.W1N1.scout_requests[0].failure_reason = "no spawn path";
+	AIInterface.run();
+	assert.strictEqual(Memory.ai.orders.rejected[0].status, "failed");
+	assert.strictEqual(Memory.ai.scoutHistory[0].status, "FAILED");
+
+	reset();
+	configureExecution();
+	Memory.ai.policy.allowScouting = true;
+	Game.rooms.W1N1 = { name: "W1N1", controller: { my: true } };
+	putInbox(order("scout-expire-live-1", "SCOUT_ROOM", {
+		expiresTick: Game.time + 1, parameters: { room: "W1N2", origin: "W1N1" }
+	}));
+	Game.time += 2;
+	AIInterface.run();
+	assert.strictEqual(Memory.ai.orders.rejected[0].status, "expired");
 });
 
 test("status acknowledgements serialize to segment 92", function () {

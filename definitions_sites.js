@@ -290,7 +290,8 @@
 				}
 
 				if (typeof AIObserver !== "undefined" && _.isFunction(_.get(AIObserver, "recordPopulationTarget")))
-					AIObserver.recordPopulationTarget("colonies", rmColony, rmColony, popTarget);
+					AIObserver.recordPopulationTarget("colonies", rmColony, rmColony, popTarget, popActual,
+						popSetting ? "CUSTOM_ACTIVE_TARGET" : "AZC_DYNAMIC_COLONY_TARGET");
 			},
 
 
@@ -610,8 +611,12 @@
 				Stats_CPU.End(rmColony, "Mining-init");
 
 				Stats_CPU.Start(rmColony, `Mining-${rmHarvest}-surveyRoom`);
-				if (isPulse_Defense())
+				let reassessObjective = _.get(Memory, ["ai", "remoteObjectives", rmHarvest, "reassess"]);
+				if (isPulse_Defense() || (reassessObjective && _.get(reassessObjective, "expiresTick", 0) >= Game.time)) {
 					this.surveyRoom(rmColony, rmHarvest);
+					if (reassessObjective)
+						reassessObjective.appliedTick = Game.time;
+				}
 				Stats_CPU.End(rmColony, `Mining-${rmHarvest}-surveyRoom`);
 
 				if (isPulse_Spawn()) {
@@ -738,6 +743,8 @@
 				let is_safe_colony = _.get(Memory, ["rooms", rmColony, "defense", "is_safe"], true);
 				let is_visible = _.get(Memory, ["sites", "mining", rmHarvest, "survey", "visible"], true);
 				let can_mine = _.get(Memory, ["sites", "mining", rmHarvest, "can_mine"]);
+				let reservationObjective = _.get(Memory, ["ai", "remoteObjectives", rmHarvest, "reservation"]);
+				let logisticsObjective = _.get(Memory, ["ai", "remoteObjectives", rmHarvest, "logistics"]);
 
 				// If the colony is not safe (under siege?) pause spawning remote mining; frees colony spawns to make soldiers
 				if (rmColony != rmHarvest && !is_safe_colony)
@@ -812,6 +819,11 @@
 
 				// Enhanced carrier population adjustment based on energy flow efficiency
 				let store_percent = _.get(Memory, ["sites", "mining", rmHarvest, "store_percent"], 0);
+				let visibleRoom = _.get(Game, ["rooms", rmHarvest]);
+				let droppedBacklog = visibleRoom == null ? 0 : _.sum(_.map(visibleRoom.find(FIND_DROPPED_RESOURCES), resource => {
+					return resource.resourceType === RESOURCE_ENERGY ? resource.amount : 0;
+				}));
+				let totalBacklog = _.get(Memory, ["sites", "mining", rmHarvest, "store_total"], 0) + droppedBacklog;
 				let energy_level = _.get(Memory, ["rooms", rmColony, "survey", "energy_level"]);
 				
 				// Dynamic carrier scaling based on container fill and energy demand
@@ -830,6 +842,14 @@
 				if (energy_level == CRITICAL || energy_level == LOW) {
 					_.set(popTarget, ["carrier", "amount"], _.get(popTarget, ["carrier", "amount"], 0) + 1);
 				}
+				// A strategic objective never specifies bodies or raw amounts. AZC
+				// deterministically converts a confirmed backlog into one bounded
+				// hauling slot and lets the normal population manager implement it.
+				if (logisticsObjective && _.get(logisticsObjective, "expiresTick", 0) >= Game.time && totalBacklog >= 2000) {
+					_.set(popTarget, ["carrier", "amount"], _.get(popTarget, ["carrier", "amount"], 0) + 1);
+					logisticsObjective.appliedTick = Game.time;
+					logisticsObjective.evidence = { energyBacklog: totalBacklog };
+				}
 
 				// Tally population levels for level scaling
 				Control.populationTally(rmColony,
@@ -840,7 +860,8 @@
 				Stats_Grafana.populationTally(rmColony, popTarget, popActual);
 
 				if (typeof AIObserver !== "undefined" && _.isFunction(_.get(AIObserver, "recordPopulationTarget")))
-					AIObserver.recordPopulationTarget("remotes", rmColony, rmHarvest, popTarget);
+					AIObserver.recordPopulationTarget("remotes", rmColony, rmHarvest, popTarget, popActual,
+						popSetting ? "CUSTOM_ACTIVE_TARGET" : "AZC_DYNAMIC_REMOTE_TARGET");
 
 				if (_.get(popActual, "paladin", 0) < _.get(popTarget, ["paladin", "amount"], 0)) {
 					Memory["shard"]["spawn_requests"].push({
@@ -894,10 +915,13 @@
 				}
 
 				if (is_safe) {
+					let reserveWarning = _.get(Memory, ["ai", "policy", "reservationWarningTicks"], 2000);
+					if (reservationObjective && _.get(reservationObjective, "expiresTick", 0) >= Game.time)
+						reservationObjective.appliedTick = Game.time;
 					if (_.get(popActual, "reserver", 0) < _.get(popTarget, ["reserver", "amount"], 0)
 						&& Game.rooms[rmHarvest] != null && Game.rooms[rmHarvest].controller != null
 						&& (Game.rooms[rmHarvest].controller.reservation == null
-							|| Game.rooms[rmHarvest].controller.reservation.ticksToEnd < 2000)
+							|| Game.rooms[rmHarvest].controller.reservation.ticksToEnd < reserveWarning)
 						&& (_.get(Memory, ["sites", "mining", rmHarvest, "survey", "reserve_access"], null) == null
 							|| _.get(popActual, "reserver", 0) < _.get(Memory, ["sites", "mining", rmHarvest, "survey", "reserve_access"], 0))) {
 						Memory["shard"]["spawn_requests"].push({
@@ -1045,7 +1069,9 @@
 
 			buildContainers: function (rmColony, rmHarvest) {
 				hasKeepers = _.get(Memory, ["sites", "mining", rmHarvest, "has_keepers"], false);
-				if (Game.time % 1500 != 0 || rmColony == rmHarvest || hasKeepers)
+				let objective = _.get(Memory, ["ai", "remoteObjectives", rmHarvest, "infrastructure"]);
+				let forced = objective && _.get(objective, "expiresTick", 0) >= Game.time;
+				if ((!forced && Game.time % 1500 != 0) || rmColony == rmHarvest || hasKeepers)
 					return;		// Blueprint builds containers in colony rooms
 
 				let room = Game["rooms"][rmHarvest];
@@ -1054,13 +1080,21 @@
 
 				let sources = room.findSources();
 				let containers = _.filter(room.find(FIND_STRUCTURES), s => { return s.structureType == "container"; });
+				let sites = _.filter(room.find(FIND_MY_CONSTRUCTION_SITES), s => { return s.structureType == "container"; });
+				let placed = 0;
 				_.each(sources, source => {
-					if (source.pos.findInRange(containers, 1).length < 1) {
+					if (source.pos.findInRange(containers, 1).length < 1 && source.pos.findInRange(sites, 1).length < 1) {
 						let adj = source.pos.getBuildableTile_Adjacent();
-						if (adj != null && adj.createConstructionSite("container") == OK)
+						if (adj != null && adj.createConstructionSite("container") == OK) {
+							placed++;
 							console.log(`[Mining] ${room.name} placing container at (${adj.x}, ${adj.y})`);
+						}
 					}
 				});
+				if (forced) {
+					objective.appliedTick = Game.time;
+					objective.placedSites = _.get(objective, "placedSites", 0) + placed;
+				}
 			}
 		};
 		Mining.Run(rmColony, rmHarvest);

@@ -851,17 +851,42 @@
 				pendingSpawn = true;
 			}
 
+			// AI missions use explicit lifecycle semantics. Observation is marked by
+			// AIObserver only after the destination intelligence record is updated.
+			if (request.ai_managed === true && !_.includes(["OBSERVED", "COMPLETED", "FAILED", "EXPIRED"], request.status)) {
+				let spawning = _.some(creeps, creep => _.get(creep, "spawning", false) === true);
+				if (pendingSpawn || spawning)
+					request.status = "SPAWNING";
+				else if (activeCount > 0)
+					request.status = "EN_ROUTE";
+				else
+					request.status = "QUEUED";
+				request.scout_creep = _.get(_.head(creeps), "name", null);
+			}
+
 			// Flag completion for one-shot missions with no surviving creeps or pending spawns
 			if (prunedRemoteOvershoot) {
 				request.spawned_total = Math.max(0, (request.spawned_total || 0) - request._remote_pruned);
 				request._remote_pruned = 0;
 			}
 
-			if (!request.respawn && request.spawned_total >= request.count && creeps.length == 0 && remoteCount == 0 && !pendingSpawn)
+			if (!request.respawn && request.spawned_total >= request.count && creeps.length == 0 && remoteCount == 0 && !pendingSpawn) {
+				if (request.ai_managed === true && request.status !== "COMPLETED") {
+					request.status = request.status === "OBSERVED" ? "COMPLETED" : "FAILED";
+					request.failure_reason = request.status === "FAILED" ? "Scout ended before target observation" : null;
+					request.terminal_tick = Game.time;
+				}
 				request._completed = true;
+			}
 		});
 
-		requests = _.filter(requests, req => req != null && req._completed !== true);
+		requests = _.filter(requests, req => {
+			if (req == null)
+				return false;
+			if (req._completed !== true)
+				return true;
+			return req.ai_managed === true && Game.time - _.get(req, "terminal_tick", Game.time) <= 100;
+		});
 		_.set(Memory, ["rooms", rmColony, "scout_requests"], requests);
 	},
 

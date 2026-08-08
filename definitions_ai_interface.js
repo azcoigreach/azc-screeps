@@ -19,11 +19,18 @@ global.AIInterface = {
 	MAX_ACTIVE: 10,
 	MAX_HISTORY: 50,
 	MAX_SEEN_IDS: 200,
+	MAX_AI_SCOUTS: 2,
+	SCOUT_HISTORY_TICKS: 20000,
+	REMOTE_OBJECTIVE_TICKS: 3000,
 	ACTIONS: {
 		NOOP: true,
 		REQUEST_STATUS: true,
 		SET_EXPLANATION: true,
-		SCOUT_ROOM: true
+		SCOUT_ROOM: true,
+		REASSESS_REMOTE: true,
+		ENSURE_REMOTE_RESERVATION: true,
+		ENSURE_REMOTE_INFRASTRUCTURE: true,
+		REBALANCE_REMOTE_LOGISTICS: true
 	},
 	OBSERVE_ACTIONS: {
 		NOOP: true,
@@ -50,8 +57,13 @@ global.AIInterface = {
 		this._default(["ai", "policy", "allowMarket"], false, _.isBoolean);
 		this._default(["ai", "policy", "allowProduction"], false, _.isBoolean);
 		this._default(["ai", "policy", "allowScouting"], false, _.isBoolean);
+		this._default(["ai", "policy", "autoScouting"], false, _.isBoolean);
+		this._default(["ai", "policy", "allowRemoteMaintenance"], false, _.isBoolean);
+		this._default(["ai", "policy", "autoRemoteMaintenance"], false, _.isBoolean);
 		this._default(["ai", "policy", "intelligenceRadius"], 2, value => this._isInteger(value) && value >= 1 && value <= 5);
 		this._default(["ai", "policy", "intelStaleTicks"], 10000, value => this._isInteger(value) && value >= 100);
+		this._default(["ai", "policy", "reservationWarningTicks"], 2000, value => this._isInteger(value) && value >= 100 && value <= 5000);
+		this._default(["ai", "policy", "maxConcurrentScouts"], 1, value => this._isInteger(value) && value >= 1 && value <= this.MAX_AI_SCOUTS);
 
 		if (!_.isObject(_.get(Memory, ["ai", "commander"])) || _.isArray(_.get(Memory, ["ai", "commander"])))
 			_.set(Memory, ["ai", "commander"], {});
@@ -87,6 +99,10 @@ global.AIInterface = {
 			_.set(Memory, ["ai", "intelligence", "rooms"], {});
 		if (!_.isArray(_.get(Memory, ["ai", "intelligence", "hostileEvents"])))
 			_.set(Memory, ["ai", "intelligence", "hostileEvents"], []);
+		if (!_.isObject(_.get(Memory, ["ai", "remoteObjectives"])) || _.isArray(_.get(Memory, ["ai", "remoteObjectives"])))
+			_.set(Memory, ["ai", "remoteObjectives"], {});
+		if (!_.isArray(_.get(Memory, ["ai", "scoutHistory"])))
+			_.set(Memory, ["ai", "scoutHistory"], []);
 	},
 
 	_default: function (path, value, validator) {
@@ -116,6 +132,8 @@ global.AIInterface = {
 			this._processPending();
 			this._updateCommanderOnline();
 			this._publishObservation();
+			this._processActive();
+			this._pruneOperations();
 			this._publishStatus();
 		} catch (err) {
 			this._logError("AI interface tick failed safely", err);
@@ -184,6 +202,21 @@ global.AIInterface = {
 			let origin = _.get(Game, ["rooms", order.parameters.origin]);
 			if (!origin || _.get(origin, ["controller", "my"], false) !== true)
 				return "SCOUT_ROOM origin is not an owned visible colony";
+		}
+		if (_.includes([
+			"REASSESS_REMOTE", "ENSURE_REMOTE_RESERVATION",
+			"ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS"
+		], order.action)) {
+			if (keys.length !== 1 || !_.has(order.parameters, "room"))
+				return `${order.action} requires only parameters.room`;
+			if (!this._isRoomName(order.parameters.room))
+				return `${order.action} room is invalid`;
+			let site = _.get(Memory, ["sites", "mining", order.parameters.room]);
+			if (!site || _.get(site, "colony") === order.parameters.room)
+				return `${order.action} target is not an existing remote mining room`;
+			let colony = _.get(Game, ["rooms", _.get(site, "colony")]);
+			if (!colony || _.get(colony, ["controller", "my"], false) !== true)
+				return `${order.action} remote colony is not owned and visible`;
 		}
 		return null;
 	},
@@ -284,9 +317,11 @@ global.AIInterface = {
 			active.push(order);
 			this._trim(active, this.MAX_ACTIVE);
 			try {
-				let message = this._execute(order);
-				this._removeActive(order.id);
-				this._complete(order, message);
+				let result = this._execute(order);
+				if (!_.get(result, "asynchronous", false)) {
+					this._removeActive(order.id);
+					this._complete(order, _.isString(result) ? result : _.get(result, "message", "Action completed"));
+				}
 			} catch (err) {
 				this._removeActive(order.id);
 				this._reject(order.id, order.action, `Execution failed: ${err.message}`);
@@ -304,6 +339,11 @@ global.AIInterface = {
 			return "Observe mode prevents execution";
 		if (order.action === "SCOUT_ROOM" && !_.get(Memory, ["ai", "policy", "allowScouting"], false))
 			return "Scouting is not authorized by policy";
+		if (_.includes([
+			"REASSESS_REMOTE", "ENSURE_REMOTE_RESERVATION",
+			"ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS"
+		], order.action) && !_.get(Memory, ["ai", "policy", "allowRemoteMaintenance"], false))
+			return "Existing remote maintenance is not authorized by policy";
 		if (order.expiresTick < Game.time)
 			return "Order expired before execution";
 		return null;
@@ -327,6 +367,11 @@ global.AIInterface = {
 			return "Explanation updated";
 		if (order.action === "SCOUT_ROOM")
 			return this._queueScoutMission(order);
+		if (_.includes([
+			"REASSESS_REMOTE", "ENSURE_REMOTE_RESERVATION",
+			"ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS"
+		], order.action))
+			return this._delegateRemoteObjective(order);
 		throw new Error("Unsupported action reached executor");
 	},
 
@@ -340,11 +385,20 @@ global.AIInterface = {
 		let requests = _.get(Memory, ["rooms", originName, "scout_requests"], []);
 		if (!_.isArray(requests))
 			requests = [];
+		let concurrent = 0;
+		_.each(_.get(Memory, "rooms", {}), roomMemory => {
+			concurrent += _.filter(_.get(roomMemory, "scout_requests", []), request => {
+				return request && request.ai_managed === true
+					&& !_.includes(["COMPLETED", "FAILED", "EXPIRED"], _.get(request, "status"));
+			}).length;
+		});
+		if (concurrent >= _.get(Memory, ["ai", "policy", "maxConcurrentScouts"], 1))
+			throw new Error("Maximum concurrent AI scout missions reached");
 		let existing = _.find(requests, request => request && request.ai_managed === true
 			&& _.get(request, ["dest_pos", "roomName"]) === roomName
 			&& request._completed !== true);
 		if (existing)
-			return `Scout mission ${existing.id} already covers ${roomName}`;
+			throw new Error(`Scout mission ${existing.id} already covers ${roomName}`);
 
 		let rally = _.head(_.filter(_.get(Game, "spawns", {}), spawn => _.get(spawn, ["room", "name"]) === originName));
 		let rallyPos = rally && rally.pos
@@ -371,6 +425,7 @@ global.AIInterface = {
 			colony: originName,
 			colony_shard: _.get(Game, ["shard", "name"], "sim"),
 			created: Game.time,
+			requested_tick: Game.time,
 			rally_pos: rallyPos,
 			dest_pos: { x: 25, y: 25, roomName: roomName, shard: _.get(Game, ["shard", "name"], "sim") },
 			custom: { priority: 22, level: 1, body: "scout", name: null },
@@ -383,32 +438,165 @@ global.AIInterface = {
 			wait_for_full_rally: false,
 			patrol_mode: "station",
 			rally_ready: false,
-			status: "queued"
+			status: "QUEUED",
+			failure_reason: null
 		};
 		requests.push(mission);
 		_.set(Memory, ["rooms", originName, "scout_requests"], requests);
-		return `Scout mission ${mission.id} queued for ${originName} -> ${roomName}`;
+		order.missionId = mission.id;
+		order.targetRoom = roomName;
+		order.origin = originName;
+		order.state = "QUEUED";
+		order.startedTick = Game.time;
+		return { asynchronous: true, message: `Scout mission ${mission.id} queued for ${originName} -> ${roomName}` };
 	},
 
-	_complete: function (order, message) {
+	_delegateRemoteObjective: function (order) {
+		let roomName = order.parameters.room;
+		let objectives = _.get(Memory, ["ai", "remoteObjectives", roomName], {});
+		let key = {
+			REASSESS_REMOTE: "reassess",
+			ENSURE_REMOTE_RESERVATION: "reservation",
+			ENSURE_REMOTE_INFRASTRUCTURE: "infrastructure",
+			REBALANCE_REMOTE_LOGISTICS: "logistics"
+		}[order.action];
+		let current = _.get(objectives, key);
+		if (current && _.get(current, "expiresTick", 0) >= Game.time)
+			throw new Error(`${order.action} already active for ${roomName}`);
+		objectives[key] = {
+			orderId: order.id,
+			createdTick: Game.time,
+			expiresTick: Game.time + this.REMOTE_OBJECTIVE_TICKS,
+			reason: _.get(order, "reason", null)
+		};
+		_.set(Memory, ["ai", "remoteObjectives", roomName], objectives);
+		return `${order.action} delegated to deterministic AZC remote controller for ${roomName}`;
+	},
+
+	_processActive: function () {
+		let active = _.get(Memory, ["ai", "orders", "active"], []).slice();
+		_.each(active, order => {
+			if (order.action !== "SCOUT_ROOM")
+				return;
+			let mission = this._findScoutMission(order.missionId);
+			let intel = _.get(Memory, ["ai", "intelligence", "rooms", order.targetRoom]);
+			if (mission) {
+				order.state = _.get(mission, "status", "QUEUED");
+				order.scoutCreep = _.head(_.get(mission, "creeps", [])) || null;
+			}
+			if (intel && _.get(intel, "lastSeenTick", -1) >= _.get(order, "startedTick", Game.time)) {
+				let completedTick = Game.time;
+				if (mission) {
+					mission.status = "COMPLETED";
+					mission.completed_tick = completedTick;
+					mission.intel_last_seen_tick = intel.lastSeenTick;
+				}
+				this._archiveScout(order, mission, "COMPLETED", null, intel.lastSeenTick);
+				this._removeActive(order.id);
+				this._complete(order, `Target ${order.targetRoom} observed; intelligence updated at tick ${intel.lastSeenTick}`, {
+					targetRoom: order.targetRoom,
+					origin: order.origin,
+					scoutCreep: order.scoutCreep,
+					requestedTick: order.startedTick,
+					observedTick: _.get(mission, "observed_tick", intel.lastSeenTick),
+					completedTick: completedTick,
+					intelLastSeenTick: intel.lastSeenTick
+				});
+				return;
+			}
+			if (mission && _.includes(["FAILED", "EXPIRED"], mission.status)) {
+				let terminal = mission.status;
+				let reason = _.get(mission, "failure_reason", `Scout mission ${terminal.toLowerCase()}`);
+				this._archiveScout(order, mission, terminal, reason, null);
+				this._removeActive(order.id);
+				this._reject(order.id, order.action, reason, terminal.toLowerCase());
+				return;
+			}
+			if (order.expiresTick < Game.time) {
+				if (mission) {
+					mission.status = "EXPIRED";
+					mission.failure_reason = "Scout order expired before observation";
+					mission._completed = true;
+				}
+				this._archiveScout(order, mission, "EXPIRED", "Scout order expired before observation", null);
+				this._removeActive(order.id);
+				this._reject(order.id, order.action, "Scout order expired before target observation", "expired");
+				return;
+			}
+			if (!mission) {
+				this._archiveScout(order, null, "FAILED", "Scout mission disappeared before observation", null);
+				this._removeActive(order.id);
+				this._reject(order.id, order.action, "Scout mission failed before target observation", "failed");
+			}
+		});
+	},
+
+	_findScoutMission: function (missionId) {
+		let found = null;
+		_.each(_.get(Memory, "rooms", {}), roomMemory => {
+			let mission = _.find(_.get(roomMemory, "scout_requests", []), request => request && request.id === missionId);
+			if (mission)
+				found = mission;
+		});
+		return found;
+	},
+
+	_archiveScout: function (order, mission, status, failureReason, intelTick) {
+		let history = _.get(Memory, ["ai", "scoutHistory"], []);
+		history.push({
+			orderId: order.id,
+			missionId: order.missionId,
+			targetRoom: order.targetRoom,
+			origin: order.origin,
+			scoutCreep: _.get(order, "scoutCreep", _.head(_.get(mission, "creeps", [])) || null),
+			status: status,
+			requestedTick: _.get(order, "startedTick", null),
+			observedTick: _.get(mission, "observed_tick", null),
+			completedTick: status === "COMPLETED" ? Game.time : null,
+			intelLastSeenTick: intelTick,
+			failureReason: failureReason
+		});
+		this._trim(history, this.MAX_HISTORY);
+	},
+
+	_pruneOperations: function () {
+		_.each(_.get(Memory, ["ai", "remoteObjectives"], {}), (objectives, room) => {
+			_.each(_.keys(objectives), key => {
+				if (_.get(objectives, [key, "expiresTick"], 0) < Game.time)
+					delete objectives[key];
+			});
+			if (_.keys(objectives).length === 0)
+				delete Memory.ai.remoteObjectives[room];
+		});
+		let history = _.get(Memory, ["ai", "scoutHistory"], []);
+		_.set(Memory, ["ai", "scoutHistory"], _.filter(history, item => {
+			let tick = _.get(item, "completedTick", _.get(item, "requestedTick", Game.time));
+			return Game.time - tick <= this.SCOUT_HISTORY_TICKS;
+		}));
+	},
+
+	_complete: function (order, message, details) {
 		let completed = _.get(Memory, ["ai", "orders", "completed"]);
-		completed.push({
+		let result = {
 			id: order.id,
 			action: order.action,
 			status: "completed",
 			message: message,
 			tick: Game.time
-		});
+		};
+		if (details)
+			result.details = details;
+		completed.push(result);
 		this._trim(completed, this.MAX_HISTORY);
 		console.log(`[AI] Command completed: ${order.id} (${order.action})`);
 	},
 
-	_reject: function (id, action, reason) {
+	_reject: function (id, action, reason, status) {
 		let rejected = _.get(Memory, ["ai", "orders", "rejected"]);
 		rejected.push({
 			id: id,
 			action: action,
-			status: "rejected",
+			status: status || "rejected",
 			reason: reason,
 			tick: Game.time
 		});
@@ -570,7 +758,11 @@ global.AIInterface = {
 			`Combat: ${policy.allowCombat ? "enabled" : "disabled"}`,
 			`Market: ${policy.allowMarket ? "enabled" : "disabled"}`,
 			`Production: ${policy.allowProduction ? "enabled" : "disabled"}`,
-			`Scouting: ${policy.allowScouting ? "enabled" : "disabled"}`
+			`Scouting: ${policy.allowScouting ? (policy.autoScouting ? "AUTO" : "allowed") : "disabled"}`,
+			`Existing Remote Maintenance: ${policy.allowRemoteMaintenance ? (policy.autoRemoteMaintenance ? "AUTO" : "allowed") : "disabled"}`,
+			`New Remote Establishment: disabled`,
+			`Colonization: disabled`,
+			`Offensive Combat: disabled`
 		];
 		let output = lines.join("\n");
 		console.log(output);
@@ -594,6 +786,46 @@ global.AIInterface = {
 		this.initMemory();
 		let explanation = _.get(Memory, ["ai", "status", "lastExplanation"]);
 		let output = explanation || "No explanation received.";
+		console.log(output);
+		return output;
+	},
+
+	consoleAuthority: function () {
+		this.initMemory();
+		let policy = _.get(Memory, ["ai", "policy"]);
+		let output = [
+			"=== AI AUTHORITY ===", "",
+			`Mode: ${_.get(Memory, ["ai", "mode"], "observe").toUpperCase()}`,
+			`SCOUT_ROOM: ${policy.allowScouting ? (policy.autoScouting ? "AUTO" : "MANUAL") : "DISABLED"}`,
+			`REASSESS_REMOTE: ${policy.allowRemoteMaintenance ? (policy.autoRemoteMaintenance ? "AUTO" : "MANUAL") : "DISABLED"}`,
+			`ENSURE_REMOTE_RESERVATION: ${policy.allowRemoteMaintenance ? (policy.autoRemoteMaintenance ? "AUTO" : "MANUAL") : "DISABLED"}`,
+			`ENSURE_REMOTE_INFRASTRUCTURE: ${policy.allowRemoteMaintenance ? (policy.autoRemoteMaintenance ? "AUTO" : "MANUAL") : "DISABLED"}`,
+			`REBALANCE_REMOTE_LOGISTICS: ${policy.allowRemoteMaintenance ? (policy.autoRemoteMaintenance ? "AUTO" : "MANUAL") : "DISABLED"}`,
+			"START_REMOTE_MINING: DISABLED", "STOP_REMOTE_MINING: DISABLED",
+			"COLONIZE_ROOM: DISABLED", "ATTACK_ROOM: DISABLED"
+		].join("\n");
+		console.log(output);
+		return output;
+	},
+
+	consoleOperations: function () {
+		this.initMemory();
+		let output = JSON.stringify({
+			activeOrders: _.get(Memory, ["ai", "orders", "active"], []),
+			remoteObjectives: _.get(Memory, ["ai", "remoteObjectives"], {}),
+			scoutHistory: _.get(Memory, ["ai", "scoutHistory"], []).slice(-10)
+		}, null, 2);
+		console.log(output);
+		return output;
+	},
+
+	consoleRemoteOps: function () {
+		this.initMemory();
+		let output = JSON.stringify({
+			authorized: _.get(Memory, ["ai", "policy", "allowRemoteMaintenance"], false),
+			automatic: _.get(Memory, ["ai", "policy", "autoRemoteMaintenance"], false),
+			objectives: _.get(Memory, ["ai", "remoteObjectives"], {})
+		}, null, 2);
 		console.log(output);
 		return output;
 	}
