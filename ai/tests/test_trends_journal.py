@@ -110,6 +110,29 @@ class TrendsJournalTests(unittest.TestCase):
             show_cost(self.history)
         self.assertIn("$0.000675", output.getvalue())
 
+    def test_first_phase3_snapshot_after_legacy_history_creates_only_a_baseline(self) -> None:
+        legacy = telemetry_payload(900)
+        legacy["schemaVersion"] = 1
+        self.history.connection.execute(
+            """
+            INSERT INTO observations (
+                recorded_at, screeps_tick, shard, telemetry_hash, material_hash,
+                rcl, owned_room_count, creep_count, cpu_used, cpu_bucket, gcl,
+                credits, remote_mining_summary, hostile_count, empire_summary, telemetry_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "2026-08-07T00:00:00+00:00", 900, "shard0", "legacy", "legacy",
+                6, 1, 30, 12.5, 9000, 4, 12345.0, "[]", 0, "{}",
+                json.dumps(legacy),
+            ),
+        )
+        self.history.connection.commit()
+
+        self.processor.process(json.dumps(telemetry_payload(1000)))
+        entries = self.history.recent_journal(20)
+        self.assertEqual([entry["entry_type"] for entry in entries], ["telemetry_baseline"])
+
 
 if __name__ == "__main__":
     unittest.main()
