@@ -24,6 +24,10 @@ global.AIInterface = {
 		REQUEST_STATUS: true,
 		SET_EXPLANATION: true
 	},
+	OBSERVE_ACTIONS: {
+		REQUEST_STATUS: true,
+		SET_EXPLANATION: true
+	},
 
 	initMemory: function () {
 		if (!_.isObject(_.get(Memory, "ai")) || _.isArray(_.get(Memory, "ai")))
@@ -139,7 +143,8 @@ global.AIInterface = {
 			return { valid: false, reason: "AI commander is paused" };
 		if (!_.get(Memory, ["ai", "commander", "online"], false))
 			return { valid: false, reason: "External commander heartbeat is stale" };
-		if (_.get(Memory, ["ai", "mode"], "observe") !== "execute")
+		if (_.get(Memory, ["ai", "mode"], "observe") !== "execute"
+			&& !Object.prototype.hasOwnProperty.call(this.OBSERVE_ACTIONS, order.action))
 			return { valid: false, reason: "Observe mode prevents execution" };
 
 		return { valid: true };
@@ -265,7 +270,8 @@ global.AIInterface = {
 			return "AI commander is disabled";
 		if (_.get(Memory, ["ai", "paused"], false))
 			return "AI commander is paused";
-		if (_.get(Memory, ["ai", "mode"], "observe") !== "execute")
+		if (_.get(Memory, ["ai", "mode"], "observe") !== "execute"
+			&& !Object.prototype.hasOwnProperty.call(this.OBSERVE_ACTIONS, order.action))
 			return "Observe mode prevents execution";
 		if (order.expiresTick < Game.time)
 			return "Order expired before execution";

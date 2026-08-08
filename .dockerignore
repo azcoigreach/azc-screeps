@@ -1,0 +1,15 @@
+.git
+.github
+.env
+**/__pycache__
+**/*.py[cod]
+**/node_modules
+ai/data/*.db
+ai/data/*.db-*
+ai/data/*.sqlite
+ai/data/*.sqlite-*
+ai/tests
+docs
+tests
+screeps-stats
+

@@ -203,3 +203,12 @@ $RECYCLE.BIN/
 #####
 # End of core ignore list, below put you custom 'per project' settings (patterns or path)
 #####
+
+# AI commander runtime data and Python caches
+ai/data/*.db
+ai/data/*.db-*
+ai/data/*.sqlite
+ai/data/*.sqlite-*
+**/__pycache__/
+*.py[cod]
+.pytest_cache/

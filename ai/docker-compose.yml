@@ -1,0 +1,11 @@
+services:
+  commander:
+    build:
+      context: ..
+      dockerfile: ai/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    volumes:
+      - ./data:/app/ai/data
+    command: ["python", "-m", "commander.main", "watch"]
