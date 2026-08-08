@@ -123,6 +123,12 @@ empire.remote_mining("W1N1", "W5N5", false, ["W1N1", "W2N2", "W3N3", "W4N4", "W5
 - Ensures creeps don't get lost or trapped
 - Reduces CPU (pre-calculated path)
 
+Novice and respawn boundaries are a separate constraint. The AI commander checks
+`Game.map.getRoomStatus()` before starting or traversing a route and will not send
+creeps through a temporary protected-area wall. A target outside the current
+boundary remains a `POST_PROTECTION` candidate; scouting is deferred until the
+runtime status transition instead of spawning replacements that cannot cross.
+
 ---
 
 ### With Source Keepers
@@ -509,4 +515,3 @@ system_status();      // Overall health
 ---
 
 **Remote mining is your key to energy dominance!** ⛏️
-

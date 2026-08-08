@@ -47,6 +47,51 @@ and boost summaries, cached layout feasibility, and persistent player history.
 Non-allied ownership is `NEUTRAL` unless the player is explicitly listed in
 `Memory.hive.enemies`; ownership alone is not treated as hostility.
 
+### Novice and respawn protection doctrine
+
+`Game.map.getRoomStatus(roomName)` is the sole authority for `normal`, `closed`,
+`novice`, and `respawn` status and temporary expiration timestamps. No protection
+duration is hard-coded. Empire, colony, and strategically relevant room telemetry
+expose status, expiration, remaining milliseconds, protected-region identity,
+current reachability, post-protection reconsideration time, and cached blocked
+exits. Visible edge walls and `Game.map.findExit` failures add direct evidence to
+status-derived boundary records.
+
+Protected routing uses these states:
+
+```text
+REACHABLE_NOW  BLOCKED_BY_NOVICE_BOUNDARY  REACHABLE_AFTER_PROTECTION
+CLOSED         UNKNOWN
+```
+
+Status-keyed routes are cached for 1,000 ticks and invalidated on the transition
+to `normal`. Scouts, remote starts, colonization, and traveling scout creeps all
+use the same layer. An inaccessible temporary scout target becomes `DEFERRED`,
+stores the authoritative expiration timestamp, consumes no scout concurrency,
+and is reconsidered by automatic scouting after the status becomes reachable.
+It is not repeatedly respawned and is not mislabeled as permanently failed.
+
+Remote and permanent-room planning retain separate `CURRENTLY_REACHABLE` and
+`POST_PROTECTION` sets. The latter remains ranked but is never executable during
+the current boundary. Protected doctrine recognizes unlimited reservations, the
+three-claimed-room protected-area limit, unavailable Nukers, exclusion of outside
+players, possible conflict with reachable resident players, and controller Safe
+Mode as a separate mechanic. Telemetry reports both `globalGclClaimSlots` and
+`currentProtectionClaimSlots`; protected claiming is bounded by the latter.
+
+Countdown thresholds default to 7 days, 3 days, 24 hours, 6 hours, and expiration
+through `Memory.ai.policy.protectionThresholdHours`. Crossing one triggers a
+material strategic reassessment and journal event. Expiration also clears route
+and boundary caches, reopens deferred intelligence, refreshes candidates and
+threat context, requests a full advisory, and creates a major colony-journal
+chapter.
+
+Military preparation remains intelligence-only. The observer preserves player,
+ownership, RCL, towers and tower energy, spawns, Safe Mode, fortifications,
+storage/terminal presence, hostile body parts and boosts, and route distance. It
+also aggregates our spawn throughput and stored combat resources. Offensive
+combat stays unauthorized.
+
 Remote economics cover 1,000, 5,000, 20,000, and lifetime windows. Delivery,
 losses, and interruptions are measured; rates and uptime are derived; miner,
 hauler, reserver, and loss costs are explicit estimates; unavailable harvest,
@@ -217,8 +262,9 @@ AI scout missions use explicit states:
 
 ```text
 QUEUED -> SPAWNING -> EN_ROUTE -> OBSERVED -> COMPLETED
-                              \-> FAILED
-                               -> EXPIRED
+   |                          \-> FAILED
+   |                           -> EXPIRED
+   \-> DEFERRED (temporary protected boundary; reconsider after transition)
 ```
 
 Order completion means the destination was visible and

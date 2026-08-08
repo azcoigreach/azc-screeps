@@ -8,6 +8,13 @@ territory; a separately authorized model proposal may select one prevalidated ne
 remote. Arbitrary state writes, automatic claiming, abandonment, markets,
 production, and offensive combat remain unavailable.
 
+The commander is protection-aware. `status`, `intel`, `candidates`, and periodic
+reports distinguish global GCL slots from the current Novice/Respawn-region claim
+limit, show the runtime protection countdown, keep post-protection candidates,
+and report deferred scouts plus military-preparation intelligence. Temporary
+boundary targets are reconsidered after `Game.map.getRoomStatus()` becomes
+reachable; no remaining duration is configured manually.
+
 ## Setup
 
 From the repository root, create a virtual environment and install the pinned
