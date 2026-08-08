@@ -137,6 +137,17 @@ test("observe mode prevents execution", function () {
 	assert.strictEqual(Memory.ai.orders.rejected[0].reason, "Observe mode prevents execution");
 });
 
+test("observe mode permits explanation metadata without strategic execution", function () {
+	reset();
+	AIInterface.initMemory();
+	Memory.ai.enabled = true;
+	putInbox(order("observe-explain-1", "SET_EXPLANATION", {
+		parameters: { explanation: "Advisor-only summary." }
+	}));
+	assert.strictEqual(Memory.ai.status.lastExplanation, "Advisor-only summary.");
+	assert.strictEqual(Memory.ai.orders.completed.length, 1);
+});
+
 test("pause prevents execution", function () {
 	reset();
 	configureExecution();

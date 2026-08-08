@@ -1,4 +1,4 @@
-# AI Commander Foundation
+# AI Commander
 
 ## Purpose and architecture
 
@@ -17,7 +17,7 @@ Explicit action handlers
 Existing deterministic AZC systems
 ```
 
-Phase 1 does not connect to OpenAI and does not authorize expansion, remote mining, markets, production, colonization, or combat. Existing harvesting, spawning, defense, industry, and operations continue independently when the interface is disabled, paused, stale, malformed, or unavailable.
+The in-game Phase 1 boundary does not authorize expansion, remote mining, markets, production, colonization, or combat. The external Python service now uses that boundary for transport and OpenAI advice, but the model remains observe/advisor only. Existing harvesting, spawning, defense, industry, and operations continue independently when the interface is disabled, paused, stale, malformed, unavailable, or when the Python process stops.
 
 The implementation is split between:
 
@@ -135,7 +135,7 @@ Actions such as `COLONIZE_ROOM`, `ATTACK_ROOM`, `REMOTE_MINE`, market operations
 
 ## Modes and authority
 
-- `observe` is the default. Telemetry and status output work, but every incoming order is prevented from executing and recorded as rejected.
+- `observe` is the default. Telemetry and status output work. `REQUEST_STATUS` and `SET_EXPLANATION` may update control-plane metadata, while `NOOP` and all future strategic actions are prevented from executing.
 - `execute` allows only the three Phase 1 safe actions after all other validation checks pass.
 - `paused` prevents order execution without disabling telemetry.
 - `disabled` prevents order execution without making any existing bot system dependent on the interface.
@@ -198,21 +198,144 @@ Event logging is limited to state transitions, incoming command lifecycle events
 
 ## Testing and live verification
 
-Run the local lightweight suite without installing dependencies:
+Run both local suites before an upload:
 
 ```bash
 node tests/ai_commander.test.js
+PYTHONPATH=ai .venv/bin/python -m unittest discover -s ai/tests -v
 ```
 
-Before connecting an external process on the live server:
+The Python tests mock all network calls and do not require credentials. Validate
+every deployable JavaScript module without uploading anything with:
 
-1. Upload the feature branch to a non-production Screeps code branch.
-2. Run `ai.status()` and confirm `Enabled: NO` and `Mode: OBSERVE`.
-3. Confirm segments 90 and 92 contain valid JSON after activation has taken effect.
-4. Enable the interface but leave it in observe mode, then submit a `NOOP`; confirm it is rejected for observe mode and normal colony ticks continue.
-5. Set execute mode, submit a unique `NOOP`, and confirm a completion appears in segment 92.
-6. Stop heartbeat updates for more than 500 ticks and confirm the commander transitions offline once without console spam.
-7. Restore the production code branch if any unexpected CPU or segment interaction appears.
+```bash
+python tools/screeps_deploy.py --branch ai-test --dry-run
+```
+
+## Git branches and Screeps code branches
+
+A Git branch and a Screeps code branch are unrelated namespaces:
+
+| Kind | Current development name | Purpose |
+|---|---|---|
+| Local Git branch | `feature/ai-commander-transport` | Source history and rollback checkpoints |
+| Screeps code branch | `ai-test` | Inactive upload target for live integration testing |
+| Screeps code branch | `default` | Untouched known-working production code |
+
+Committing or switching a Git branch never changes the live Screeps World.
+Uploading a Screeps branch also does not make it live unless activation is
+explicitly requested.
+
+## Safe deployment and rollback
+
+The repository-native uploader reads `SCREEPS_API_TOKEN` from the root `.env`,
+validates every top-level JavaScript module with `node --check`, and uploads only
+those modules using their filename stem as the Screeps module name. It excludes
+the AI service, credentials, Git data, documentation, tests, and other assets.
+
+List Screeps branches and identify the live branch:
+
+```bash
+python tools/screeps_branch.py list
+```
+
+Upload to the inactive test branch without activating it:
+
+```bash
+python tools/screeps_deploy.py --branch ai-test
+```
+
+After reviewing the report, intentionally switch the live World to the test
+branch:
+
+```bash
+python tools/screeps_branch.py activate ai-test
+```
+
+The command prints the old and new live branches and requires confirmation.
+Uploading to or overwriting `default` requires an explicit production option;
+ordinary development commands cannot silently replace it.
+
+> **Immediate rollback:** select the untouched production branch. No upload is
+> involved.
+
+```bash
+python tools/screeps_branch.py activate default
+```
+
+Type `default` at the production confirmation prompt. Re-run the branch list to
+verify the result. The non-interactive form for an already-authorized operator is
+`python tools/screeps_branch.py activate default --production`.
+
+## External Python commander
+
+The Python 3.12 service under `ai/` has four boundaries:
+
+1. `ScreepsAPIClient` owns token authentication, timeouts, bounded retry and
+   rate-limit handling, branch operations, and segment I/O.
+2. `CommanderTransport` validates Segments 90 and 92, correlates acknowledgements,
+   and protects Segment 91 from overwriting an unacknowledged command.
+3. `HistoryStore` records compact observations, command lifecycle, advisories,
+   and operational events in `ai/data/commander.db` using SQLite WAL mode and
+   bounded retention.
+4. `AdvisorService` sends only compact validated telemetry to OpenAI, persists a
+   strict structured result, and may write only a concise `SET_EXPLANATION` back
+   to Screeps.
+
+The commander uses the exact root `.env` names `SCREEPS_API_TOKEN` and
+`OPENAI_API_TOKEN`. Setup and Docker instructions are in [`ai/README.md`](../ai/README.md).
+
+Useful commands from the repository root are:
+
+```bash
+PYTHONPATH=ai .venv/bin/python -m commander.main status
+PYTHONPATH=ai .venv/bin/python -m commander.main watch
+PYTHONPATH=ai .venv/bin/python -m commander.main advise
+PYTHONPATH=ai .venv/bin/python -m commander.main history
+```
+
+`status` reports API reachability, telemetry validity and tick, interface mode,
+acknowledgement counts, and a compact empire/CPU summary. `watch` separates the
+30-second telemetry polling loop from the default five-minute strategic review
+interval. `advise` requests an immediate assessment; add `--no-writeback` to
+prevent even the safe explanation update.
+
+The default model is configurable as `OPENAI_MODEL=gpt-5.4-nano`. The OpenAI
+Responses API result is parsed into a strict schema containing health status,
+summary, strategic assessment, priorities and reasons, concerns, questions,
+expansion readiness, review timing, and optional confidence. The service stores
+user-visible justification only, reports token usage and estimated cost, and
+does not silently choose a fallback model if the configured model is unavailable.
+
+## Live `ai-test` procedure
+
+Only perform these steps after the upload report confirms that `default` remains
+active:
+
+1. Activate `ai-test` with the explicit branch command above.
+2. In the Screeps console run `ai.enable()`, `ai.mode("observe")`, and
+   `ai.status()`.
+3. Start `python -m commander.main watch` from `ai/`.
+4. Confirm Segment 90 telemetry and Segment 92 status become valid.
+5. Run `python -m commander.main noop` and confirm observe mode rejects execution
+   without affecting normal colony behavior.
+6. Run `python -m commander.main request-status` and then
+   `python -m commander.main explain "Testing external commander communication"`.
+7. Confirm acknowledgements in Segment 92 and inspect `ai.explain()` in the game
+   console.
+8. Run `python -m commander.main advise` for a real structured assessment and
+   confirm its concise explanation is visible through `ai.explain()`.
+9. Monitor the owned colony, its existing remote-mining rooms, CPU usage/bucket,
+   spawn behavior, harvesting, and defense. Do not change remote configuration or
+   enable execute mode.
+10. Stop the commander with `Ctrl-C`; confirm normal deterministic automation
+    continues and then use the rollback command if any unexpected behavior appears.
+
+An empty Segment 90 before activation is expected because the production branch
+does not contain the AI interface. A missing heartbeat makes the commander appear
+offline but never pauses the existing bot. During a longer failover test, stop
+heartbeat updates for more than 500 ticks and confirm the commander transitions
+offline once without console spam.
 
 ## Future extension points
 
