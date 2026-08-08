@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
 import socket
 import sys
 import time
@@ -134,7 +135,7 @@ def display_status(transport: CommanderTransport) -> str:
             f"Autonomous scouting: {'ON' if execution.autoScouting else 'OFF'}",
             f"Existing remote maintenance: {'ON' if execution.autoRemoteMaintenance else 'OFF'}",
             f"New remote establishment: {'ON' if execution.autoNewRemotes else 'OFF'}",
-            f"Permanent colonization: {'ON' if execution.autoColonization else 'OFF'}",
+            f"Permanent colonization: {'AUTO' if execution.autoColonization else 'MANUAL' if execution.colonization else 'OFF'}",
             f"Remote abandonment: {'ON' if execution.remoteAbandonment else 'OFF / HUMAN GATED'}",
             f"Offensive combat: {'ON' if execution.offensiveCombat else 'OFF'}",
             f"Market authority: {'ON' if execution.market else 'OFF'}",
@@ -216,6 +217,12 @@ def watch(config: CommanderConfig, history: HistoryStore, transport: CommanderTr
         "commander_startup", "Commander watch loop started",
         {"shard": config.screeps_shard, "leaseOwner": lease_owner},
     )
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+
+    def stop_on_sigterm(_signum: int, _frame: object) -> None:
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, stop_on_sigterm)
     last_heartbeat = 0.0
     autonomy = AutonomyController(history, transport)
     scheduler = ReviewScheduler(
@@ -281,6 +288,7 @@ def watch(config: CommanderConfig, history: HistoryStore, transport: CommanderTr
         print("\nCommander stopped; Screeps deterministic automation continues independently.")
         return 0
     finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
         history.release_lease(lease_key, lease_owner)
 
 

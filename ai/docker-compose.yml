@@ -3,7 +3,10 @@ services:
     build:
       context: ..
       dockerfile: ai/Dockerfile
-    restart: "on-failure:5"
+    # A crash can leave the expiring cross-process lease behind briefly. Keep
+    # retrying until it expires; an intentional `docker compose stop` remains stopped.
+    restart: "on-failure"
+    stop_grace_period: 15s
     env_file:
       - .env
     volumes:
