@@ -74,6 +74,7 @@ function reset(options) {
 		map: {
 			findRoute: function (from, to) { return from === to ? [] : [{ room: to }]; },
 			describeExits: function () { return {}; },
+			getRoomStatus: function () { return { status: "normal", timestamp: null }; },
 			getRoomLinearDistance: function (from, to) { return from === to ? 0 : 1; }
 		}
 	};
@@ -93,6 +94,23 @@ function order(id, action, overrides) {
 		parameters: {},
 		reason: "test"
 	}, overrides || {});
+}
+
+function strategicIntel(room, lastSeenTick) {
+	return {
+		room: room, lastSeenTick: lastSeenTick, classification: "normal", sourceCount: 2,
+		mineralType: "H", terrainSwampPercent: 10,
+		layoutAnalysis: { analyzedTick: lastSeenTick, valid: [{ name: "standard", origin: { x: 25, y: 25 } }], best: { name: "standard", origin: { x: 25, y: 25 } } },
+		controller: {
+			status: "neutral", owner: null, ownerRelation: "NEUTRAL", reservation: null,
+			reservationRelation: "NEUTRAL", reservationTicks: null, rcl: 0, safeMode: null
+		},
+		structures: { spawns: 0, towers: 0, storage: 0, terminal: 0, hostile: 0, fortifications: { count: 0, min: null, median: null, max: null } },
+		hostileCreeps: 0, hostilePlayers: [], playerRelations: [],
+		lastHostileSightingTick: null, hostileSightingsTotal: 0,
+		nearestColony: "W1N1", distanceFromColony: 1, routeLength: 1,
+		routeRooms: ["W1N1", room], routeStatus: "available"
+	};
 }
 
 function configureExecution() {
@@ -724,6 +742,94 @@ test("observer reuses cached strategic routes on later snapshots", function () {
 	Game.time++;
 	AIObserver.buildSnapshot();
 	assert.strictEqual(routeCalls, 1);
+});
+
+test("protected routing distinguishes same-region access from novice boundary blocks", function () {
+	reset();
+	let expiration = Date.now() + 7 * 24 * 60 * 60 * 1000;
+	Game.map.getRoomStatus = function (room) {
+		return room === "W2N1" ? { status: "normal", timestamp: null } : { status: "novice", timestamp: expiration };
+	};
+	let inside = AIRemoteStrategy.accessibility("W1N1", "W1N2", true);
+	let outside = AIRemoteStrategy.accessibility("W1N1", "W2N1", true);
+	assert.strictEqual(inside.accessibility, "REACHABLE_NOW");
+	assert.strictEqual(inside.sharesProtectedRegion, true);
+	assert.strictEqual(outside.accessibility, "BLOCKED_BY_NOVICE_BOUNDARY");
+	assert.strictEqual(outside.reachableAfterTimestamp, expiration);
+});
+
+test("observer exposes novice rules, claim limits, candidate sets, and visible boundary evidence", function () {
+	reset();
+	AIInterface.initMemory();
+	let expiration = Date.now() + 7 * 24 * 60 * 60 * 1000;
+	Game.gcl.level = 23;
+	Game.map.getRoomStatus = function (room) {
+		return room === "W2N1" ? { status: "normal", timestamp: null } : { status: "novice", timestamp: expiration };
+	};
+	Game.map.describeExits = function (room) { return room === "W1N1" ? { 3: "W2N1" } : {}; };
+	Game.map.findExit = function () { return ERR_NO_PATH; };
+	let wall = { id: "wall", structureType: "constructedWall", pos: { x: 49, y: 25, roomName: "W1N1" } };
+	let spawn = { id: "spawn", structureType: "spawn", my: true, spawning: null, store: { energy: 300 }, pos: { x: 25, y: 25, roomName: "W1N1" } };
+	Game.rooms.W1N1 = {
+		name: "W1N1", controller: { my: true, level: 5 },
+		findSources: function () { return []; },
+		find: function (kind) { return kind === FIND_STRUCTURES ? [wall, spawn] : []; }
+	};
+	Memory.ai.intelligence.rooms.W2N1 = strategicIntel("W2N1", Game.time);
+	let snapshot = AIObserver.buildSnapshot();
+	assert.strictEqual(snapshot.empire.protection.status, "novice");
+	assert.strictEqual(snapshot.empire.protection.expirationTimestamp, expiration);
+	assert.ok(snapshot.empire.protection.remainingProtectionMs > 0);
+	assert.strictEqual(snapshot.empire.protection.currentProtectionClaimSlots, 2);
+	assert.strictEqual(snapshot.empire.protection.constraints.reservationsUnlimited, true);
+	assert.strictEqual(snapshot.empire.protection.constraints.nukersAvailable, false);
+	assert.strictEqual(snapshot.colonies.W1N1.protection.sharesCurrentProtectedRegion, true);
+	assert.strictEqual(snapshot.intelligence.protectionByRoom.W2N1.accessibility, "BLOCKED_BY_NOVICE_BOUNDARY");
+	assert.ok(snapshot.intelligence.candidateSets.POST_PROTECTION.remoteRooms.includes("W2N1"));
+	assert.strictEqual(snapshot.remoteCandidates.find(item => item.room === "W2N1").availabilitySet, "POST_PROTECTION");
+	assert.strictEqual(snapshot.colonies.W1N1.protection.blockedExits[0].evidence, "VISIBLE_MAP_NO_PATH");
+	assert.strictEqual(snapshot.empire.militaryPreparation.spawnThroughput.spawns, 1);
+	assert.strictEqual(snapshot.empire.militaryPreparation.availableCombatResources.energy, 300);
+	assert.strictEqual(snapshot.empire.militaryPreparation.offensiveCombatAuthorized, false);
+});
+
+test("protected claim capacity is capped at three rooms independently of GCL", function () {
+	reset();
+	AIInterface.initMemory();
+	let expiration = Date.now() + 24 * 60 * 60 * 1000;
+	Game.gcl.level = 23;
+	Game.map.getRoomStatus = function () { return { status: "novice", timestamp: expiration }; };
+	["W1N1", "W1N2", "W2N1"].forEach(function (name) {
+		Game.rooms[name] = { name: name, controller: { my: true, level: 5 }, findSources: function () { return []; }, find: function () { return []; } };
+	});
+	let snapshot = AIObserver.buildSnapshot();
+	assert.strictEqual(snapshot.empire.gcl.globalGclClaimSlots, 20);
+	assert.strictEqual(snapshot.empire.gcl.currentProtectionClaimSlots, 0);
+	assert.ok(snapshot.expansionReadiness.reasons.includes("BLOCKED_BY_PROTECTION_CLAIM_LIMIT"));
+});
+
+test("inaccessible scout missions defer without spawning and reopen after protection expires", function () {
+	reset();
+	configureExecution();
+	Memory.ai.policy.allowScouting = true;
+	let status = "novice";
+	let expiration = Date.now() + 6 * 60 * 60 * 1000;
+	Game.map.getRoomStatus = function (room) {
+		return room === "W1N1" ? { status: status, timestamp: status === "novice" ? expiration : null } : { status: "normal", timestamp: null };
+	};
+	Game.map.describeExits = function (room) { return room === "W1N1" ? { 3: "W2N1" } : {}; };
+	Game.rooms.W1N1 = { name: "W1N1", controller: { my: true, level: 5 }, findSources: function () { return []; }, find: function () { return []; } };
+	putInbox(order("deferred-scout", "SCOUT_ROOM", { parameters: { room: "W2N1", origin: "W1N1" } }));
+	assert.strictEqual(Memory.ai.orders.completed.slice(-1)[0].status, "completed");
+	assert.strictEqual(Memory.ai.protection.deferredScouts.W2N1.status, "DEFERRED");
+	assert.strictEqual(_.get(Memory, ["rooms", "W1N1", "scout_requests"], []).length, 0);
+	AIObserver.buildSnapshot();
+	status = "normal";
+	Game.time++;
+	let snapshot = AIObserver.buildSnapshot();
+	assert.strictEqual(Memory.ai.protection.deferredScouts.W2N1.accessibility, "REACHABLE_NOW");
+	assert.ok(snapshot.empire.protection.events.some(event => event.type === "PROTECTION_EXPIRED"));
+	assert.ok(snapshot.intelligence.unknownRooms.includes("W2N1"));
 });
 
 test("identity detection classifies self, ally, foreign, and neutral reservations", function () {

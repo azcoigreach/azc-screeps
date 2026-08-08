@@ -9,6 +9,92 @@ global.AIRemoteStrategy = {
 	REMOTE_SCORE_MINIMUM: 65,
 	CLAIM_SCORE_MINIMUM: 70,
 	ROLE_SAFETY_MARGIN: { reserver: 150, burrower: 100, miner: 100, carrier: 75 },
+	PROTECTED_STATUSES: ["novice", "respawn"],
+
+	roomStatus: function (roomName) {
+		if (!_.isString(roomName) || !_.isFunction(_.get(Game, ["map", "getRoomStatus"])))
+			return { status: "unknown", expirationTimestamp: null, remainingProtectionMs: null, protected: false, regionKey: null };
+		let raw;
+		try {
+			raw = Game.map.getRoomStatus(roomName);
+		} catch (err) {
+			return { status: "unknown", expirationTimestamp: null, remainingProtectionMs: null, protected: false, regionKey: null };
+		}
+		let status = _.get(raw, "status", "unknown");
+		if (!_.includes(["normal", "closed", "novice", "respawn"], status)) status = "unknown";
+		let timestamp = _.isNumber(_.get(raw, "timestamp")) ? raw.timestamp : null;
+		let protectedRoom = _.includes(this.PROTECTED_STATUSES, status);
+		return {
+			status: status,
+			expirationTimestamp: timestamp,
+			remainingProtectionMs: protectedRoom && timestamp != null ? Math.max(0, timestamp - Date.now()) : null,
+			protected: protectedRoom,
+			regionKey: protectedRoom && timestamp != null ? `${status}:${timestamp}` : null
+		};
+	},
+
+	accessibility: function (origin, target, checkRoute) {
+		let from = this.roomStatus(origin), to = this.roomStatus(target);
+		let result = {
+			originStatus: from.status,
+			targetStatus: to.status,
+			accessibility: "UNKNOWN",
+			sharesProtectedRegion: from.protected && to.protected && from.regionKey != null && from.regionKey === to.regionKey,
+			reachableNow: false,
+			reachableAfterTimestamp: null,
+			targetExpirationTimestamp: to.expirationTimestamp,
+			routeRooms: [],
+			routeLength: null
+		};
+		if (from.status === "closed" || to.status === "closed") {
+			result.accessibility = "CLOSED";
+			return result;
+		}
+		if (from.status === "unknown" || to.status === "unknown") return result;
+		if ((from.protected || to.protected) && !result.sharesProtectedRegion) {
+			result.accessibility = "BLOCKED_BY_NOVICE_BOUNDARY";
+			let expirations = _.filter([from.expirationTimestamp, to.expirationTimestamp], _.isNumber);
+			result.reachableAfterTimestamp = expirations.length > 0 ? _.max(expirations) : null;
+			if (result.reachableAfterTimestamp == null) result.accessibility = "UNKNOWN";
+			return result;
+		}
+		result.accessibility = "REACHABLE_NOW";
+		result.reachableNow = true;
+		if (checkRoute === false || !_.isFunction(_.get(Game, ["map", "findRoute"]))) return result;
+		let cacheKey = `${origin}>${target}`;
+		let signature = `${from.status}:${from.expirationTimestamp}|${to.status}:${to.expirationTimestamp}`;
+		let cached = typeof Memory !== "undefined" ? _.get(Memory, ["ai", "protection", "routeCache", cacheKey]) : null;
+		if (cached && cached.signature === signature && Game.time - _.get(cached, "checkedTick", 0) < 1000 && _.isObject(cached.result)) return _.cloneDeep(cached.result);
+		let route = Game.map.findRoute(origin, target, {
+			routeCallback: roomName => {
+				let status = this.roomStatus(roomName);
+				if (_.includes(["closed", "unknown"], status.status)) return Infinity;
+				if (from.protected && status.regionKey !== from.regionKey) return Infinity;
+				if (!from.protected && status.protected) return Infinity;
+				return 1;
+			}
+		});
+		if (!_.isArray(route)) {
+			result.sharesProtectedRegion = false;
+			let expirations = _.filter([from.expirationTimestamp, to.expirationTimestamp], _.isNumber);
+			result.accessibility = (from.protected || to.protected) && expirations.length > 0
+				? "REACHABLE_AFTER_PROTECTION" : "UNKNOWN";
+			result.reachableAfterTimestamp = expirations.length > 0 ? _.max(expirations) : null;
+			result.reachableNow = false;
+			if (typeof Memory !== "undefined") _.set(Memory, ["ai", "protection", "routeCache", cacheKey], { signature: signature, checkedTick: Game.time, result: _.cloneDeep(result) });
+			return result;
+		}
+		result.routeRooms = [origin].concat(_.map(route, step => step.room));
+		if (_.last(result.routeRooms) !== target) result.routeRooms.push(target);
+		result.routeRooms = _.uniq(result.routeRooms);
+		result.routeLength = route.length;
+		if (typeof Memory !== "undefined") {
+			_.set(Memory, ["ai", "protection", "routeCache", cacheKey], { signature: signature, checkedTick: Game.time, result: _.cloneDeep(result) });
+			let keys = _.keys(_.get(Memory, ["ai", "protection", "routeCache"], {}));
+			if (keys.length > 200) _.each(keys.slice(0, keys.length - 200), key => delete Memory.ai.protection.routeCache[key]);
+		}
+		return result;
+	},
 
 	travelTicks: function (site, origin, target) {
 		let measured = _.get(site, ["survey", "travel_ticks"]);
@@ -82,6 +168,11 @@ global.AIRemoteStrategy = {
 		if (owner !== "NEUTRAL" && owner !== "SELF") disqualifiers.push("foreign_owner");
 		if (reservation !== "NEUTRAL" && reservation !== "SELF") disqualifiers.push("foreign_reservation");
 		if (_.get(intel, "routeStatus") === "no_path") disqualifiers.push("no_route");
+		let accessibility = _.get(intel, ["protection", "accessibility"], "UNKNOWN");
+		if (_.includes(["REACHABLE_AFTER_PROTECTION", "BLOCKED_BY_NOVICE_BOUNDARY"], accessibility))
+			disqualifiers.push("post_protection_only");
+		if (accessibility === "CLOSED") disqualifiers.push("room_closed");
+		if (_.has(intel, "protection") && accessibility === "UNKNOWN") disqualifiers.push("protection_accessibility_unknown");
 		if (_.includes(context.excludedRooms || [], intel.room)) disqualifiers.push("human_policy_exclusion");
 		let distance = _.get(intel, "routeLength", _.get(intel, "distanceFromColony", 5));
 		let factors = {
@@ -102,7 +193,10 @@ global.AIRemoteStrategy = {
 			eligible: disqualifiers.length === 0,
 			disqualifiers: disqualifiers,
 			predictedEconomics: this.predictEconomics(_.get(intel, "sourceCount", 0), distance),
-			confidence: _.get(intel, "stale", false) ? 0.35 : (distance == null ? 0.55 : 0.8)
+			confidence: _.get(intel, "stale", false) ? 0.35 : (distance == null ? 0.55 : 0.8),
+			accessibility: accessibility,
+			availabilitySet: _.includes(["REACHABLE_AFTER_PROTECTION", "BLOCKED_BY_NOVICE_BOUNDARY"], accessibility)
+				? "POST_PROTECTION" : (accessibility === "REACHABLE_NOW" ? "CURRENTLY_REACHABLE" : "UNAVAILABLE")
 		};
 	},
 
@@ -133,6 +227,11 @@ global.AIRemoteStrategy = {
 		if (_.get(intel, ["controller", "status"]) === "owned" || owner === "SELF") disqualifiers.push("already_owned");
 		if (owner !== "NEUTRAL" && owner !== "SELF") disqualifiers.push("foreign_owned");
 		if (_.includes(context.excludedRooms || [], intel.room)) disqualifiers.push("human_policy_exclusion");
+		let accessibility = _.get(intel, ["protection", "accessibility"], "UNKNOWN");
+		if (_.includes(["REACHABLE_AFTER_PROTECTION", "BLOCKED_BY_NOVICE_BOUNDARY"], accessibility))
+			disqualifiers.push("post_protection_only");
+		if (accessibility === "CLOSED") disqualifiers.push("room_closed");
+		if (_.has(intel, "protection") && accessibility === "UNKNOWN") disqualifiers.push("protection_accessibility_unknown");
 		let distance = _.get(intel, "routeLength", _.get(intel, "distanceFromColony", 5));
 		let layouts = _.get(intel, "layoutAnalysis", { valid: [], best: null });
 		let factors = {
@@ -152,7 +251,10 @@ global.AIRemoteStrategy = {
 			room: intel.room, origin: _.get(intel, "nearestColony", null), score: score, factors: factors,
 			eligible: disqualifiers.length === 0,
 			disqualifiers: disqualifiers, layout: _.get(layouts, "best", null),
-			currentOperationalRole: _.get(context, "currentOperationalRole", "NEUTRAL_SCOUTED")
+			currentOperationalRole: _.get(context, "currentOperationalRole", "NEUTRAL_SCOUTED"),
+			accessibility: accessibility,
+			availabilitySet: _.includes(["REACHABLE_AFTER_PROTECTION", "BLOCKED_BY_NOVICE_BOUNDARY"], accessibility)
+				? "POST_PROTECTION" : (accessibility === "REACHABLE_NOW" ? "CURRENTLY_REACHABLE" : "UNAVAILABLE")
 		};
 	},
 

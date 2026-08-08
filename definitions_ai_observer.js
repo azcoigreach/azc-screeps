@@ -22,6 +22,10 @@ global.AIObserver = {
 			return _.get(room, ["controller", "my"], false) === true;
 		});
 		let ownedNames = _.map(ownedRooms, room => room.name);
+		let nearbyNames = this._nearbyRooms(ownedNames, _.get(Memory, ["ai", "policy", "intelligenceRadius"], 2));
+		let protection = this._protectionSummary(ownedNames, nearbyNames);
+		this._protectionByRoom = protection.rooms;
+		if (_.get(protection, ["empire", "advisoryRequired"], false)) alerts.push("PROTECTION_STRATEGY_REASSESSMENT");
 		this._refreshVisibleIntelligence(ownedNames);
 
 		let colonies = {};
@@ -55,8 +59,12 @@ global.AIObserver = {
 					progress: _.get(Game, ["gcl", "progress"], 0),
 					progressTotal: _.get(Game, ["gcl", "progressTotal"], 0),
 					ownedRooms: ownedRooms.length,
-					availableClaimSlots: Math.max(0, gclLevel - ownedRooms.length)
+					availableClaimSlots: Math.max(0, gclLevel - ownedRooms.length),
+					globalGclClaimSlots: Math.max(0, gclLevel - ownedRooms.length),
+					currentProtectionClaimSlots: _.get(protection, ["empire", "currentProtectionClaimSlots"], Math.max(0, gclLevel - ownedRooms.length))
 				},
+				protection: protection.empire,
+				militaryPreparation: this._militaryPreparation(ownedRooms, protection.empire),
 				creeps: _.size(_.get(Game, "creeps", {})),
 				credits: _.get(Game, ["market", "credits"], 0)
 			},
@@ -234,6 +242,7 @@ global.AIObserver = {
 		let terminalAllowed = _.get(structureSummary, ["terminal", "allowed"], 0) > 0;
 
 		return {
+			protection: _.get(this._protectionByRoom, room.name, this._roomProtection(room.name, room.name)),
 			controller: {
 				rcl: level,
 				progress: progress,
@@ -683,6 +692,10 @@ global.AIObserver = {
 				});
 			}
 		});
+		_.each(_.get(Memory, ["ai", "protection", "deferredScouts"], {}), item => {
+			if (item && !_.some(result, current => current.id === item.id))
+				result.push(_.cloneDeep(item));
+		});
 		return result;
 	},
 
@@ -704,6 +717,7 @@ global.AIObserver = {
 			let minerals = this._find(room, typeof FIND_MINERALS !== "undefined" ? FIND_MINERALS : null);
 			let controller = _.get(room, "controller", null);
 			let nearest = this._nearestColony(room.name, ownedNames);
+			let protection = this._roomProtection(nearest ? nearest.room : null, room.name, room);
 			let terrainSwampPercent = _.get(previous, "terrainSwampPercent", null);
 			if (terrainSwampPercent == null)
 				terrainSwampPercent = this._swampPercent(room);
@@ -712,11 +726,18 @@ global.AIObserver = {
 			let routeLength = _.has(previous, "routeLength") ? previous.routeLength : null;
 			let routeRooms = _.get(previous, "routeRooms", []);
 			let routeStatus = _.get(previous, "routeStatus", nearest ? "unknown" : "unavailable");
-			if (nearest && routeStatus === "unknown" && _.isFunction(_.get(Game, ["map", "findRoute"]))) {
-				let route = Game.map.findRoute(nearest.room, room.name);
-				if (_.isArray(route)) {
-					routeLength = route.length;
-					routeRooms = [nearest.room].concat(_.map(route, step => step.room));
+			if (routeStatus === "protected_boundary" && protection.accessibility === "REACHABLE_NOW")
+				routeStatus = "unknown";
+			if (nearest && _.includes(["REACHABLE_AFTER_PROTECTION", "BLOCKED_BY_NOVICE_BOUNDARY"], protection.accessibility)) {
+				routeStatus = "protected_boundary";
+				routeLength = null;
+				routeRooms = [];
+			} else if (nearest && routeStatus === "unknown" && _.isFunction(_.get(Game, ["map", "findRoute"]))) {
+				let routeInfo = typeof AIRemoteStrategy !== "undefined"
+					? AIRemoteStrategy.accessibility(nearest.room, room.name, true) : null;
+				if (routeInfo && routeInfo.accessibility === "REACHABLE_NOW") {
+					routeLength = routeInfo.routeLength;
+					routeRooms = routeInfo.routeRooms;
 					routeStatus = "available";
 				} else {
 					routeStatus = "no_path";
@@ -746,6 +767,7 @@ global.AIObserver = {
 				&& typeof AIRemoteStrategy !== "undefined") layoutAnalysis = AIRemoteStrategy.analyzeLayouts(room);
 			let current = {
 				room: room.name,
+				protection: protection,
 				lastSeenTick: Game.time,
 				classification: this._roomClassification(room.name),
 				sourceCount: sources.length,
@@ -767,6 +789,7 @@ global.AIObserver = {
 				structures: {
 					spawns: _.filter(structures, structure => structure.structureType === "spawn").length,
 					towers: _.filter(structures, structure => structure.structureType === "tower").length,
+					towerEnergy: _.sum(_.map(_.filter(structures, structure => structure.structureType === "tower"), tower => this._resource(tower, "energy"))),
 					storage: _.filter(structures, structure => structure.structureType === "storage").length,
 					terminal: _.filter(structures, structure => structure.structureType === "terminal").length,
 					hostile: hostileStructures.length,
@@ -813,7 +836,7 @@ global.AIObserver = {
 		_.each(_.get(Memory, "rooms", {}), roomMemory => {
 			_.each(_.get(roomMemory, "scout_requests", []), request => {
 				if (request && request.ai_managed === true
-					&& !_.includes(["COMPLETED", "FAILED", "EXPIRED"], _.get(request, "status"))
+					&& !_.includes(["DEFERRED", "OBSERVED", "COMPLETED", "FAILED", "EXPIRED"], _.get(request, "status"))
 					&& _.get(request, ["dest_pos", "roomName"]) === roomName) {
 					request.status = "OBSERVED";
 					request.observed_tick = Game.time;
@@ -846,6 +869,8 @@ global.AIObserver = {
 				return;
 			}
 			let copy = _.cloneDeep(intel);
+			let nearest = this._nearestColony(name, ownedNames);
+			copy.protection = this._roomProtection(nearest ? nearest.room : null, name, _.get(Game, ["rooms", name]));
 			copy.intelAgeTicks = Math.max(0, Game.time - copy.lastSeenTick);
 			copy.stale = copy.intelAgeTicks > staleTicks;
 			known.push(copy);
@@ -877,6 +902,16 @@ global.AIObserver = {
 		claimCandidates = _.sortBy(claimCandidates, candidate => -candidate.score).slice(0, 20);
 		_.set(Memory, ["ai", "strategy", "remoteCandidates"], remoteCandidates);
 		_.set(Memory, ["ai", "strategy", "claimCandidates"], claimCandidates);
+		let candidateSets = {
+			CURRENTLY_REACHABLE: {
+				remoteRooms: _.map(_.filter(remoteCandidates, candidate => candidate.availabilitySet === "CURRENTLY_REACHABLE"), "room"),
+				claimRooms: _.map(_.filter(claimCandidates, candidate => candidate.availabilitySet === "CURRENTLY_REACHABLE"), "room")
+			},
+			POST_PROTECTION: {
+				remoteRooms: _.map(_.filter(remoteCandidates, candidate => candidate.availabilitySet === "POST_PROTECTION"), "room"),
+				claimRooms: _.map(_.filter(claimCandidates, candidate => candidate.availabilitySet === "POST_PROTECTION"), "room")
+			}
+		};
 		return {
 			intelligence: {
 				radius: radius,
@@ -884,6 +919,8 @@ global.AIObserver = {
 				knownRooms: known,
 				unknownRooms: _.sortBy(unknown),
 				staleRooms: _.sortBy(stale),
+				protectionByRoom: _.pick(this._protectionByRoom || {}, nearby),
+				candidateSets: candidateSets,
 				hostileEvents: _.get(Memory, ["ai", "intelligence", "hostileEvents"], []).slice(-20)
 			},
 			remoteCandidates: remoteCandidates,
@@ -894,8 +931,10 @@ global.AIObserver = {
 	_expansionReadiness: function (candidates, colonies) {
 		let reasons = [];
 		let owned = _.size(colonies);
-		let slots = Math.max(0, _.get(Game, ["gcl", "level"], 0) - owned);
-		if (slots < 1) reasons.push("BLOCKED_BY_GCL");
+		let globalSlots = Math.max(0, _.get(Game, ["gcl", "level"], 0) - owned);
+		let protectionSlots = _.get(Memory, ["ai", "protection", "summary", "currentProtectionClaimSlots"], globalSlots);
+		if (globalSlots < 1) reasons.push("BLOCKED_BY_GCL");
+		if (protectionSlots < 1 && globalSlots > 0) reasons.push("BLOCKED_BY_PROTECTION_CLAIM_LIMIT");
 		let healthyOrigin = _.find(_.keys(colonies), room => {
 			let colony = colonies[room];
 			return _.get(colony, ["energy", "storageEnergy"], 0) >= 100000
@@ -912,8 +951,198 @@ global.AIObserver = {
 			reasons: reasons,
 			recommendedRoom: candidate ? candidate.room : null,
 			origin: healthyOrigin || null,
-			claimSlots: slots,
+			claimSlots: Math.min(globalSlots, protectionSlots),
+			globalGclClaimSlots: globalSlots,
+			currentProtectionClaimSlots: protectionSlots,
 			spawnCapacity: healthyOrigin ? "ADEQUATE" : "CONSTRAINED"
+		};
+	},
+
+	_protectionSummary: function (ownedNames, strategicRooms) {
+		let primary = _.find(ownedNames || [], roomName => {
+			return typeof AIRemoteStrategy !== "undefined" && AIRemoteStrategy.roomStatus(roomName).protected;
+		}) || _.head(ownedNames) || null;
+		let rooms = {};
+		_.each(_.uniq((strategicRooms || []).concat(ownedNames || [])), roomName => {
+			rooms[roomName] = this._roomProtection(primary, roomName, _.get(Game, ["rooms", roomName]));
+		});
+		let primaryStatus = primary && typeof AIRemoteStrategy !== "undefined"
+			? AIRemoteStrategy.roomStatus(primary)
+			: { status: "unknown", protected: false, expirationTimestamp: null, remainingProtectionMs: null, regionKey: null };
+		let active = primaryStatus.protected === true;
+		let globalSlots = Math.max(0, _.get(Game, ["gcl", "level"], 0) - (ownedNames || []).length);
+		let protectedOwned = active ? _.filter(ownedNames, roomName => {
+			let value = typeof AIRemoteStrategy !== "undefined" ? AIRemoteStrategy.roomStatus(roomName) : {};
+			return primaryStatus.regionKey == null ? value.protected === true : value.regionKey === primaryStatus.regionKey;
+		}).length : 0;
+		let currentSlots = active ? Math.max(0, Math.min(globalSlots, 3 - protectedOwned)) : globalSlots;
+		let band = this._protectionBand(primaryStatus.remainingProtectionMs, active);
+		let previous = _.get(Memory, ["ai", "protection", "summary"], {});
+		let events = _.get(Memory, ["ai", "protection", "events"], []);
+		if (!_.isArray(events)) events = [];
+		let addEvent = (type, message, details) => {
+			let event = {
+				id: `protection:${type}:${Game.time}`, type: type, tick: Game.time,
+				timestamp: Date.now(), message: message, details: details || {}
+			};
+			if (!_.some(events, item => item.id === event.id)) events.push(event);
+			if (events.length > 20) events.splice(0, events.length - 20);
+			_.set(Memory, ["ai", "protection", "lastReassessmentTick"], Game.time);
+		};
+		let priorStatus = _.get(previous, "status", null);
+		let priorBand = _.get(previous, "threshold", null);
+		if (priorStatus == null && active)
+			addEvent("PROTECTION_DETECTED", `Empire detected inside ${primaryStatus.status} protection`, { expirationTimestamp: primaryStatus.expirationTimestamp });
+		else if (_.includes(["novice", "respawn"], priorStatus) && primaryStatus.status === "normal") {
+			addEvent("PROTECTION_EXPIRED", "Protected-area boundary expired; routes and strategy require full recomputation", { previousStatus: priorStatus });
+			_.set(Memory, ["ai", "protection", "blockedExits"], {});
+			_.set(Memory, ["ai", "protection", "routeCache"], {});
+			_.set(Memory, ["ai", "protection", "lastTransitionTick"], Game.time);
+		} else if (active && priorBand != null && priorBand !== band)
+			addEvent("COUNTDOWN_THRESHOLD", `Protection countdown entered ${band}`, { previousThreshold: priorBand, threshold: band, expirationTimestamp: primaryStatus.expirationTimestamp });
+
+		let deferred = _.get(Memory, ["ai", "protection", "deferredScouts"], {});
+		_.each(_.keys(deferred), roomName => {
+			let route = typeof AIRemoteStrategy !== "undefined" && primary
+				? AIRemoteStrategy.accessibility(primary, roomName, false) : null;
+			if (route && route.accessibility === "REACHABLE_NOW") {
+				deferred[roomName].accessibility = "REACHABLE_NOW";
+				deferred[roomName].deferredUntilTimestamp = null;
+			}
+		});
+		_.set(Memory, ["ai", "protection", "deferredScouts"], deferred);
+		_.set(Memory, ["ai", "protection", "events"], events);
+		let lastReassessment = _.get(Memory, ["ai", "protection", "lastReassessmentTick"], null);
+		let empire = {
+			active: active,
+			status: primaryStatus.status,
+			expirationTimestamp: primaryStatus.expirationTimestamp,
+			remainingProtectionMs: primaryStatus.remainingProtectionMs,
+			currentRegionKey: primaryStatus.regionKey,
+			protectedOwnedRooms: protectedOwned,
+			globalGclClaimSlots: globalSlots,
+			currentProtectionClaimSlots: currentSlots,
+			claimLimit: active ? 3 : null,
+			threshold: band,
+			advisoryRequired: _.isNumber(lastReassessment) && Game.time - lastReassessment <= 500,
+			lastTransitionTick: _.get(Memory, ["ai", "protection", "lastTransitionTick"], null),
+			events: events.slice(-10),
+			constraints: {
+				reservationsUnlimited: true,
+				nukersAvailable: !active,
+				outsidePlayersExcluded: active,
+				residentConflictPossible: active,
+				safeModeSeparate: true
+			}
+		};
+		_.set(Memory, ["ai", "protection", "summary"], empire);
+		return { empire: empire, rooms: rooms };
+	},
+
+	_protectionBand: function (remainingMs, active) {
+		if (!active) return "INACTIVE";
+		if (!_.isNumber(remainingMs)) return "EXPIRATION_UNKNOWN";
+		let hours = remainingMs / 3600000;
+		let thresholds = _.sortBy(_.filter(_.get(Memory, ["ai", "policy", "protectionThresholdHours"], [168, 72, 24, 6, 0]), _.isNumber), value => -value);
+		let band = "ABOVE_CONFIGURED_THRESHOLDS";
+		_.each(thresholds, threshold => {
+			if (hours <= threshold) band = `AT_OR_BELOW_${threshold}_HOURS`;
+		});
+		return band;
+	},
+
+	_roomProtection: function (origin, target, visibleRoom) {
+		let status = typeof AIRemoteStrategy !== "undefined"
+			? AIRemoteStrategy.roomStatus(target)
+			: { status: "unknown", protected: false, expirationTimestamp: null, remainingProtectionMs: null, regionKey: null };
+		let route = origin && typeof AIRemoteStrategy !== "undefined"
+			? AIRemoteStrategy.accessibility(origin, target, true)
+			: { accessibility: status.status === "closed" ? "CLOSED" : "UNKNOWN", sharesProtectedRegion: false, reachableNow: false, reachableAfterTimestamp: null };
+		let blockedExits = this._blockedBoundaryExits(target, visibleRoom, status);
+		return {
+			status: status.status,
+			expirationTimestamp: status.expirationTimestamp,
+			remainingProtectionMs: status.remainingProtectionMs,
+			protected: status.protected,
+			regionKey: status.regionKey,
+			sharesCurrentProtectedRegion: route.sharesProtectedRegion,
+			accessibility: route.accessibility,
+			reachableNow: route.reachableNow,
+			reachableAfterTimestamp: route.reachableAfterTimestamp,
+			blockedExits: blockedExits
+		};
+	},
+
+	_blockedBoundaryExits: function (roomName, visibleRoom, roomStatus) {
+		let cached = _.get(Memory, ["ai", "protection", "blockedExits", roomName]);
+		let signature = `${_.get(roomStatus, "status", "unknown")}:${_.get(roomStatus, "expirationTimestamp", "none")}`;
+		if (cached && cached.signature === signature && Game.time - _.get(cached, "checkedTick", 0) < 1000)
+			return _.get(cached, "exits", []);
+		let blocked = [];
+		let visibleWallDirections = {};
+		if (visibleRoom) {
+			let structures = this._find(visibleRoom, typeof FIND_STRUCTURES !== "undefined" ? FIND_STRUCTURES : null);
+			_.each(structures, structure => {
+				if (!_.includes(["constructedWall", "wall"], _.get(structure, "structureType")) || !_.get(structure, "pos")) return;
+				if (structure.pos.y === 0) visibleWallDirections["1"] = true;
+				if (structure.pos.x === 49) visibleWallDirections["3"] = true;
+				if (structure.pos.y === 49) visibleWallDirections["5"] = true;
+				if (structure.pos.x === 0) visibleWallDirections["7"] = true;
+			});
+		}
+		let exits = _.isFunction(_.get(Game, ["map", "describeExits"])) ? (Game.map.describeExits(roomName) || {}) : {};
+		_.each(exits, (neighbor, direction) => {
+			let other = typeof AIRemoteStrategy !== "undefined" ? AIRemoteStrategy.roomStatus(neighbor) : {};
+			let crosses = (_.get(roomStatus, "protected", false) || _.get(other, "protected", false))
+				&& _.get(roomStatus, "regionKey", null) !== _.get(other, "regionKey", null);
+			if (!crosses) return;
+			let evidence = visibleWallDirections[String(direction)] ? "VISIBLE_BOUNDARY_WALL" : "STATUS_BOUNDARY";
+			if (visibleRoom && _.isFunction(_.get(Game, ["map", "findExit"]))) {
+				let exitResult;
+				try { exitResult = Game.map.findExit(roomName, neighbor); } catch (err) { exitResult = null; }
+				if ((typeof ERR_NO_PATH !== "undefined" && exitResult === ERR_NO_PATH) || exitResult === -2)
+					evidence = "VISIBLE_MAP_NO_PATH";
+			}
+			blocked.push({ direction: String(direction), room: neighbor, reason: "NOVICE_BOUNDARY", evidence: evidence });
+		});
+		_.set(Memory, ["ai", "protection", "blockedExits", roomName], { signature: signature, checkedTick: Game.time, exits: blocked });
+		return blocked;
+	},
+
+	_militaryPreparation: function (ownedRooms, protection) {
+		let structures = [];
+		_.each(ownedRooms || [], room => {
+			structures = structures.concat(this._find(room, typeof FIND_STRUCTURES !== "undefined" ? FIND_STRUCTURES : null));
+		});
+		let seenStructures = {};
+		structures = _.filter(structures, structure => {
+			let key = _.get(structure, "id", `${_.get(structure, ["pos", "roomName"], "unknown")}:${_.get(structure, "structureType", "unknown")}:${_.get(structure, ["pos", "x"], 0)}:${_.get(structure, ["pos", "y"], 0)}`);
+			if (seenStructures[key]) return false;
+			seenStructures[key] = true;
+			return true;
+		});
+		let spawns = _.filter(structures, structure => structure.structureType === "spawn" && _.get(structure, "my", true) !== false);
+		if (spawns.length === 0) spawns = _.values(_.get(Game, "spawns", {}));
+		let resources = {};
+		_.each(structures, structure => {
+			if (_.get(structure, "my", true) === false || !_.get(structure, "store")) return;
+			_.each(structure.store, (amount, resourceType) => {
+				if (_.isNumber(amount) && amount > 0) resources[resourceType] = _.get(resources, resourceType, 0) + amount;
+			});
+		});
+		let nukers = _.filter(structures, structure => structure.structureType === "nuker" && _.get(structure, "my", true) !== false).length;
+		return {
+			spawnThroughput: {
+				spawns: spawns.length,
+				busy: _.filter(spawns, spawn => _.get(spawn, "spawning") != null).length,
+				idle: _.filter(spawns, spawn => _.get(spawn, "spawning") == null).length,
+				queueDepth: _.sum(_.map(ownedRooms || [], room => this._spawnQueue(room.name).length)),
+				theoreticalBodyPartsPer1000Ticks: Math.floor(spawns.length * 1000 / 3)
+			},
+			availableCombatResources: resources,
+			nukerStructures: nukers,
+			nukersOperational: !_.get(protection, "active", false) && nukers > 0,
+			offensiveCombatAuthorized: false
 		};
 	},
 

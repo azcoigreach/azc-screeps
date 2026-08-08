@@ -78,7 +78,12 @@ global.AIInterface = {
 		this._default(["ai", "policy", "minimumClaimScore"], 70, value => this._isInteger(value) && value >= 0 && value <= 100);
 		this._default(["ai", "policy", "remoteExpansionCooldownTicks"], 10000, value => this._isInteger(value) && value >= 1000);
 		this._default(["ai", "policy", "colonizationCooldownTicks"], 50000, value => this._isInteger(value) && value >= 5000);
+		this._default(["ai", "policy", "protectionThresholdHours"], [168, 72, 24, 6, 0], value => _.isArray(value));
 		if (!_.isObject(_.get(Memory, ["ai", "policy", "roomOverrides"]))) _.set(Memory, ["ai", "policy", "roomOverrides"], {});
+		if (!_.isObject(_.get(Memory, ["ai", "protection"])) || _.isArray(_.get(Memory, ["ai", "protection"])))
+			_.set(Memory, ["ai", "protection"], {});
+		if (!_.isObject(_.get(Memory, ["ai", "protection", "deferredScouts"])) || _.isArray(_.get(Memory, ["ai", "protection", "deferredScouts"])))
+			_.set(Memory, ["ai", "protection", "deferredScouts"], {});
 
 		if (!_.isObject(_.get(Memory, ["ai", "commander"])) || _.isArray(_.get(Memory, ["ai", "commander"])))
 			_.set(Memory, ["ai", "commander"], {});
@@ -524,9 +529,12 @@ global.AIInterface = {
 		if (_.isNumber(last) && Game.time - last < _.get(Memory, ["ai", "policy", "remoteExpansionCooldownTicks"], 10000))
 			throw new Error("Remote expansion cooldown is active");
 		let intel = _.get(Memory, ["ai", "intelligence", "rooms", target]);
-		let routeResult = Game.map.findRoute(origin, target);
-		let route = [origin].concat(_.map(_.isArray(routeResult) ? routeResult : [], step => step.room));
-		if (_.last(route) !== target) route.push(target);
+		let protectedRoute = typeof AIRemoteStrategy !== "undefined"
+			? AIRemoteStrategy.accessibility(origin, target, true) : null;
+		if (protectedRoute && protectedRoute.accessibility !== "REACHABLE_NOW")
+			throw new Error(`Remote route is ${protectedRoute.accessibility}`);
+		let route = protectedRoute && protectedRoute.routeRooms.length > 0
+			? protectedRoute.routeRooms : [origin, target];
 		_.set(Memory, ["sites", "mining", target], {
 			colony: origin, has_keepers: false, list_route: _.uniq(route),
 			spawn_assist: null, population: null, ai_managed: true, ai_order_id: order.id
@@ -550,8 +558,12 @@ global.AIInterface = {
 		if (_.isNumber(last) && Game.time - last < _.get(Memory, ["ai", "policy", "colonizationCooldownTicks"], 50000))
 			throw new Error("Colonization cooldown is active");
 		let origin = order.parameters.origin, target = order.parameters.target;
-		let routeResult = Game.map.findRoute(origin, target);
-		let route = [origin].concat(_.map(_.isArray(routeResult) ? routeResult : [], step => step.room));
+		let protectedRoute = typeof AIRemoteStrategy !== "undefined"
+			? AIRemoteStrategy.accessibility(origin, target, true) : null;
+		if (protectedRoute && protectedRoute.accessibility !== "REACHABLE_NOW")
+			throw new Error(`Colonization route is ${protectedRoute.accessibility}`);
+		let route = protectedRoute && protectedRoute.routeRooms.length > 0
+			? protectedRoute.routeRooms : [origin, target];
 		_.set(Memory, ["sites", "colonization", target], {
 			from: origin, target: target, layout: order.parameters.layout, focus_defense: true,
 			list_route: _.uniq(route), ai_managed: true, ai_order_id: order.id
@@ -566,6 +578,25 @@ global.AIInterface = {
 		let origin = _.get(Game, ["rooms", originName]);
 		if (!origin || _.get(origin, ["controller", "my"], false) !== true)
 			throw new Error("Scout origin is no longer an owned visible colony");
+		let protectedRoute = typeof AIRemoteStrategy !== "undefined"
+			? AIRemoteStrategy.accessibility(originName, roomName, true) : null;
+		if (protectedRoute && _.includes(["BLOCKED_BY_NOVICE_BOUNDARY", "REACHABLE_AFTER_PROTECTION"], protectedRoute.accessibility)) {
+			_.set(Memory, ["ai", "protection", "deferredScouts", roomName], {
+				id: `ai-scout:${order.id}`, orderId: order.id, origin: originName, room: roomName,
+				status: "DEFERRED", createdTick: Game.time, requestedTick: Game.time,
+				observedTick: null, completedTick: null, intelLastSeenTick: null,
+				scoutCreep: null, activeScouts: 0, failureReason: null,
+				accessibility: protectedRoute.accessibility,
+				deferredUntilTimestamp: protectedRoute.reachableAfterTimestamp
+			});
+			return `Scout mission for ${roomName} deferred until its novice/respawn boundary expires`;
+		}
+		if (protectedRoute && protectedRoute.accessibility === "CLOSED")
+			throw new Error(`Scout target ${roomName} is closed`);
+		if (protectedRoute && protectedRoute.accessibility !== "REACHABLE_NOW")
+			throw new Error(`Scout route accessibility is ${protectedRoute.accessibility}`);
+		if (_.has(Memory, ["ai", "protection", "deferredScouts", roomName]))
+			delete Memory.ai.protection.deferredScouts[roomName];
 
 		let requests = _.get(Memory, ["rooms", originName, "scout_requests"], []);
 		if (!_.isArray(requests))
@@ -574,7 +605,7 @@ global.AIInterface = {
 		_.each(_.get(Memory, "rooms", {}), roomMemory => {
 			concurrent += _.filter(_.get(roomMemory, "scout_requests", []), request => {
 				return request && request.ai_managed === true
-					&& !_.includes(["OBSERVED", "COMPLETED", "FAILED", "EXPIRED"], _.get(request, "status"));
+					&& !_.includes(["DEFERRED", "OBSERVED", "COMPLETED", "FAILED", "EXPIRED"], _.get(request, "status"));
 			}).length;
 		});
 		if (concurrent >= _.get(Memory, ["ai", "policy", "maxConcurrentScouts"], 1))
@@ -589,8 +620,8 @@ global.AIInterface = {
 		let rallyPos = rally && rally.pos
 			? { x: rally.pos.x, y: rally.pos.y, roomName: originName, shard: _.get(Game, ["shard", "name"], "sim") }
 			: { x: 25, y: 25, roomName: originName, shard: _.get(Game, ["shard", "name"], "sim") };
-		let route = [originName];
-		if (_.isFunction(_.get(Game, ["map", "findRoute"]))) {
+		let route = protectedRoute && protectedRoute.routeRooms.length > 0 ? protectedRoute.routeRooms.slice() : [originName];
+		if ((!protectedRoute || protectedRoute.routeRooms.length === 0) && _.isFunction(_.get(Game, ["map", "findRoute"]))) {
 			let result = Game.map.findRoute(originName, roomName);
 			if (typeof ERR_NO_PATH !== "undefined" && result === ERR_NO_PATH)
 				throw new Error(`No route from ${originName} to ${roomName}`);
@@ -686,6 +717,17 @@ global.AIInterface = {
 					observedTick: _.get(mission, "observed_tick", intel.lastSeenTick),
 					completedTick: completedTick,
 					intelLastSeenTick: intel.lastSeenTick
+				});
+				return;
+			}
+			if (mission && mission.status === "DEFERRED") {
+				this._archiveScout(order, mission, "DEFERRED", null, null);
+				this._removeActive(order.id);
+				this._complete(order, `Target ${order.targetRoom} is deferred until protection permits access`, {
+					targetRoom: order.targetRoom,
+					origin: order.origin,
+					accessibility: _.get(mission, "accessibility", "REACHABLE_AFTER_PROTECTION"),
+					deferredUntilTimestamp: _.get(mission, "deferred_until_timestamp", null)
 				});
 				return;
 			}

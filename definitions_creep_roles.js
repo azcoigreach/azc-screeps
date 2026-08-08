@@ -655,6 +655,46 @@
 
 		ensureMissionFromRequest();
 
+		// A protection boundary can change after a scout was queued. Diagnose the
+		// route before movement so the creep does not grind against a novice wall
+		// and trigger replacement spam.
+		let protectedDestination = _.get(creep.memory, ["dest_pos", "roomName"]);
+		if (protectedDestination && typeof AIRemoteStrategy !== "undefined") {
+			let access = AIRemoteStrategy.accessibility(creep.room.name, protectedDestination, true);
+			if (_.includes(["BLOCKED_BY_NOVICE_BOUNDARY", "REACHABLE_AFTER_PROTECTION"], access.accessibility)) {
+				let requestId = _.get(creep.memory, "scout_request_id");
+				let originRoom = _.get(creep.memory, "colony", creep.room.name);
+				let mission = _.find(_.get(Memory, ["rooms", originRoom, "scout_requests"], []), request => request && request.id === requestId);
+				if (mission) {
+					mission.status = "DEFERRED";
+					mission.accessibility = access.accessibility;
+					mission.deferred_until_timestamp = access.reachableAfterTimestamp;
+					mission.terminal_tick = Game.time;
+					mission._completed = true;
+				}
+				_.set(Memory, ["ai", "protection", "deferredScouts", protectedDestination], {
+					id: requestId || `deferred-scout:${creep.name}`,
+					orderId: _.get(mission, "ai_order_id", null), origin: originRoom, room: protectedDestination,
+					status: "DEFERRED", createdTick: _.get(mission, "created", Game.time),
+					requestedTick: _.get(mission, "requested_tick", Game.time), observedTick: null,
+					completedTick: null, intelLastSeenTick: null, scoutCreep: creep.name,
+					activeScouts: 1, failureReason: null, accessibility: access.accessibility,
+					deferredUntilTimestamp: access.reachableAfterTimestamp
+				});
+				creep.memory.protection_deferred = true;
+				creep.memory.protection_deferred_until = access.reachableAfterTimestamp;
+				let rallyRoom = _.get(creep.memory, ["rally_pos", "roomName"], originRoom);
+				if (creep.room.name !== rallyRoom) creep.travelToRoom(rallyRoom, false);
+				return;
+			}
+			if (access.accessibility === "REACHABLE_NOW" && creep.memory.protection_deferred === true) {
+				if (_.has(Memory, ["ai", "protection", "deferredScouts", protectedDestination]))
+					delete Memory.ai.protection.deferredScouts[protectedDestination];
+				delete creep.memory.protection_deferred;
+				delete creep.memory.protection_deferred_until;
+			}
+		}
+
 		// Persist latest mission data snapshot for future restores
 		const persistMissionSnapshot = function () {
 			let missionData = _.get(creep.memory, ["global", "mission_data"]);

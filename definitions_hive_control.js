@@ -866,7 +866,7 @@
 
 			// AI missions use explicit lifecycle semantics. Observation is marked by
 			// AIObserver only after the destination intelligence record is updated.
-			if (request.ai_managed === true && !_.includes(["OBSERVED", "COMPLETED", "FAILED", "EXPIRED"], request.status)) {
+			if (request.ai_managed === true && !_.includes(["DEFERRED", "OBSERVED", "COMPLETED", "FAILED", "EXPIRED"], request.status)) {
 				let spawning = _.some(creeps, creep => _.get(creep, "spawning", false) === true);
 				if (pendingSpawn || spawning)
 					request.status = "SPAWNING";
@@ -884,7 +884,7 @@
 			}
 
 			if (!request.respawn && request.spawned_total >= request.count && creeps.length == 0 && remoteCount == 0 && !pendingSpawn) {
-				if (request.ai_managed === true && request.status !== "COMPLETED") {
+				if (request.ai_managed === true && !_.includes(["DEFERRED", "COMPLETED"], request.status)) {
 					request.status = request.status === "OBSERVED" ? "COMPLETED" : "FAILED";
 					request.failure_reason = request.status === "FAILED" ? "Scout ended before target observation" : null;
 					request.terminal_tick = Game.time;
