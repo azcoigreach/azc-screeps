@@ -260,7 +260,7 @@ and `ATTACK_ROOM` remain unavailable.
 
 | Segment | Direction | Contents |
 |---|---|---|
-| 90 | Bot to commander | Strategic telemetry schema v5 |
+| 90 | Bot to commander | Strategic telemetry schema v6 |
 | 91 | Commander to bot | Heartbeat and command inbox schema v1 |
 | 92 | Bot to commander | Status and command results schema v1 |
 
@@ -516,7 +516,7 @@ only switches the active World branch:
 PYTHONPATH=ai ai/.venv/bin/python tools/screeps_branch.py activate default --production
 ```
 
-For a live deployment test, first collect schema-v5 telemetry and
+For a live deployment test, first collect schema-v6 telemetry and
 confirm all colonies/remotes, player identity, population demand, CPU, bucket,
 and payload. Then enable only the needed policy, issue one action for one existing
 remote, disable automatic authority after dispatch, wait through the declared
@@ -526,7 +526,7 @@ establishment, combat, markets, or production changes.
 
 ## Phase 7A military intelligence
 
-Telemetry schema v5 adds a read-only military foundation. Player records persist
+Telemetry schema v6 adds a read-only military foundation. Player records persist
 first/last seen ticks, rooms, reservations, observed RCLs, proximity, conflict
 counters, last conflict, and the current relationship. Human relationship
 overrides support `ALLY`, `NEUTRAL`, `SUSPICIOUS`, `HOSTILE`, and `WAR`, and take

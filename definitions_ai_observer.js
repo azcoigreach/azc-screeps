@@ -6,7 +6,7 @@
 // individual creep state, and long time-series histories stay out of segments.
 global.AIObserver = {
 
-	SCHEMA_VERSION: 5,
+	SCHEMA_VERSION: 6,
 	MAX_HOSTILE_EVENTS: 50,
 	MAX_INTEL_ROOMS: 150,
 	STRUCTURE_TYPES: [

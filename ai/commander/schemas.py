@@ -635,7 +635,7 @@ class ObserverMetrics(StrictModel):
 
 
 class Telemetry(StrictModel):
-    schemaVersion: Literal[3, 4, 5]
+    schemaVersion: Literal[3, 4, 5, 6]
     tick: int
     shard: str
     cpu: CPUState
