@@ -14,6 +14,14 @@ from .schemas import Advisory, Telemetry
 from .transport import CommanderTransport, TransportError
 
 
+REMOTE_ACTION_OBJECTIVES = {
+    "REASSESS_REMOTE": "reassess",
+    "ENSURE_REMOTE_RESERVATION": "reservation",
+    "ENSURE_REMOTE_INFRASTRUCTURE": "infrastructure",
+    "REBALANCE_REMOTE_LOGISTICS": "logistics",
+}
+
+
 SYSTEM_PROMPT = """You are the strategic commander and historian for an active Screeps MMO empire.
 
 The existing AZC JavaScript bot is the deterministic execution engine for creep
@@ -85,6 +93,10 @@ bootstrap cost, travel, candidate quality, defense, and existing operations may
 still make recommendedSimultaneousColonizations zero. Area protection is not a
 generic PvP prohibition and must never substitute for controller Safe Mode or
 route accessibility.
+When protection status is RESPAWN, explicitly state in strategic_assessment or
+narrative that normal GCL capacity applies, include the exposed global and
+protected-region available slot counts, say the empire is not under the Novice
+three-colony cap, and name the operational reason limiting immediate expansion.
 
 Player/relation fields are already classified as SELF, ALLY, NEUTRAL, HOSTILE,
 or UNKNOWN. Never infer identity from the English appearance of a username.
@@ -312,6 +324,8 @@ class AdvisorService:
                 ):
                     continue
                 remote = remotes[proposal.target]
+                if REMOTE_ACTION_OBJECTIVES[proposal.action] in remote.objectives:
+                    continue
                 reasons = set(remote.reasons)
                 required = {
                     "ENSURE_REMOTE_INFRASTRUCTURE": {"NO_CONTAINER", "CONTAINER_DAMAGED"},

@@ -199,6 +199,12 @@ class OpenAIAdvisorTests(unittest.TestCase):
         self.assertIsNotNone(proposal)
         self.assertEqual(proposal.action, "REBALANCE_REMOTE_LOGISTICS")
 
+        payload["operations"]["remoteMining"][0]["objectives"] = ["logistics"]
+        telemetry = Telemetry.model_validate(payload)
+        self.assertIsNone(AdvisorService._authorized_automatic_action(candidate, telemetry))
+        payload["operations"]["remoteMining"][0]["objectives"] = []
+        telemetry = Telemetry.model_validate(payload)
+
         value["executable_actions"][0]["target"] = "W9N9"
         self.assertIsNone(
             AdvisorService._authorized_automatic_action(Advisory.model_validate(value), telemetry)
