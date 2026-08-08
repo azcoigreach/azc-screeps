@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -95,7 +96,11 @@ class FakeTransport:
 
 
 class StaticAdvisorClient:
+    def __init__(self) -> None:
+        self.last_input = None
+
     def request_advisory(self, _system, _telemetry):
+        self.last_input = json.loads(_telemetry)
         return OpenAIAdvisoryResult(
             advisory(), "gpt-5.4-nano", "resp-1",
             {"input_tokens": 1000, "output_tokens": 200, "total_tokens": 1200},
@@ -139,7 +144,8 @@ class OpenAIAdvisorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             history = HistoryStore(Path(directory) / "db.sqlite")
             transport = FakeTransport()
-            service = AdvisorService(StaticAdvisorClient(), history, transport)
+            client = StaticAdvisorClient()
+            service = AdvisorService(client, history, transport)
             telemetry = Telemetry.model_validate(telemetry_payload())
             run = service.advise(telemetry)
             self.assertEqual(run.explanation_command_id, "writeback-1")
@@ -150,6 +156,7 @@ class OpenAIAdvisorTests(unittest.TestCase):
                 Advisory.model_validate_json(recommendations[0]["advisory_json"]).summary,
                 advisory().summary,
             )
+            self.assertEqual(client.last_input["recentOperations"], [])
             self.assertEqual(history.recent_journal()[0]["entry_type"], "ai_review")
             output = format_advisory(run, telemetry.tick)
             self.assertIn("AI COMMANDER ADVISORY", output)

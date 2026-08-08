@@ -75,6 +75,12 @@ Keep these concepts separate:
 - historical trends calculated by Python from SQLite
 - your interpretation and uncertainty
 
+recentOperations contains deterministic before/after evaluations from the local
+operation journal. Acknowledge their measured outcomes explicitly. Do not
+recommend repeating a successful action unless the current matching diagnostic
+still exists; distinguish a resolved backlog/hauler intervention from different
+remaining miner, reservation, or loss risks.
+
 Remote energyDeliveredTotal deltas are gross measured successful deliveries from
 assigned remote creeps into the home colony. Colony storage deltas are net balance
 after all income and spending; never present one as the other. Stale or missing
@@ -139,6 +145,7 @@ class AdvisorService:
                 "reason": "No historical trend context was supplied",
             },
             "remoteEconomics": RemoteEconomics(self.history).build(telemetry),
+            "recentOperations": self.history.recent_operations(10),
             "interpretationRules": {
                 "currentStateSource": "Screeps Memory Segment 90",
                 "historicalTrendSource": "Python calculations over SQLite observations",
