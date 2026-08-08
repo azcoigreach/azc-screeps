@@ -779,6 +779,8 @@
 			let requiredCount = request.count;
 			let remoteCount = remoteNames.length;
 			let activeCount = creeps.length + remoteCount;
+			if (activeCount > 0)
+				request.spawned_total = Math.max(request.spawned_total, Math.min(request.count, activeCount));
 			let effectiveRally = rallyReached + remoteCount;
 			let rallyReady = request.wait_for_full_rally ? (activeCount >= requiredCount && effectiveRally >= requiredCount) : true;
 			let release = request.wait_for_full_rally ? (rallyReady || request.rally_release === true) : true;
@@ -852,9 +854,9 @@
 					args: args
 				});
 
-				request.spawned_total = (request.spawned_total || 0) + 1;
-				// The request now exists in this tick's central queue. Preserve a
-				// non-respawning mission until spawn processing can attach its creep.
+				// Spawn requests are rebuilt every tick. Count a one-shot as spawned
+				// only after its creep is actually attached on a later tick; until then
+				// keep requesting it through the normal deterministic scheduler.
 				pendingSpawn = true;
 			}
 
