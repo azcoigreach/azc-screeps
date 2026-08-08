@@ -661,7 +661,7 @@
 		let protectedDestination = _.get(creep.memory, ["dest_pos", "roomName"]);
 		if (protectedDestination && typeof AIRemoteStrategy !== "undefined") {
 			let access = AIRemoteStrategy.accessibility(creep.room.name, protectedDestination, true);
-			if (_.includes(["BLOCKED_BY_NOVICE_BOUNDARY", "REACHABLE_AFTER_PROTECTION"], access.accessibility)) {
+			if (_.includes(["BLOCKED_BY_PROTECTED_BOUNDARY", "REACHABLE_AFTER_PROTECTION"], access.accessibility)) {
 				let requestId = _.get(creep.memory, "scout_request_id");
 				let originRoom = _.get(creep.memory, "colony", creep.room.name);
 				let mission = _.find(_.get(Memory, ["rooms", originRoom, "scout_requests"], []), request => request && request.id === requestId);

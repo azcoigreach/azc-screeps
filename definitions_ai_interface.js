@@ -580,7 +580,7 @@ global.AIInterface = {
 			throw new Error("Scout origin is no longer an owned visible colony");
 		let protectedRoute = typeof AIRemoteStrategy !== "undefined"
 			? AIRemoteStrategy.accessibility(originName, roomName, true) : null;
-		if (protectedRoute && _.includes(["BLOCKED_BY_NOVICE_BOUNDARY", "REACHABLE_AFTER_PROTECTION"], protectedRoute.accessibility)) {
+		if (protectedRoute && _.includes(["BLOCKED_BY_PROTECTED_BOUNDARY", "REACHABLE_AFTER_PROTECTION"], protectedRoute.accessibility)) {
 			_.set(Memory, ["ai", "protection", "deferredScouts", roomName], {
 				id: `ai-scout:${order.id}`, orderId: order.id, origin: originName, room: roomName,
 				status: "DEFERRED", createdTick: Game.time, requestedTick: Game.time,

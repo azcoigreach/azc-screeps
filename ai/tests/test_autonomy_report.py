@@ -112,7 +112,7 @@ class AutonomyReportTests(unittest.TestCase):
         blocked["protected"] = False
         blocked["regionKey"] = None
         blocked["sharesCurrentProtectedRegion"] = False
-        blocked["accessibility"] = "BLOCKED_BY_NOVICE_BOUNDARY"
+        blocked["accessibility"] = "BLOCKED_BY_PROTECTED_BOUNDARY"
         blocked["reachableNow"] = False
         blocked["reachableAfterTimestamp"] = 1770000000000
         payload["intelligence"]["protectionByRoom"]["W0N2"] = {
@@ -148,6 +148,36 @@ class AutonomyReportTests(unittest.TestCase):
         self.assertIn("Military preparation", report)
         self.assertIn("Candidate sets", report)
         self.assertIn("API cost", report)
+
+    def test_respawn_rules_preserve_gcl_capacity_and_safe_mode_is_separate(self) -> None:
+        payload = telemetry_payload()
+        protection = payload["empire"]["protection"]
+        protection.update({
+            "status": "respawn", "globalGclClaimSlots": 22,
+            "currentProtectionClaimSlots": 22, "claimLimit": None,
+            "rules": {
+                "status": "respawn", "temporaryBoundary": True,
+                "claimLimitType": "NORMAL_GCL", "nukersAllowed": False,
+                "reachable": True, "reservationsUnlimited": True,
+                "outsidePlayersExcluded": True, "residentConflictPossible": True,
+                "safeModeSeparate": True,
+            },
+        })
+        payload["empire"]["gcl"].update({
+            "level": 23, "ownedRooms": 1, "availableClaimSlots": 22,
+            "globalGclClaimSlots": 22, "currentProtectionClaimSlots": 22,
+        })
+        payload["colonies"]["W1N1"]["controller"]["safeMode"] = 1200
+        payload["colonies"]["W1N1"]["protection"].update({
+            "status": "respawn", "regionKey": "respawn:1770000000000",
+        })
+        telemetry = Telemetry.model_validate(payload)
+        self.assertEqual(telemetry.empire.protection.rules.claimLimitType, "NORMAL_GCL")
+        self.assertEqual(telemetry.empire.protection.currentProtectionClaimSlots, 22)
+        self.assertEqual(telemetry.colonies["W1N1"].controller.safeMode, 1200)
+        self.assertEqual(telemetry.colonies["W1N1"].protection.status, "respawn")
+        report = build_report(self.history, telemetry, 24)
+        self.assertIn("claim rule NORMAL_GCL", report)
 
 
 if __name__ == "__main__":

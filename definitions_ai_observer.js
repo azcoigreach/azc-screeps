@@ -728,7 +728,7 @@ global.AIObserver = {
 			let routeStatus = _.get(previous, "routeStatus", nearest ? "unknown" : "unavailable");
 			if (routeStatus === "protected_boundary" && protection.accessibility === "REACHABLE_NOW")
 				routeStatus = "unknown";
-			if (nearest && _.includes(["REACHABLE_AFTER_PROTECTION", "BLOCKED_BY_NOVICE_BOUNDARY"], protection.accessibility)) {
+			if (nearest && _.includes(["REACHABLE_AFTER_PROTECTION", "BLOCKED_BY_PROTECTED_BOUNDARY"], protection.accessibility)) {
 				routeStatus = "protected_boundary";
 				routeLength = null;
 				routeRooms = [];
@@ -946,6 +946,8 @@ global.AIObserver = {
 		if (!candidate) reasons.push("NO_ELIGIBLE_CANDIDATE");
 		if (_.get(Memory, ["ai", "policy", "allowColonization"], false) !== true) reasons.push("AUTHORITY_DISABLED");
 		let blocking = _.filter(reasons, reason => reason !== "AUTHORITY_DISABLED");
+		let operationalLimitReason = !healthyOrigin ? "HOME_STAFFING_OR_BOOTSTRAP_CAPACITY"
+			: (!candidate ? "NO_ELIGIBLE_CANDIDATE" : (Math.min(globalSlots, protectionSlots) < 1 ? "NO_LEGAL_CLAIM_CAPACITY" : null));
 		return {
 			status: blocking.length === 0 ? "READY" : (_.includes(blocking, "NO_ELIGIBLE_CANDIDATE") ? "INSUFFICIENT_INTEL" : blocking[0]),
 			reasons: reasons,
@@ -954,6 +956,8 @@ global.AIObserver = {
 			claimSlots: Math.min(globalSlots, protectionSlots),
 			globalGclClaimSlots: globalSlots,
 			currentProtectionClaimSlots: protectionSlots,
+			recommendedSimultaneousColonizations: operationalLimitReason == null ? 1 : 0,
+			operationalLimitReason: operationalLimitReason,
 			spawnCapacity: healthyOrigin ? "ADEQUATE" : "CONSTRAINED"
 		};
 	},
@@ -969,13 +973,18 @@ global.AIObserver = {
 		let primaryStatus = primary && typeof AIRemoteStrategy !== "undefined"
 			? AIRemoteStrategy.roomStatus(primary)
 			: { status: "unknown", protected: false, expirationTimestamp: null, remainingProtectionMs: null, regionKey: null };
-		let active = primaryStatus.protected === true;
+		let rules = typeof AIRemoteStrategy !== "undefined"
+			? AIRemoteStrategy.protectionRules(primaryStatus.status)
+			: { status: "unknown", temporaryBoundary: false, claimLimitType: "UNKNOWN", nukersAllowed: false, reachable: false, reservationsUnlimited: false, outsidePlayersExcluded: false, residentConflictPossible: false, safeModeSeparate: true };
+		let active = rules.temporaryBoundary === true;
 		let globalSlots = Math.max(0, _.get(Game, ["gcl", "level"], 0) - (ownedNames || []).length);
 		let protectedOwned = active ? _.filter(ownedNames, roomName => {
 			let value = typeof AIRemoteStrategy !== "undefined" ? AIRemoteStrategy.roomStatus(roomName) : {};
 			return primaryStatus.regionKey == null ? value.protected === true : value.regionKey === primaryStatus.regionKey;
 		}).length : 0;
-		let currentSlots = active ? Math.max(0, Math.min(globalSlots, 3 - protectedOwned)) : globalSlots;
+		let currentSlots = rules.claimLimitType === "NOVICE_THREE_ROOM"
+			? Math.max(0, Math.min(globalSlots, 3 - protectedOwned))
+			: (rules.claimLimitType === "NORMAL_GCL" ? globalSlots : 0);
 		let band = this._protectionBand(primaryStatus.remainingProtectionMs, active);
 		let previous = _.get(Memory, ["ai", "protection", "summary"], {});
 		let events = _.get(Memory, ["ai", "protection", "events"], []);
@@ -1022,18 +1031,12 @@ global.AIObserver = {
 			protectedOwnedRooms: protectedOwned,
 			globalGclClaimSlots: globalSlots,
 			currentProtectionClaimSlots: currentSlots,
-			claimLimit: active ? 3 : null,
+			claimLimit: rules.claimLimitType === "NOVICE_THREE_ROOM" ? 3 : null,
 			threshold: band,
 			advisoryRequired: _.isNumber(lastReassessment) && Game.time - lastReassessment <= 500,
 			lastTransitionTick: _.get(Memory, ["ai", "protection", "lastTransitionTick"], null),
 			events: events.slice(-10),
-			constraints: {
-				reservationsUnlimited: true,
-				nukersAvailable: !active,
-				outsidePlayersExcluded: active,
-				residentConflictPossible: active,
-				safeModeSeparate: true
-			}
+			rules: rules
 		};
 		_.set(Memory, ["ai", "protection", "summary"], empire);
 		return { empire: empire, rooms: rooms };
@@ -1103,7 +1106,7 @@ global.AIObserver = {
 				if ((typeof ERR_NO_PATH !== "undefined" && exitResult === ERR_NO_PATH) || exitResult === -2)
 					evidence = "VISIBLE_MAP_NO_PATH";
 			}
-			blocked.push({ direction: String(direction), room: neighbor, reason: "NOVICE_BOUNDARY", evidence: evidence });
+			blocked.push({ direction: String(direction), room: neighbor, reason: "PROTECTED_BOUNDARY", evidence: evidence });
 		});
 		_.set(Memory, ["ai", "protection", "blockedExits", roomName], { signature: signature, checkedTick: Game.time, exits: blocked });
 		return blocked;
@@ -1141,7 +1144,7 @@ global.AIObserver = {
 			},
 			availableCombatResources: resources,
 			nukerStructures: nukers,
-			nukersOperational: !_.get(protection, "active", false) && nukers > 0,
+			nukersOperational: _.get(protection, ["rules", "nukersAllowed"], false) && nukers > 0,
 			offensiveCombatAuthorized: false
 		};
 	},

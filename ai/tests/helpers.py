@@ -134,8 +134,10 @@ def telemetry_payload(tick: int = 12345) -> dict:
                 "currentProtectionClaimSlots": 2, "claimLimit": 3,
                 "threshold": "AT_OR_BELOW_168_HOURS", "advisoryRequired": False,
                 "lastTransitionTick": None, "events": [],
-                "constraints": {
-                    "reservationsUnlimited": True, "nukersAvailable": False,
+                "rules": {
+                    "status": "novice", "temporaryBoundary": True,
+                    "claimLimitType": "NOVICE_THREE_ROOM", "nukersAllowed": False,
+                    "reachable": True, "reservationsUnlimited": True,
                     "outsidePlayersExcluded": True, "residentConflictPossible": True,
                     "safeModeSeparate": True,
                 },

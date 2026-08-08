@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from commander.advisor import AdvisorService, format_advisory
+from commander.advisor import SYSTEM_PROMPT, AdvisorService, format_advisory
 from commander.history import HistoryStore
 from commander.openai_client import OpenAIAdvisorClient, OpenAIAdvisorError, OpenAIAdvisoryResult
 from commander.schemas import Advisory, Telemetry
@@ -109,6 +109,11 @@ class StaticAdvisorClient:
 
 
 class OpenAIAdvisorTests(unittest.TestCase):
+    def test_prompt_distinguishes_respawn_claims_from_novice_claims(self) -> None:
+        self.assertIn("NOVICE uses claimLimitType NOVICE_THREE_ROOM", SYSTEM_PROMPT)
+        self.assertIn("RESPAWN uses claimLimitType NORMAL_GCL", SYSTEM_PROMPT)
+        self.assertIn("not capped at three permanent colonies", SYSTEM_PROMPT)
+
     def test_structured_response_model_and_cost(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             cfg = config(Path(directory) / "db.sqlite")
@@ -221,7 +226,7 @@ class OpenAIAdvisorTests(unittest.TestCase):
         telemetry = Telemetry.model_validate(payload)
         self.assertIsNotNone(AdvisorService._authorized_automatic_action(candidate, telemetry))
 
-        payload["intelligence"]["protectionByRoom"]["W0N1"]["accessibility"] = "BLOCKED_BY_NOVICE_BOUNDARY"
+        payload["intelligence"]["protectionByRoom"]["W0N1"]["accessibility"] = "BLOCKED_BY_PROTECTED_BOUNDARY"
         payload["intelligence"]["protectionByRoom"]["W0N1"]["reachableNow"] = False
         telemetry = Telemetry.model_validate(payload)
         self.assertIsNone(AdvisorService._authorized_automatic_action(candidate, telemetry))

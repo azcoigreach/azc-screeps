@@ -132,6 +132,13 @@ class TrendsJournalTests(unittest.TestCase):
             "protectedOwnedRooms": 0, "currentProtectionClaimSlots": 3,
             "claimLimit": None, "threshold": "INACTIVE", "advisoryRequired": True,
             "lastTransitionTick": 2000, "events": [event],
+            "rules": {
+                "status": "normal", "temporaryBoundary": False,
+                "claimLimitType": "NORMAL_GCL", "nukersAllowed": True,
+                "reachable": True, "reservationsUnlimited": True,
+                "outsidePlayersExcluded": False, "residentConflictPossible": True,
+                "safeModeSeparate": True,
+            },
         })
         current["empire"]["gcl"]["currentProtectionClaimSlots"] = 3
         self.processor.process(json.dumps(baseline))

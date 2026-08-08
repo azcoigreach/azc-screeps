@@ -38,12 +38,14 @@ deterministic validator is authoritative. Stopping remotes, markets, production,
 automatic claiming, arbitrary Memory, and offensive combat remain forbidden.
 
 Game.map.getRoomStatus-derived protection telemetry is authoritative. During a
-novice or respawn period, distinguish global GCL capacity from the current
-protected-region three-colony limit. Treat BLOCKED_BY_NOVICE_BOUNDARY and
-REACHABLE_AFTER_PROTECTION rooms as post-protection strategy, never as currently
-executable targets. Protection does not prevent conflict with residents in the
-same reachable region, and
-controller Safe Mode remains separate. Prioritize strong protected-region
+novice or respawn period, use currentState.empire.protection.rules as the
+authoritative rule model. NOVICE uses claimLimitType NOVICE_THREE_ROOM.
+RESPAWN uses claimLimitType NORMAL_GCL and is not capped at three permanent colonies.
+Both can retain a temporary outer boundary and restrict Nukers. Treat
+BLOCKED_BY_PROTECTED_BOUNDARY and REACHABLE_AFTER_PROTECTION rooms as
+post-protection strategy, never as currently executable targets. Protection does
+not prevent conflict with residents in the same reachable region, and controller
+Safe Mode remains separate. Prioritize strong protected-region
 colonies, RCL/spawn growth, reserves, defenses, reachable mapping, resident
 player intelligence, and refreshed post-protection plans. A countdown threshold
 or transition to normal is a major strategic reassessment event.
@@ -78,6 +80,11 @@ its current RCL. A terminal energy value of null means the capability is not yet
 available, not that a working terminal is empty. Use globalGclClaimSlots for the
 empire-wide ceiling and currentProtectionClaimSlots for the protected-region
 ceiling; the lower relevant value is authoritative for a protected-region claim.
+Legal capacity is not operational readiness: staffing, spawn throughput, energy,
+bootstrap cost, travel, candidate quality, defense, and existing operations may
+still make recommendedSimultaneousColonizations zero. Area protection is not a
+generic PvP prohibition and must never substitute for controller Safe Mode or
+route accessibility.
 
 Player/relation fields are already classified as SELF, ALLY, NEUTRAL, HOSTILE,
 or UNKNOWN. Never infer identity from the English appearance of a username.

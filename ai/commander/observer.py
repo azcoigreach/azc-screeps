@@ -102,7 +102,7 @@ class ObservationProcessor:
                     "advisoryRequired": telemetry.empire.protection.advisoryRequired,
                     "lastTransitionTick": telemetry.empire.protection.lastTransitionTick,
                     "eventIds": [event.id for event in telemetry.empire.protection.events],
-                    "constraints": telemetry.empire.protection.constraints.model_dump(),
+                    "rules": telemetry.empire.protection.rules.model_dump(),
                 },
                 "militaryPreparation": {
                     "spawnThroughput": telemetry.empire.militaryPreparation.spawnThroughput.model_dump(),

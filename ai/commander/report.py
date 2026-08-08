@@ -22,7 +22,7 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
         f"{telemetry.empire.gcl.availableClaimSlots} claim slots, {telemetry.empire.creeps} creeps.",
         f"Protection {protection.status.upper()}; global/current-region claim slots "
         f"{protection.globalGclClaimSlots}/{protection.currentProtectionClaimSlots}; "
-        f"countdown threshold {protection.threshold}.",
+        f"claim rule {protection.rules.claimLimitType}; countdown threshold {protection.threshold}.",
         f"Military preparation: {military.spawnThroughput.spawns} spawns "
         f"({military.spawnThroughput.idle} idle), {len(military.availableCombatResources)} stored resource types; "
         f"nukers {'operational' if military.nukersOperational else 'unavailable'}; offensive authority off.",
@@ -71,7 +71,10 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
     lines.extend(["", "Expansion planning"])
     lines.append(
         f"Colonization readiness: {readiness.status}; preferred "
-        f"{readiness.recommendedRoom or 'none'}; reasons {', '.join(readiness.reasons) or 'none'}."
+        f"{readiness.recommendedRoom or 'none'}; legal slots global/current-region "
+        f"{readiness.globalGclClaimSlots}/{readiness.currentProtectionClaimSlots}; recommended simultaneous "
+        f"{readiness.recommendedSimultaneousColonizations}; operational limit "
+        f"{readiness.operationalLimitReason or 'none'}; reasons {', '.join(readiness.reasons) or 'none'}."
     )
     lines.extend(["", "AI operations"])
     if not operations:

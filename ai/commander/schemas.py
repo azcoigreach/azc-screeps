@@ -25,7 +25,7 @@ class RoomProtection(StrictModel):
     regionKey: str | None = None
     sharesCurrentProtectedRegion: bool = False
     accessibility: Literal[
-        "REACHABLE_NOW", "BLOCKED_BY_NOVICE_BOUNDARY", "REACHABLE_AFTER_PROTECTION", "CLOSED", "UNKNOWN"
+        "REACHABLE_NOW", "BLOCKED_BY_PROTECTED_BOUNDARY", "REACHABLE_AFTER_PROTECTION", "CLOSED", "UNKNOWN"
     ] = "UNKNOWN"
     reachableNow: bool = False
     reachableAfterTimestamp: int | None = None
@@ -41,9 +41,13 @@ class ProtectionEvent(StrictModel):
     details: dict[str, Any]
 
 
-class ProtectionConstraints(StrictModel):
-    reservationsUnlimited: bool = True
-    nukersAvailable: bool = True
+class ProtectionRules(StrictModel):
+    status: Literal["normal", "closed", "novice", "respawn", "unknown"] = "unknown"
+    temporaryBoundary: bool = False
+    claimLimitType: Literal["NOVICE_THREE_ROOM", "NORMAL_GCL", "NOT_CLAIMABLE", "UNKNOWN"] = "UNKNOWN"
+    nukersAllowed: bool = False
+    reachable: bool = False
+    reservationsUnlimited: bool = False
     outsidePlayersExcluded: bool = False
     residentConflictPossible: bool = False
     safeModeSeparate: bool = True
@@ -63,7 +67,7 @@ class EmpireProtection(StrictModel):
     advisoryRequired: bool = False
     lastTransitionTick: int | None = None
     events: list[ProtectionEvent] = Field(default_factory=list)
-    constraints: ProtectionConstraints = Field(default_factory=ProtectionConstraints)
+    rules: ProtectionRules = Field(default_factory=ProtectionRules)
 
 
 class GCLState(StrictModel):
@@ -354,7 +358,7 @@ class ScoutingOperation(StrictModel):
     activeScouts: int
     failureReason: str | None
     accessibility: Literal[
-        "REACHABLE_NOW", "BLOCKED_BY_NOVICE_BOUNDARY", "REACHABLE_AFTER_PROTECTION", "CLOSED", "UNKNOWN"
+        "REACHABLE_NOW", "BLOCKED_BY_PROTECTED_BOUNDARY", "REACHABLE_AFTER_PROTECTION", "CLOSED", "UNKNOWN"
     ] | None = None
     deferredUntilTimestamp: int | None = None
 
@@ -468,7 +472,7 @@ class ClaimCandidate(StrictModel):
     ]
     claimCandidateStatus: Literal["ELIGIBLE", "NEEDS_FRESH_INTEL", "DISQUALIFIED"]
     accessibility: Literal[
-        "REACHABLE_NOW", "BLOCKED_BY_NOVICE_BOUNDARY", "REACHABLE_AFTER_PROTECTION", "CLOSED", "UNKNOWN"
+        "REACHABLE_NOW", "BLOCKED_BY_PROTECTED_BOUNDARY", "REACHABLE_AFTER_PROTECTION", "CLOSED", "UNKNOWN"
     ] = "UNKNOWN"
     availabilitySet: Literal["CURRENTLY_REACHABLE", "POST_PROTECTION", "UNAVAILABLE"] = "UNAVAILABLE"
 
@@ -497,7 +501,7 @@ class RemoteCandidate(StrictModel):
     predictedEconomics: PredictedRemoteEconomics
     confidence: float
     accessibility: Literal[
-        "REACHABLE_NOW", "BLOCKED_BY_NOVICE_BOUNDARY", "REACHABLE_AFTER_PROTECTION", "CLOSED", "UNKNOWN"
+        "REACHABLE_NOW", "BLOCKED_BY_PROTECTED_BOUNDARY", "REACHABLE_AFTER_PROTECTION", "CLOSED", "UNKNOWN"
     ] = "UNKNOWN"
     availabilitySet: Literal["CURRENTLY_REACHABLE", "POST_PROTECTION", "UNAVAILABLE"] = "UNAVAILABLE"
 
@@ -514,6 +518,8 @@ class ExpansionReadiness(StrictModel):
     claimSlots: int
     globalGclClaimSlots: int = 0
     currentProtectionClaimSlots: int = 0
+    recommendedSimultaneousColonizations: int = 0
+    operationalLimitReason: str | None = None
     spawnCapacity: Literal["ADEQUATE", "CONSTRAINED"]
 
 

@@ -754,8 +754,12 @@ test("protected routing distinguishes same-region access from novice boundary bl
 	let outside = AIRemoteStrategy.accessibility("W1N1", "W2N1", true);
 	assert.strictEqual(inside.accessibility, "REACHABLE_NOW");
 	assert.strictEqual(inside.sharesProtectedRegion, true);
-	assert.strictEqual(outside.accessibility, "BLOCKED_BY_NOVICE_BOUNDARY");
+	assert.strictEqual(outside.accessibility, "BLOCKED_BY_PROTECTED_BOUNDARY");
 	assert.strictEqual(outside.reachableAfterTimestamp, expiration);
+	Game.map.getRoomStatus = function (room) {
+		return room === "W2N1" ? { status: "normal", timestamp: null } : { status: "respawn", timestamp: expiration };
+	};
+	assert.strictEqual(AIRemoteStrategy.accessibility("W1N1", "W2N1", true).accessibility, "BLOCKED_BY_PROTECTED_BOUNDARY");
 });
 
 test("observer exposes novice rules, claim limits, candidate sets, and visible boundary evidence", function () {
@@ -781,10 +785,11 @@ test("observer exposes novice rules, claim limits, candidate sets, and visible b
 	assert.strictEqual(snapshot.empire.protection.expirationTimestamp, expiration);
 	assert.ok(snapshot.empire.protection.remainingProtectionMs > 0);
 	assert.strictEqual(snapshot.empire.protection.currentProtectionClaimSlots, 2);
-	assert.strictEqual(snapshot.empire.protection.constraints.reservationsUnlimited, true);
-	assert.strictEqual(snapshot.empire.protection.constraints.nukersAvailable, false);
+	assert.strictEqual(snapshot.empire.protection.rules.claimLimitType, "NOVICE_THREE_ROOM");
+	assert.strictEqual(snapshot.empire.protection.rules.reservationsUnlimited, true);
+	assert.strictEqual(snapshot.empire.protection.rules.nukersAllowed, false);
 	assert.strictEqual(snapshot.colonies.W1N1.protection.sharesCurrentProtectedRegion, true);
-	assert.strictEqual(snapshot.intelligence.protectionByRoom.W2N1.accessibility, "BLOCKED_BY_NOVICE_BOUNDARY");
+	assert.strictEqual(snapshot.intelligence.protectionByRoom.W2N1.accessibility, "BLOCKED_BY_PROTECTED_BOUNDARY");
 	assert.ok(snapshot.intelligence.candidateSets.POST_PROTECTION.remoteRooms.includes("W2N1"));
 	assert.strictEqual(snapshot.remoteCandidates.find(item => item.room === "W2N1").availabilitySet, "POST_PROTECTION");
 	assert.strictEqual(snapshot.colonies.W1N1.protection.blockedExits[0].evidence, "VISIBLE_MAP_NO_PATH");
@@ -806,6 +811,55 @@ test("protected claim capacity is capped at three rooms independently of GCL", f
 	assert.strictEqual(snapshot.empire.gcl.globalGclClaimSlots, 20);
 	assert.strictEqual(snapshot.empire.gcl.currentProtectionClaimSlots, 0);
 	assert.ok(snapshot.expansionReadiness.reasons.includes("BLOCKED_BY_PROTECTION_CLAIM_LIMIT"));
+});
+
+test("respawn protection retains normal GCL claim capacity", function () {
+	reset();
+	AIInterface.initMemory();
+	let expiration = Date.now() + 11 * 24 * 60 * 60 * 1000;
+	Game.gcl.level = 23;
+	Game.map.getRoomStatus = function () { return { status: "respawn", timestamp: expiration }; };
+	Game.rooms.W1N1 = {
+		name: "W1N1", controller: { my: true, level: 5, safeMode: 1200, safeModeAvailable: 1 },
+		findSources: function () { return []; }, find: function () { return []; }
+	};
+	let snapshot = AIObserver.buildSnapshot();
+	assert.strictEqual(snapshot.empire.protection.status, "respawn");
+	assert.strictEqual(snapshot.empire.protection.rules.temporaryBoundary, true);
+	assert.strictEqual(snapshot.empire.protection.rules.claimLimitType, "NORMAL_GCL");
+	assert.strictEqual(snapshot.empire.protection.rules.nukersAllowed, false);
+	assert.strictEqual(snapshot.empire.gcl.globalGclClaimSlots, 22);
+	assert.strictEqual(snapshot.empire.gcl.currentProtectionClaimSlots, 22);
+	assert.strictEqual(snapshot.expansionReadiness.currentProtectionClaimSlots, 22);
+	assert.strictEqual(snapshot.expansionReadiness.recommendedSimultaneousColonizations, 0);
+	assert.strictEqual(snapshot.expansionReadiness.operationalLimitReason, "HOME_STAFFING_OR_BOOTSTRAP_CAPACITY");
+	assert.strictEqual(snapshot.colonies.W1N1.controller.safeMode, 1200);
+	assert.strictEqual(snapshot.colonies.W1N1.protection.status, "respawn");
+});
+
+test("normal and closed statuses use explicit claim and reachability rules", function () {
+	reset();
+	AIInterface.initMemory();
+	Game.gcl.level = 23;
+	Game.map.getRoomStatus = function (room) {
+		return room === "W2N1" ? { status: "closed", timestamp: null } : { status: "normal", timestamp: null };
+	};
+	Game.rooms.W1N1 = {
+		name: "W1N1", controller: { my: true, level: 5 },
+		findSources: function () { return []; }, find: function () { return []; }
+	};
+	let snapshot = AIObserver.buildSnapshot();
+	assert.strictEqual(snapshot.empire.protection.rules.claimLimitType, "NORMAL_GCL");
+	assert.strictEqual(snapshot.empire.protection.rules.temporaryBoundary, false);
+	assert.strictEqual(snapshot.empire.protection.rules.nukersAllowed, true);
+	assert.strictEqual(snapshot.empire.gcl.currentProtectionClaimSlots, 22);
+	let closed = AIRemoteStrategy.accessibility("W1N1", "W2N1", true);
+	assert.strictEqual(closed.accessibility, "CLOSED");
+	assert.strictEqual(AIRemoteStrategy.protectionRules("closed").claimLimitType, "NOT_CLAIMABLE");
+	assert.strictEqual(AIRemoteStrategy.protectionRules("closed").reachable, false);
+	let closedIntel = strategicIntel("W2N1", Game.time);
+	closedIntel.protection = { accessibility: "CLOSED" };
+	assert.ok(AIRemoteStrategy.remoteCandidate(closedIntel, {}).disqualifiers.includes("room_closed"));
 });
 
 test("inaccessible scout missions defer without spawning and reopen after protection expires", function () {

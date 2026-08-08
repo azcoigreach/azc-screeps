@@ -60,7 +60,7 @@ status-derived boundary records.
 Protected routing uses these states:
 
 ```text
-REACHABLE_NOW  BLOCKED_BY_NOVICE_BOUNDARY  REACHABLE_AFTER_PROTECTION
+REACHABLE_NOW  BLOCKED_BY_PROTECTED_BOUNDARY  REACHABLE_AFTER_PROTECTION
 CLOSED         UNKNOWN
 ```
 
@@ -73,11 +73,23 @@ It is not repeatedly respawned and is not mislabeled as permanently failed.
 
 Remote and permanent-room planning retain separate `CURRENTLY_REACHABLE` and
 `POST_PROTECTION` sets. The latter remains ranked but is never executable during
-the current boundary. Protected doctrine recognizes unlimited reservations, the
-three-claimed-room protected-area limit, unavailable Nukers, exclusion of outside
-players, possible conflict with reachable resident players, and controller Safe
-Mode as a separate mechanic. Telemetry reports both `globalGclClaimSlots` and
-`currentProtectionClaimSlots`; protected claiming is bounded by the latter.
+the current boundary. `AIRemoteStrategy.protectionRules(status)` is the single
+authority for area semantics:
+
+| Status | Temporary boundary | Claim rule | Nukers |
+|---|---:|---|---:|
+| `novice` | yes | `NOVICE_THREE_ROOM` | restricted |
+| `respawn` | yes | `NORMAL_GCL` | restricted |
+| `normal` | no | `NORMAL_GCL` | allowed |
+| `closed` | no | `NOT_CLAIMABLE` | restricted |
+
+Only Novice Areas impose the three-claimed-room region limit. Respawn Areas keep
+normal GCL claim capacity while retaining their temporary outer boundary.
+Reservations, possible conflict with reachable resident players, and controller
+Safe Mode remain separate concepts. Telemetry reports both
+`globalGclClaimSlots` and `currentProtectionClaimSlots`, plus the explicit rule
+model. Expansion readiness separately reports legal capacity, recommended
+simultaneous colonizations, and the current operational limiting reason.
 
 Countdown thresholds default to 7 days, 3 days, 24 hours, 6 hours, and expiration
 through `Memory.ai.policy.protectionThresholdHours`. Crossing one triggers a

@@ -128,6 +128,8 @@ def display_status(transport: CommanderTransport) -> str:
             f"Creeps: {telemetry.empire.creeps}",
             f"GCL: {telemetry.empire.gcl.level} ({protection.globalGclClaimSlots or telemetry.empire.gcl.availableClaimSlots} global claim slots available)",
             f"Protection: {protection.status.upper()} ({_duration(protection.remainingProtectionMs)} remaining)",
+            f"Protection rules: boundary={'YES' if protection.rules.temporaryBoundary else 'NO'}, "
+            f"claims={protection.rules.claimLimitType}, nukers={'allowed' if protection.rules.nukersAllowed else 'restricted'}",
             f"Current protection claim slots: {protection.currentProtectionClaimSlots}",
             f"Military preparation: {military.spawnThroughput.spawns} spawns, "
             f"{military.spawnThroughput.idle} idle, {len(military.availableCombatResources)} stored resource types; "
@@ -335,6 +337,11 @@ def show_intel(telemetry: Telemetry) -> None:
         f"{protection.currentProtectionClaimSlots}"
     )
     print(
+        f"Protection rules: boundary={'yes' if protection.rules.temporaryBoundary else 'no'}, "
+        f"claims={protection.rules.claimLimitType}, "
+        f"nukers={'allowed' if protection.rules.nukersAllowed else 'restricted'}"
+    )
+    print(
         f"Military preparation: spawns={military.spawnThroughput.spawns}, "
         f"idle={military.spawnThroughput.idle}, queue={military.spawnThroughput.queueDepth}, "
         f"combat resources={military.availableCombatResources or 'none'}, "
@@ -383,6 +390,8 @@ def show_candidates(telemetry: Telemetry) -> None:
         f"\nReadiness: {readiness.status}; recommended={readiness.recommendedRoom or 'none'}; "
         f"origin={readiness.origin or 'none'}; global/current-protection slots="
         f"{readiness.globalGclClaimSlots}/{readiness.currentProtectionClaimSlots}; "
+        f"recommended simultaneous colonizations={readiness.recommendedSimultaneousColonizations}; "
+        f"operational limit={readiness.operationalLimitReason or 'none'}; "
         f"reasons={readiness.reasons or 'none'}"
     )
 def main(argv: list[str] | None = None) -> int:

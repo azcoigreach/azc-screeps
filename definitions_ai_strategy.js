@@ -9,7 +9,38 @@ global.AIRemoteStrategy = {
 	REMOTE_SCORE_MINIMUM: 65,
 	CLAIM_SCORE_MINIMUM: 70,
 	ROLE_SAFETY_MARGIN: { reserver: 150, burrower: 100, miner: 100, carrier: 75 },
-	PROTECTED_STATUSES: ["novice", "respawn"],
+	PROTECTION_RULES: {
+		novice: {
+			temporaryBoundary: true, claimLimitType: "NOVICE_THREE_ROOM",
+			nukersAllowed: false, reachable: true, reservationsUnlimited: true,
+			outsidePlayersExcluded: true, residentConflictPossible: true, safeModeSeparate: true
+		},
+		respawn: {
+			temporaryBoundary: true, claimLimitType: "NORMAL_GCL",
+			nukersAllowed: false, reachable: true, reservationsUnlimited: true,
+			outsidePlayersExcluded: true, residentConflictPossible: true, safeModeSeparate: true
+		},
+		normal: {
+			temporaryBoundary: false, claimLimitType: "NORMAL_GCL",
+			nukersAllowed: true, reachable: true, reservationsUnlimited: true,
+			outsidePlayersExcluded: false, residentConflictPossible: true, safeModeSeparate: true
+		},
+		closed: {
+			temporaryBoundary: false, claimLimitType: "NOT_CLAIMABLE",
+			nukersAllowed: false, reachable: false, reservationsUnlimited: false,
+			outsidePlayersExcluded: true, residentConflictPossible: false, safeModeSeparate: true
+		},
+		unknown: {
+			temporaryBoundary: false, claimLimitType: "UNKNOWN",
+			nukersAllowed: false, reachable: false, reservationsUnlimited: false,
+			outsidePlayersExcluded: false, residentConflictPossible: false, safeModeSeparate: true
+		}
+	},
+
+	protectionRules: function (status) {
+		let key = _.includes(["novice", "respawn", "normal", "closed"], status) ? status : "unknown";
+		return Object.assign({ status: key }, this.PROTECTION_RULES[key]);
+	},
 
 	roomStatus: function (roomName) {
 		if (!_.isString(roomName) || !_.isFunction(_.get(Game, ["map", "getRoomStatus"])))
@@ -23,13 +54,15 @@ global.AIRemoteStrategy = {
 		let status = _.get(raw, "status", "unknown");
 		if (!_.includes(["normal", "closed", "novice", "respawn"], status)) status = "unknown";
 		let timestamp = _.isNumber(_.get(raw, "timestamp")) ? raw.timestamp : null;
-		let protectedRoom = _.includes(this.PROTECTED_STATUSES, status);
+		let rules = this.protectionRules(status);
+		let protectedRoom = rules.temporaryBoundary;
 		return {
 			status: status,
 			expirationTimestamp: timestamp,
 			remainingProtectionMs: protectedRoom && timestamp != null ? Math.max(0, timestamp - Date.now()) : null,
 			protected: protectedRoom,
-			regionKey: protectedRoom && timestamp != null ? `${status}:${timestamp}` : null
+			regionKey: protectedRoom && timestamp != null ? `${status}:${timestamp}` : null,
+			rules: rules
 		};
 	},
 
@@ -52,7 +85,7 @@ global.AIRemoteStrategy = {
 		}
 		if (from.status === "unknown" || to.status === "unknown") return result;
 		if ((from.protected || to.protected) && !result.sharesProtectedRegion) {
-			result.accessibility = "BLOCKED_BY_NOVICE_BOUNDARY";
+			result.accessibility = "BLOCKED_BY_PROTECTED_BOUNDARY";
 			let expirations = _.filter([from.expirationTimestamp, to.expirationTimestamp], _.isNumber);
 			result.reachableAfterTimestamp = expirations.length > 0 ? _.max(expirations) : null;
 			if (result.reachableAfterTimestamp == null) result.accessibility = "UNKNOWN";
@@ -169,7 +202,7 @@ global.AIRemoteStrategy = {
 		if (reservation !== "NEUTRAL" && reservation !== "SELF") disqualifiers.push("foreign_reservation");
 		if (_.get(intel, "routeStatus") === "no_path") disqualifiers.push("no_route");
 		let accessibility = _.get(intel, ["protection", "accessibility"], "UNKNOWN");
-		if (_.includes(["REACHABLE_AFTER_PROTECTION", "BLOCKED_BY_NOVICE_BOUNDARY"], accessibility))
+		if (_.includes(["REACHABLE_AFTER_PROTECTION", "BLOCKED_BY_PROTECTED_BOUNDARY"], accessibility))
 			disqualifiers.push("post_protection_only");
 		if (accessibility === "CLOSED") disqualifiers.push("room_closed");
 		if (_.has(intel, "protection") && accessibility === "UNKNOWN") disqualifiers.push("protection_accessibility_unknown");
@@ -195,7 +228,7 @@ global.AIRemoteStrategy = {
 			predictedEconomics: this.predictEconomics(_.get(intel, "sourceCount", 0), distance),
 			confidence: _.get(intel, "stale", false) ? 0.35 : (distance == null ? 0.55 : 0.8),
 			accessibility: accessibility,
-			availabilitySet: _.includes(["REACHABLE_AFTER_PROTECTION", "BLOCKED_BY_NOVICE_BOUNDARY"], accessibility)
+			availabilitySet: _.includes(["REACHABLE_AFTER_PROTECTION", "BLOCKED_BY_PROTECTED_BOUNDARY"], accessibility)
 				? "POST_PROTECTION" : (accessibility === "REACHABLE_NOW" ? "CURRENTLY_REACHABLE" : "UNAVAILABLE")
 		};
 	},
@@ -228,7 +261,7 @@ global.AIRemoteStrategy = {
 		if (owner !== "NEUTRAL" && owner !== "SELF") disqualifiers.push("foreign_owned");
 		if (_.includes(context.excludedRooms || [], intel.room)) disqualifiers.push("human_policy_exclusion");
 		let accessibility = _.get(intel, ["protection", "accessibility"], "UNKNOWN");
-		if (_.includes(["REACHABLE_AFTER_PROTECTION", "BLOCKED_BY_NOVICE_BOUNDARY"], accessibility))
+		if (_.includes(["REACHABLE_AFTER_PROTECTION", "BLOCKED_BY_PROTECTED_BOUNDARY"], accessibility))
 			disqualifiers.push("post_protection_only");
 		if (accessibility === "CLOSED") disqualifiers.push("room_closed");
 		if (_.has(intel, "protection") && accessibility === "UNKNOWN") disqualifiers.push("protection_accessibility_unknown");
@@ -253,7 +286,7 @@ global.AIRemoteStrategy = {
 			disqualifiers: disqualifiers, layout: _.get(layouts, "best", null),
 			currentOperationalRole: _.get(context, "currentOperationalRole", "NEUTRAL_SCOUTED"),
 			accessibility: accessibility,
-			availabilitySet: _.includes(["REACHABLE_AFTER_PROTECTION", "BLOCKED_BY_NOVICE_BOUNDARY"], accessibility)
+			availabilitySet: _.includes(["REACHABLE_AFTER_PROTECTION", "BLOCKED_BY_PROTECTED_BOUNDARY"], accessibility)
 				? "POST_PROTECTION" : (accessibility === "REACHABLE_NOW" ? "CURRENTLY_REACHABLE" : "UNAVAILABLE")
 		};
 	},
