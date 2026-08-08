@@ -809,7 +809,10 @@
 					creep.memory.global = _.cloneDeep(request.global);
 			});
 
-			let pendingSpawn = _.some(globalSpawnQueue, req => _.get(req, ["args", "scout_request_id"]) == request.id);
+			let pendingSpawn = _.some(globalSpawnQueue, req => _.get(req, ["args", "scout_request_id"]) == request.id)
+				|| _.some(_.get(Memory, ["shard", "spawn_requests"], []), req => {
+					return _.get(req, ["args", "scout_request_id"]) == request.id;
+				});
 			let desiredActive = request.count;
 			let canSpawnMore = request.respawn || request.spawned_total < request.count;
 

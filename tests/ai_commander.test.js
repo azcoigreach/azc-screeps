@@ -272,6 +272,12 @@ test("SCOUT_ROOM queues one one-shot mission through the existing scout framewor
 	assert.strictEqual(Memory.hive.spawn_requests.length, 1);
 	assert.strictEqual(Memory.hive.spawn_requests[0].args.scout_request_id, "ai-scout:scout-queue-1");
 	assert.strictEqual(requests[0].status, "SPAWNING");
+	Memory.shard = { spawn_requests: Memory.hive.spawn_requests.slice() };
+	Memory.hive.spawn_requests = [];
+	Game.time++;
+	Control.runScoutRequests("W1N1");
+	assert.strictEqual(requests[0]._completed, undefined);
+	assert.strictEqual(requests[0].status, "SPAWNING");
 
 	RawMemory.segments[91] = "";
 	putInbox(order("scout-queue-2", "SCOUT_ROOM", { parameters: { room: "W1N2", origin: "W1N1" } }));
