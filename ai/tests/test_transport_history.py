@@ -55,6 +55,29 @@ class TransportHistoryTests(unittest.TestCase):
         with self.assertRaises(TelemetryError):
             ObservationProcessor(self.history).process('{"schemaVersion":1}')
 
+    def test_material_hash_serializes_active_scout_lifecycle(self) -> None:
+        payload = telemetry_payload()
+        payload["operations"]["scouting"] = [{
+            "id": "ai-scout:cmd-1",
+            "orderId": "cmd-1",
+            "origin": "W1N1",
+            "room": "W0N1",
+            "status": "SPAWNING",
+            "createdTick": 12345,
+            "requestedTick": 12345,
+            "observedTick": None,
+            "completedTick": None,
+            "intelLastSeenTick": None,
+            "scoutCreep": None,
+            "activeScouts": 0,
+            "failureReason": None,
+        }]
+
+        update = ObservationProcessor(self.history).process(json.dumps(payload))
+
+        self.assertTrue(update.material_change)
+        self.assertEqual(update.telemetry.operations.scouting[0].status, "SPAWNING")
+
     def test_unique_command_serialization_and_acknowledgement(self) -> None:
         fake = FakeScreepsClient(
             json.dumps(telemetry_payload()), json.dumps(status_payload())

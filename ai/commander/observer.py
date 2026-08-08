@@ -83,7 +83,7 @@ class ObservationProcessor:
             },
             "colonies": colonies,
             "remotes": remotes,
-            "scouting": telemetry.operations.scouting,
+            "scouting": [mission.model_dump() for mission in telemetry.operations.scouting],
             "knownIntel": {
                 room.room: {
                     "sources": room.sourceCount,
