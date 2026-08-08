@@ -185,6 +185,7 @@ class ReservationState(StrictModel):
     reserverPresent: int
     reserverSpawning: int
     reserverQueued: int
+    continuity: dict[str, Any] | None = None
 
 
 class RemoteMiningState(StrictModel):
@@ -241,6 +242,7 @@ class RemoteMiningOperation(StrictModel):
     sourceCount: int | None
     route: RouteState
     reservation: ReservationState
+    continuity: dict[str, Any] = Field(default_factory=dict)
     population: PopulationState
     mining: RemoteMiningState
     delivery: RemoteDeliveryState
@@ -250,6 +252,14 @@ class RemoteMiningOperation(StrictModel):
     reasons: list[str]
     diagnostics: list[RemoteDiagnostic]
     objectives: list[str]
+    stopLoss: "StopLossState" = Field(default_factory=lambda: StopLossState())
+
+
+class StopLossState(StrictModel):
+    state: Literal["ACTIVE", "WATCH", "PROBATION", "PAUSE_RECOMMENDED", "ABANDON_RECOMMENDED"] = "ACTIVE"
+    badWindows: int = 0
+    evidence: list[str] = Field(default_factory=list)
+    evaluatedTick: int = 0
 
 
 class CombatOperation(StrictModel):
@@ -275,11 +285,29 @@ class ScoutingOperation(StrictModel):
     failureReason: str | None
 
 
+class RemoteEstablishment(StrictModel):
+    orderId: str
+    origin: str
+    target: str
+    state: Literal[
+        "PROPOSED", "AUTHORIZED", "CONFIGURING", "RESERVING", "BOOTSTRAPPING",
+        "ACTIVE", "EVALUATING", "HEALTHY", "DEGRADED", "FAILED"
+    ]
+    createdTick: int
+    updatedTick: int
+    prediction: dict[str, Any]
+    candidateScore: int
+    firstDeliveryTotal: int
+    actualDelivered: int = 0
+    failureReason: str | None
+
+
 class OperationsState(StrictModel):
     colonizations: list[ColonizationOperation]
     remoteMining: list[RemoteMiningOperation]
     combat: list[CombatOperation]
     scouting: list[ScoutingOperation]
+    remoteEstablishments: list[RemoteEstablishment] = Field(default_factory=list)
 
 
 class IntelController(StrictModel):
@@ -307,18 +335,23 @@ class RoomIntel(StrictModel):
     lastSeenTick: int
     classification: Literal["normal", "highway", "source_keeper", "sector_center", "unknown"]
     sourceCount: int
+    sourcePositions: list[dict[str, int]] = Field(default_factory=list)
     mineralType: str | None
+    mineralPosition: dict[str, int] | None = None
     terrainSwampPercent: float | None
+    layoutAnalysis: dict[str, Any] | None = None
     controller: IntelController
     structures: IntelStructures
     hostileCreeps: int
     hostilePlayers: list[str]
+    hostileCombat: list[dict[str, Any]] = Field(default_factory=list)
     playerRelations: list[dict[str, str]]
     lastHostileSightingTick: int | None
     hostileSightingsTotal: int
     nearestColony: str | None
     distanceFromColony: int | None
     routeLength: int | None
+    routeRooms: list[str] = Field(default_factory=list)
     routeStatus: Literal["available", "no_path", "unknown", "unavailable"]
     intelAgeTicks: int
     stale: bool
@@ -340,19 +373,72 @@ class IntelligenceState(StrictModel):
     hostileEvents: list[HostileEvent]
 
 
-class ExpansionCandidate(StrictModel):
+class ClaimCandidate(StrictModel):
     room: str
     score: int
     factors: dict[str, int]
     intelAgeTicks: int
     disqualified: bool
     disqualifiers: list[str]
+    eligible: bool = False
+    origin: str | None = None
+    layout: dict[str, Any] | None = None
     currentOperationalRole: Literal[
         "OUR_COLONY", "OUR_REMOTE", "NEUTRAL_SCOUTED", "NEUTRAL_UNKNOWN",
         "SELF_RESERVED", "ALLY_RESERVED", "FOREIGN_RESERVED", "HOSTILE_OWNED",
         "ALLY_OWNED", "SOURCE_KEEPER", "HIGHWAY", "OTHER"
     ]
     claimCandidateStatus: Literal["ELIGIBLE", "NEEDS_FRESH_INTEL", "DISQUALIFIED"]
+
+
+class ProvenanceValue(StrictModel):
+    value: int | float | None
+    provenance: Literal["MEASURED", "DERIVED", "ESTIMATED", "UNKNOWN"]
+
+
+class PredictedRemoteEconomics(StrictModel):
+    grossEnergyPer1000: ProvenanceValue
+    minerCostPer1000: ProvenanceValue
+    haulerCostPer1000: ProvenanceValue
+    reservationCostPer1000: ProvenanceValue
+    estimatedNetValuePer1000: ProvenanceValue
+    quality: Literal["EXCELLENT", "GOOD", "MARGINAL", "POOR", "LOSING", "UNKNOWN"]
+
+
+class RemoteCandidate(StrictModel):
+    room: str
+    origin: str | None
+    score: int
+    factors: dict[str, int]
+    eligible: bool
+    disqualifiers: list[str]
+    predictedEconomics: PredictedRemoteEconomics
+    confidence: float
+
+
+class ExpansionReadiness(StrictModel):
+    status: Literal[
+        "READY", "NOT_READY", "INSUFFICIENT_INTEL", "BLOCKED_BY_GCL",
+        "BLOCKED_BY_ECONOMY", "BLOCKED_BY_THREAT", "BLOCKED_BY_HOME_POPULATION"
+    ]
+    reasons: list[str]
+    recommendedRoom: str | None
+    origin: str | None
+    claimSlots: int
+    spawnCapacity: Literal["ADEQUATE", "CONSTRAINED"]
+
+
+class PlayerHistory(StrictModel):
+    username: str
+    firstSeenTick: int
+    lastSeenTick: int
+    ownedRooms: list[str]
+    reservations: list[str]
+    hostileActionsObserved: int
+    ourCreepsKilled: int
+    theirCreepsKilled: int
+    territorialProximity: int | None
+    currentRelationship: Literal["SELF", "ALLY", "NEUTRAL", "HOSTILE", "UNKNOWN"]
 
 
 class ExecutionAuthority(StrictModel):
@@ -362,6 +448,11 @@ class ExecutionAuthority(StrictModel):
     remoteMaintenance: bool
     autoRemoteMaintenance: bool
     remoteMiningChanges: bool
+    newRemotes: bool = False
+    autoNewRemotes: bool = False
+    colonization: bool = False
+    autoColonization: bool = False
+    remoteAbandonment: bool = False
     market: bool
     production: bool
     offensiveCombat: bool
@@ -371,7 +462,8 @@ class AuthorityState(StrictModel):
     mode: Literal["observe", "execute"]
     allowedActions: list[Literal[
         "NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SET_OPERATIONAL_AUTHORITY", "SET_EXECUTION_MODE", "SCOUT_ROOM", "REASSESS_REMOTE",
-        "ENSURE_REMOTE_RESERVATION", "ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS"
+        "ENSURE_REMOTE_RESERVATION", "ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS",
+        "START_REMOTE_MINING", "COLONIZE_ROOM"
     ]]
     execution: ExecutionAuthority
     matrix: dict[str, dict[str, bool]]
@@ -391,7 +483,14 @@ class Telemetry(StrictModel):
     colonies: dict[str, ColonyState]
     operations: OperationsState
     intelligence: IntelligenceState
-    expansionCandidates: list[ExpansionCandidate]
+    expansionCandidates: list[ClaimCandidate]
+    remoteCandidates: list[RemoteCandidate] = Field(default_factory=list)
+    claimCandidates: list[ClaimCandidate] = Field(default_factory=list)
+    expansionReadiness: ExpansionReadiness = Field(default_factory=lambda: ExpansionReadiness(
+        status="INSUFFICIENT_INTEL", reasons=["NO_PHASE5_DATA"], recommendedRoom=None,
+        origin=None, claimSlots=0, spawnCapacity="CONSTRAINED"
+    ))
+    playerHistory: list[PlayerHistory] = Field(default_factory=list)
     authority: AuthorityState
     alerts: list[str]
     observer: ObserverMetrics
@@ -457,7 +556,8 @@ class StrategicOrder(StrictModel):
     expiresTick: int
     action: Literal[
         "NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SET_OPERATIONAL_AUTHORITY", "SET_EXECUTION_MODE", "SCOUT_ROOM", "REASSESS_REMOTE",
-        "ENSURE_REMOTE_RESERVATION", "ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS"
+        "ENSURE_REMOTE_RESERVATION", "ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS",
+        "START_REMOTE_MINING", "COLONIZE_ROOM"
     ]
     parameters: dict[str, Any]
     reason: str
@@ -534,10 +634,13 @@ class Advisory(StrictModel):
     questions: list[str] = Field(max_length=16)
     expansion_readiness: Literal[
         "READY", "NOT_READY", "INSUFFICIENT_INTEL", "BLOCKED_BY_GCL",
-        "BLOCKED_BY_ECONOMY", "BLOCKED_BY_THREAT"
+        "BLOCKED_BY_ECONOMY", "BLOCKED_BY_THREAT", "BLOCKED_BY_HOME_POPULATION"
     ]
     expansion_execution_allowed: bool
-    execution_authorization: Literal["ADVISOR_ONLY", "SCOUTING_ONLY", "EXISTING_REMOTE_MAINTENANCE"]
+    execution_authorization: Literal[
+        "ADVISOR_ONLY", "SCOUTING_ONLY", "EXISTING_REMOTE_MAINTENANCE",
+        "NEW_REMOTE_ESTABLISHMENT", "COLONIZATION_ANALYSIS"
+    ]
     recommended_scouting: list[ScoutRecommendation] = Field(max_length=8)
     recommended_review_ticks: int = Field(ge=50, le=20000)
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)

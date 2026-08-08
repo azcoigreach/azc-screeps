@@ -113,12 +113,16 @@ class CommanderTransport:
             if set(params) != {"explanation"} or not isinstance(explanation, str) or not 1 <= len(explanation) <= 2000:
                 raise TransportError("SET_EXPLANATION requires a 1-2000 character explanation")
         if action == "SET_OPERATIONAL_AUTHORITY":
-            if set(params) != {"scouting", "remoteMaintenance"}:
-                raise TransportError("SET_OPERATIONAL_AUTHORITY requires scouting and remoteMaintenance")
+            allowed = {"scouting", "remoteMaintenance", "newRemotes", "colonization"}
+            if not {"scouting", "remoteMaintenance"}.issubset(params) or not set(params).issubset(allowed):
+                raise TransportError("SET_OPERATIONAL_AUTHORITY requires scouting and remoteMaintenance with optional newRemotes and colonization")
             if params["scouting"] not in {"OFF", "MANUAL", "AUTO"}:
                 raise TransportError("scouting authority must be OFF, MANUAL, or AUTO")
             if params["remoteMaintenance"] not in {"OFF", "MANUAL", "AUTO"}:
                 raise TransportError("remoteMaintenance authority must be OFF, MANUAL, or AUTO")
+            for field in ("newRemotes", "colonization"):
+                if field in params and params[field] not in {"OFF", "MANUAL", "AUTO"}:
+                    raise TransportError(f"{field} authority must be OFF, MANUAL, or AUTO")
         if action == "SET_EXECUTION_MODE":
             if set(params) != {"mode"} or params["mode"] not in {"observe", "execute"}:
                 raise TransportError("SET_EXECUTION_MODE requires mode observe or execute")
@@ -134,6 +138,12 @@ class CommanderTransport:
             room = params.get("room")
             if set(params) != {"room"} or not self._room_name(room):
                 raise TransportError(f"{action} requires one valid remote room name")
+        if action == "START_REMOTE_MINING":
+            if set(params) != {"origin", "target"} or not self._room_name(params.get("origin")) or not self._room_name(params.get("target")):
+                raise TransportError("START_REMOTE_MINING requires valid origin and target room names")
+        if action == "COLONIZE_ROOM":
+            if set(params) != {"origin", "target", "layout"} or not self._room_name(params.get("origin")) or not self._room_name(params.get("target")) or not isinstance(params.get("layout"), dict):
+                raise TransportError("COLONIZE_ROOM requires valid origin, target, and layout")
         identifier = f"py-{self.config.screeps_shard}-{tick}-{uuid.uuid4().hex[:10]}"
         order = StrategicOrder(
             schemaVersion=SCHEMA_VERSION,

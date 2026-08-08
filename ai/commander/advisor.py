@@ -23,16 +23,19 @@ Your doctrine is aggressive, expansionist, and evidence-driven: pursue growth
 when economic, logistical, intelligence, and security evidence supports it;
 avoid both pacifist paralysis and reckless attacks.
 
-This phase permits only bounded scouting and maintenance objectives for EXISTING
-remote mines. You may propose actions through recommended_actions and may copy
-only currently authorized proposals into executable_actions. SCOUT_ROOM requires
+This phase permits bounded scouting, maintenance objectives for EXISTING remote
+mines, and one-at-a-time guarded START_REMOTE_MINING when separately authorized.
+COLONIZE_ROOM is engineered for analysis but automatic permanent claiming remains
+disabled. You may propose actions through recommended_actions and may copy only
+currently authorized proposals into executable_actions. SCOUT_ROOM requires
 execute mode, allowScouting, and automatic dispatch additionally requires
 autoScouting. REASSESS_REMOTE, ENSURE_REMOTE_RESERVATION,
 ENSURE_REMOTE_INFRASTRUCTURE, and REBALANCE_REMOTE_LOGISTICS require execute mode
 and allowRemoteMaintenance; automatic dispatch additionally requires
-autoRemoteMaintenance. The deterministic validator is authoritative. Starting or
-stopping remotes, expansion, markets, production, claiming, arbitrary Memory,
-and offensive combat remain forbidden.
+autoRemoteMaintenance. START_REMOTE_MINING requires execute mode, autoNewRemotes,
+and an eligible remoteCandidates entry with the exact target and origin. The
+deterministic validator is authoritative. Stopping remotes, markets, production,
+automatic claiming, arbitrary Memory, and offensive combat remain forbidden.
 
 Choose at most one executable action per review. When mode is execute,
 autoScouting is true, and unknownRooms or staleRooms is non-empty, place exactly
@@ -41,9 +44,11 @@ immediate hostile threat makes scouting unsafe. Do this even when disabled remot
 maintenance needs are strategically more urgent: describe those needs, but do not
 substitute an unauthorized remote action for the available scout. When automatic
 remote maintenance is enabled instead, place exactly one diagnostic-matched
-existing-remote action in executable_actions. Use a 50-200 tick evaluation window
-for the initial live outcome review; longer deterministic objectives may remain
-in effect after that first measurement.
+existing-remote action in executable_actions. When new-remote autonomy is enabled
+and no establishment is active, select exactly one eligible remote candidate by
+its exposed component scores, predicted economics, and strategic context. Use a
+5,000-tick evaluation window for START_REMOTE_MINING and a 50-200 tick evaluation
+window for routine maintenance; longer deterministic objectives may remain active.
 
 Executable remote actions must match at least one current deterministic reason:
 - REASSESS_REMOTE: STALE_INTEL or ROUTE_FAILURE only
@@ -70,7 +75,8 @@ Remote health and diagnostic reasons are deterministic inputs, not LLM scores.
 
 Keep these concepts separate:
 - strategic expansion readiness: whether the empire should be preparing or ready
-- expansion execution permission: always false in this phase
+- new-remote execution permission: separately controlled by autoNewRemotes
+- permanent colonization execution permission: disabled for automatic dispatch
 - current Screeps state and cumulative counters
 - historical trends calculated by Python from SQLite
 - your interpretation and uncertainty
@@ -97,8 +103,10 @@ an exact Screeps room name such as W38N10 or W37N11; put all explanation in reas
 
 Set execution_authorization to SCOUTING_ONLY only when currentState.authority.mode
 is execute and only scouting is authorized. Set it to
-EXISTING_REMOTE_MAINTENANCE when existing-remote maintenance is authorized.
-Otherwise set it to ADVISOR_ONLY. Automatic flags control dispatch, not whether a
+EXISTING_REMOTE_MAINTENANCE when existing-remote maintenance is authorized. Set it
+to NEW_REMOTE_ESTABLISHMENT when new-remote automatic authority is active. Use
+COLONIZATION_ANALYSIS for readiness analysis without claim execution. Otherwise
+set it to ADVISOR_ONLY. Automatic flags control dispatch, not whether a
 human may send an otherwise allowed action.
 
 Write rich, readable operator prose. Explain colony health, population demand,
@@ -150,7 +158,8 @@ class AdvisorService:
                 "currentStateSource": "Screeps Memory Segment 90",
                 "historicalTrendSource": "Python calculations over SQLite observations",
                 "aiOutputType": "interpretation and recommendation",
-                "expansionExecutionAllowed": False,
+                "newRemoteExecutionAllowed": telemetry.authority.execution.autoNewRemotes,
+                "colonizationExecutionAllowed": False,
             },
         }
         result = self.client.request_advisory(
@@ -180,6 +189,8 @@ class AdvisorService:
                 parameters = {"room": proposal.target}
                 if proposal.action == "SCOUT_ROOM":
                     parameters["origin"] = proposal.origin
+                elif proposal.action == "START_REMOTE_MINING":
+                    parameters = {"target": proposal.target, "origin": proposal.origin}
                 try:
                     order = self.transport.send_safe_command(
                         proposal.action,
@@ -197,6 +208,16 @@ class AdvisorService:
                                 proposal.expectedOutcome,
                                 telemetry.tick + proposal.evaluationWindowTicks,
                             )
+                    elif proposal.action == "START_REMOTE_MINING":
+                        candidate = next(item for item in telemetry.remoteCandidates if item.room == proposal.target)
+                        self.history.create_operation(
+                            f"op-{order.id}", order.id, "; ".join(proposal.evidence),
+                            proposal.target, proposal.action, proposal.reason,
+                            proposal.confidence, telemetry.tick,
+                            {"candidate": candidate.model_dump(), "deliveryTotal": 0, "tick": telemetry.tick},
+                            proposal.expectedOutcome,
+                            telemetry.tick + proposal.evaluationWindowTicks,
+                        )
                 except TransportError as exc:
                     self.history.record_event(
                         "automatic_action_deferred", str(exc),
@@ -233,6 +254,25 @@ class AdvisorService:
                     and telemetry.authority.execution.autoScouting
                     and proposal.target in unknown
                     and proposal.origin in owned
+                ):
+                    return proposal
+                continue
+            if proposal.action == "START_REMOTE_MINING":
+                candidate = next(
+                    (item for item in telemetry.remoteCandidates if item.room == proposal.target),
+                    None,
+                )
+                active = [
+                    item for item in telemetry.operations.remoteEstablishments
+                    if item.state not in {"HEALTHY", "DEGRADED", "FAILED"}
+                ]
+                if (
+                    telemetry.authority.execution.newRemotes
+                    and telemetry.authority.execution.autoNewRemotes
+                    and candidate is not None
+                    and candidate.eligible
+                    and proposal.origin == candidate.origin
+                    and not active
                 ):
                     return proposal
                 continue

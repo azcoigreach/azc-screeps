@@ -118,9 +118,25 @@ class TransportHistoryTests(unittest.TestCase):
         transport = CommanderTransport(fake, self.history, self.config)
         transport.poll()
         with self.assertRaises(TransportError):
-            transport.send_safe_command("COLONIZE_ROOM", reason="forbidden")
+            transport.send_safe_command("ATTACK_ROOM", reason="forbidden")
         with self.assertRaises(TransportError):
             transport.send_safe_command("SET_EXPLANATION", {"explanation": ""}, reason="invalid")
+
+    def test_new_remote_and_colonization_commands_have_narrow_parameters(self) -> None:
+        fake = FakeScreepsClient(json.dumps(telemetry_payload()), json.dumps(status_payload()))
+        transport = CommanderTransport(fake, self.history, self.config)
+        transport.poll()
+        command = transport.send_safe_command(
+            "START_REMOTE_MINING", {"origin": "W1N1", "target": "W1N2"}, reason="eligible candidate"
+        )
+        self.assertEqual(command.action, "START_REMOTE_MINING")
+        self.history.update_command(command.id, "completed")
+        colonize = transport.send_safe_command(
+            "COLONIZE_ROOM",
+            {"origin": "W1N1", "target": "W1N2", "layout": {"name": "def_hor", "origin": {"x": 20, "y": 20}}},
+            reason="human validated claim",
+        )
+        self.assertEqual(colonize.parameters["layout"]["name"], "def_hor")
 
     def test_scouting_command_serialization_and_validation(self) -> None:
         fake = FakeScreepsClient(json.dumps(telemetry_payload()), json.dumps(status_payload()))

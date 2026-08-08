@@ -23,11 +23,18 @@ class RemoteOperationTests(unittest.TestCase):
             current = Telemetry.model_validate(payload)
             history.save_observation(current, "current", "material-2")
 
-            window = RemoteEconomics(history).build(current)["W1N2"]["windows"]["1000"]
+            result = RemoteEconomics(history).build(current)
+            window = result["W1N2"]["windows"]["1000"]
             self.assertEqual(window["grossEnergyDelivered"], {"value": 18400, "provenance": "MEASURED"})
             self.assertEqual(window["grossDeliveryPer1000Ticks"]["value"], 18400.0)
             self.assertEqual(window["replacementEnergyCost"]["provenance"], "ESTIMATED")
-            self.assertEqual(window["reservationCost"]["provenance"], "UNKNOWN")
+            self.assertEqual(window["reservationCost"]["provenance"], "ESTIMATED")
+            self.assertEqual(window["minerReplacementCost"]["provenance"], "ESTIMATED")
+            self.assertEqual(window["haulerReplacementCost"]["provenance"], "ESTIMATED")
+            self.assertEqual(window["estimatedNetPer1000Ticks"]["provenance"], "ESTIMATED")
+            self.assertIn(result["W1N2"]["value"]["quality"], {
+                "EXCELLENT", "GOOD", "MARGINAL", "POOR", "LOSING", "UNKNOWN"
+            })
             self.assertEqual(window["operationalUptimePercent"]["provenance"], "DERIVED")
             history.close()
 

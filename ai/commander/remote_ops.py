@@ -24,26 +24,37 @@ class RemoteEconomics:
         self.history = history
 
     def build(self, telemetry: Telemetry) -> dict[str, Any]:
-        return {
-            remote.room: {
+        result: dict[str, Any] = {}
+        for remote in telemetry.operations.remoteMining:
+            windows = {
+                str(window): self._window(telemetry, remote, window)
+                for window in self.WINDOWS
+            }
+            windows["lifetime"] = self._window(telemetry, remote, None)
+            basis = next(
+                (windows[key] for key in ("5000", "20000", "1000", "lifetime") if windows[key].get("available")),
+                None,
+            )
+            result[remote.room] = {
                 "health": remote.health,
                 "diagnostics": [item.model_dump() for item in remote.diagnostics],
-                "windows": {
-                    str(window): self._window(telemetry, remote, window)
-                    for window in self.WINDOWS
-                },
+                "windows": windows,
+                "value": self._value_model(remote, basis),
+                "stopLoss": remote.stopLoss.model_dump(),
             }
-            for remote in telemetry.operations.remoteMining
-        }
+        return result
 
     def _window(
-        self, telemetry: Telemetry, remote: RemoteMiningOperation, window: int
+        self, telemetry: Telemetry, remote: RemoteMiningOperation, window: int | None
     ) -> dict[str, Any]:
-        baseline_row = self.history.observation_at_or_before(telemetry.tick - window)
+        baseline_row = (
+            self.history.observation_at_or_before(telemetry.tick - window)
+            if window is not None else None
+        )
         partial = False
         if baseline_row is None or baseline_row["telemetry"].get("schemaVersion") != 3:
             rows = [
-                row for row in self.history.observations_since(telemetry.tick - window)
+                row for row in self.history.observations_since(0 if window is None else telemetry.tick - window)
                 if row["telemetry"].get("schemaVersion") == 3
             ]
             baseline_row = rows[0] if rows else None
@@ -90,6 +101,10 @@ class RemoteEconomics:
                 efficiency = "FAIR"
             else:
                 efficiency = "POOR"
+        role_costs = self._role_costs(remote, span)
+        loss_cost = losses * 800
+        total_cost = sum(item["value"] for item in role_costs.values()) + loss_cost
+        net = delivered - total_cost
         return {
             "available": True,
             "spanTicks": span,
@@ -101,15 +116,25 @@ class RemoteEconomics:
             "averageBacklog": {"value": average_backlog, "provenance": "DERIVED"},
             "creepLosses": {"value": losses, "provenance": "MEASURED"},
             "replacementEnergyCost": {
-                "value": losses * 800 if losses else 0,
+                "value": loss_cost,
                 "provenance": "ESTIMATED",
                 "assumption": "800 energy per lost remote creep; live body costs are not retained",
             },
             "spawnTimeCost": {"value": None, "provenance": "UNKNOWN"},
-            "reservationCost": {
-                "value": None,
-                "provenance": "UNKNOWN",
-                "reason": "Reserver body and lifetime costs are not retained historically",
+            "minerReplacementCost": role_costs["miner"],
+            "haulerReplacementCost": role_costs["hauler"],
+            "reservationCost": role_costs["reserver"],
+            "defenderCost": {"value": None, "provenance": "UNKNOWN"},
+            "infrastructureReplacementCost": {"value": None, "provenance": "UNKNOWN"},
+            "estimatedNetEnergy": {"value": net, "provenance": "ESTIMATED"},
+            "estimatedNetPer1000Ticks": {
+                "value": round(net * 1000 / span, 2) if span else None,
+                "provenance": "ESTIMATED",
+            },
+            "routeLengthRooms": {"value": remote.route.length, "provenance": "MEASURED" if remote.route.length is not None else "UNKNOWN"},
+            "spawnCapacityConsumedTicks": {
+                "value": round(sum(item["spawnTicks"] for item in role_costs.values()) * span / 1500, 2),
+                "provenance": "ESTIMATED",
             },
             "hostileInterruptions": {"value": interruptions, "provenance": "MEASURED"},
             "operationalUptimePercent": {
@@ -118,6 +143,66 @@ class RemoteEconomics:
                 "provenance": "DERIVED",
             },
             "measuredDeliveryEfficiency": efficiency,
+        }
+
+    @staticmethod
+    def _role_costs(remote: RemoteMiningOperation, span: int) -> dict[str, dict[str, Any]]:
+        roles = remote.population.roles
+        miners = sum(roles.get(role).desired for role in ("burrower", "miner") if role in roles)
+        haulers = roles.get("carrier").desired if "carrier" in roles else 0
+        reservers = roles.get("reserver").desired if "reserver" in roles else 0
+        # Current AZC body energy is not retained historically. These assumptions
+        # remain explicit and are never upgraded to measured provenance.
+        assumptions = {
+            "miner": (miners, 800, 30),
+            "hauler": (haulers, 650, 24),
+            "reserver": (reservers, 1300, 36),
+        }
+        return {
+            role: {
+                "value": round(count * cost * span / 1500),
+                "provenance": "ESTIMATED",
+                "spawnTicks": count * spawn_ticks,
+                "assumption": f"{count} active slots, {cost} energy/body, 1500-tick nominal life",
+            }
+            for role, (count, cost, spawn_ticks) in assumptions.items()
+        }
+
+    @staticmethod
+    def _value_model(remote: RemoteMiningOperation, window: dict[str, Any] | None) -> dict[str, Any]:
+        if not window:
+            return {"quality": "UNKNOWN", "confidence": 0.0, "components": {}, "evidence": ["no historical baseline"]}
+        net = window["estimatedNetPer1000Ticks"]["value"]
+        gross = window["grossDeliveryPer1000Ticks"]["value"]
+        confidence = min(0.95, 0.35 + min(0.4, window["spanTicks"] / 20000) + min(0.2, window["sampleCount"] / 20))
+        if net is None:
+            quality = "UNKNOWN"
+        elif net >= 7000:
+            quality = "EXCELLENT"
+        elif net >= 3000:
+            quality = "GOOD"
+        elif net >= 500:
+            quality = "MARGINAL"
+        elif net >= 0:
+            quality = "POOR"
+        else:
+            quality = "LOSING"
+        return {
+            "quality": quality,
+            "confidence": round(confidence, 2),
+            "components": {
+                "grossEnergyPer1000": gross,
+                "estimatedNetValuePer1000": net,
+                "minerCost": window["minerReplacementCost"],
+                "haulerCost": window["haulerReplacementCost"],
+                "reservationCost": window["reservationCost"],
+                "lossCost": window["replacementEnergyCost"],
+                "routeLengthRooms": remote.route.length,
+            },
+            "evidence": [
+                f"{window['spanTicks']} ticks across {window['sampleCount']} samples",
+                "delivery is measured; lifecycle costs are explicit estimates",
+            ],
         }
 
     @staticmethod
@@ -157,6 +242,25 @@ def remote_snapshot(telemetry: Telemetry, room: str) -> dict[str, Any] | None:
 def evaluate_operation(operation: dict[str, Any], telemetry: Telemetry) -> tuple[str, dict[str, Any], str]:
     """Return outcome, result metrics, and a deterministic explanation."""
     current = remote_snapshot(telemetry, operation["room"])
+    if operation["action"] == "START_REMOTE_MINING":
+        establishment = next(
+            (item for item in telemetry.operations.remoteEstablishments if item.target == operation["room"]),
+            None,
+        )
+        if current is None or establishment is None:
+            return "FAILED", {}, "The new remote never appeared in configured operational telemetry."
+        result = current | {
+            "establishmentState": establishment.state,
+            "actualDelivered": establishment.actualDelivered,
+            "prediction": establishment.prediction,
+        }
+        if establishment.state == "FAILED":
+            return "FAILED", result, establishment.failureReason or "Deterministic establishment failed."
+        if establishment.actualDelivered > 0 and current["reservationRelation"] in {"SELF", "NEUTRAL"}:
+            return "SUCCESS", result, "The configured remote bootstrapped and delivered measurable energy."
+        if establishment.state in {"BOOTSTRAPPING", "ACTIVE"}:
+            return "PARTIAL_SUCCESS", result, "The remote is operationally bootstrapping, but the evaluation window has limited delivery evidence."
+        return "INCONCLUSIVE", result, "The remote is configured but has not produced enough startup evidence yet."
     if current is None:
         return "INCONCLUSIVE", {}, "The configured remote is absent from current telemetry."
     baseline = operation["baseline"]

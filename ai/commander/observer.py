@@ -84,6 +84,7 @@ class ObservationProcessor:
             "colonies": colonies,
             "remotes": remotes,
             "scouting": [mission.model_dump() for mission in telemetry.operations.scouting],
+            "remoteEstablishments": [item.model_dump() for item in telemetry.operations.remoteEstablishments],
             "knownIntel": {
                 room.room: {
                     "sources": room.sourceCount,
@@ -95,6 +96,8 @@ class ObservationProcessor:
             },
             "unknownRooms": telemetry.intelligence.unknownRooms,
             "candidateScores": {candidate.room: candidate.score for candidate in telemetry.expansionCandidates},
+            "remoteCandidateScores": {candidate.room: candidate.score for candidate in telemetry.remoteCandidates},
+            "expansionReadiness": telemetry.expansionReadiness.model_dump(),
             "alerts": telemetry.alerts,
             "cpuBucketBand": telemetry.cpu.bucket // 1000,
         }

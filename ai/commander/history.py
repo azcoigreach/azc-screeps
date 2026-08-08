@@ -406,13 +406,29 @@ class HistoryStore:
                 evaluation_tick, now, now,
             ),
         )
+        if action == "START_REMOTE_MINING":
+            title = f"New remote selected: {room}"
+            narrative = (
+                f"After comparing fresh territorial intelligence, the commander selected {room}. "
+                f"Evidence: {trigger}. It authorized START_REMOTE_MINING through AZC's deterministic "
+                f"remote-mining controller. Predicted evidence and economics: {baseline.get('candidate', baseline)}. "
+                f"Expected outcome: {expected_outcome} The first operating evaluation is scheduled at or after "
+                f"tick {evaluation_tick}."
+            )
+            entry_type = "remote_establishment"
+        else:
+            title = f"Commander intervened in {room}"
+            narrative = (
+                f"The commander identified {trigger}. It authorized {action} for the existing remote "
+                f"{room} through AZC's deterministic controller. Expected outcome: {expected_outcome} "
+                f"The operation will be evaluated at or after tick {evaluation_tick}."
+            )
+            entry_type = "commander_action"
         self.append_journal(
             created_tick,
-            "commander_action",
-            f"Commander intervened in {room}",
-            f"The commander identified {trigger}. It authorized {action} for the existing remote "
-            f"{room} through AZC's deterministic controller. Expected outcome: {expected_outcome} "
-            f"The operation will be evaluated at or after tick {evaluation_tick}.",
+            entry_type,
+            title,
+            narrative,
             {"operationId": operation_id, "action": action, "baseline": baseline},
             dedupe_key=f"operation:{operation_id}:started",
         )
@@ -477,12 +493,23 @@ class HistoryStore:
             "SELECT room, action FROM operations WHERE operation_id = ?", (operation_id,)
         ).fetchone()
         if operation:
+            if operation["action"] == "START_REMOTE_MINING":
+                title = f"{operation['room']} remote establishment evaluated: {outcome}"
+                narrative = (
+                    f"The deterministic establishment evaluation for {operation['room']} produced {outcome}. "
+                    f"{reason} The result remains linked to the original prediction for predicted-versus-actual review."
+                )
+            else:
+                title = f"{operation['room']} intervention evaluated: {outcome}"
+                narrative = (
+                    f"The deterministic evaluation of {operation['action']} in {operation['room']} "
+                    f"produced {outcome}. {reason}"
+                )
             self.append_journal(
                 tick,
                 "commander_evaluation",
-                f"{operation['room']} intervention evaluated: {outcome}",
-                f"The deterministic evaluation of {operation['action']} in {operation['room']} "
-                f"produced {outcome}. {reason}",
+                title,
+                narrative,
                 {"operationId": operation_id, "outcome": outcome, "result": result},
                 dedupe_key=f"operation:{operation_id}:evaluated",
             )
@@ -561,6 +588,42 @@ class HistoryStore:
         old_remotes = {item.get("room"): item for item in old.get("operations", {}).get("remoteMining", [])}
         for remote in current["operations"]["remoteMining"]:
             prior = old_remotes.get(remote["room"])
+            continuity = remote.get("reservation", {}).get("continuity") or {}
+            prior_continuity = (prior or {}).get("reservation", {}).get("continuity") or {}
+            if continuity.get("continuityAtRisk") and (
+                continuity.get("spawning", 0) > 0 or continuity.get("queued", 0) > 0
+            ) and not (
+                prior_continuity.get("continuityAtRisk")
+                and (prior_continuity.get("spawning", 0) > 0 or prior_continuity.get("queued", 0) > 0)
+            ):
+                self.append_journal(
+                    telemetry.tick,
+                    "reservation_replacement_dispatched",
+                    f"Reservation replacement dispatched for {remote['room']}",
+                    f"The reservation in {remote['room']} entered its travel-aware replacement window. "
+                    "AZC has a reserver queued or spawning early enough to cover body production, route travel, "
+                    "and the configured safety margin.",
+                    {"room": remote["room"], "continuity": continuity},
+                    dedupe_key=f"reservation-dispatched:{remote['room']}:{telemetry.tick}",
+                )
+            prior_ticks = (prior or {}).get("reservation", {}).get("ticksToEnd")
+            current_ticks = remote.get("reservation", {}).get("ticksToEnd")
+            if (
+                isinstance(prior_ticks, int)
+                and isinstance(current_ticks, int)
+                and prior_ticks <= max(200, prior_continuity.get("leadTicks", 0))
+                and current_ticks >= prior_ticks + 500
+            ):
+                self.append_journal(
+                    telemetry.tick,
+                    "reservation_crisis_avoided",
+                    f"Reservation crisis avoided in {remote['room']}",
+                    f"The controller reservation in {remote['room']} recovered from {prior_ticks:,} to "
+                    f"{current_ticks:,} ticks after deterministic travel-aware replacement. The remote remained "
+                    "under AZC control without requiring another strategic AI order.",
+                    {"room": remote["room"], "before": prior_ticks, "after": current_ticks},
+                    dedupe_key=f"reservation-avoided:{remote['room']}:{current_ticks // 500}",
+                )
             if prior and prior.get("security", {}).get("isSafe", True) and not remote["security"]["isSafe"]:
                 self.append_journal(
                     telemetry.tick, "remote_interrupted", f"Remote {remote['room']} was interrupted",
@@ -574,6 +637,34 @@ class HistoryStore:
                     f"The remote operation in {remote['room']} has returned to a safe operating state.",
                     {"room": remote["room"]}, dedupe_key=f"remote-recovery:{remote['room']}:{telemetry.tick}",
                 )
+
+        old_establishments = {
+            item.get("target"): item for item in old.get("operations", {}).get("remoteEstablishments", [])
+        }
+        for establishment in current["operations"].get("remoteEstablishments", []):
+            prior = old_establishments.get(establishment["target"])
+            if prior and prior.get("state") == establishment["state"]:
+                continue
+            predicted = establishment.get("prediction", {})
+            narrative = (
+                f"The new remote operation from {establishment['origin']} to {establishment['target']} is now "
+                f"{establishment['state']}. Its deterministic candidate score was "
+                f"{establishment.get('candidateScore', 'unknown')}, with predicted quality "
+                f"{predicted.get('quality', 'UNKNOWN')}."
+            )
+            if establishment.get("failureReason"):
+                narrative += f" Failure reason: {establishment['failureReason']}."
+            self.append_journal(
+                telemetry.tick,
+                "remote_establishment_state",
+                f"{establishment['target']} establishment entered {establishment['state']}",
+                narrative,
+                {"establishment": establishment, "previousState": (prior or {}).get("state")},
+                dedupe_key=(
+                    f"remote-establishment:{establishment['target']}:{establishment['state']}:"
+                    f"{establishment.get('startedTick', telemetry.tick)}"
+                ),
+            )
 
         old_intel = {item.get("room") for item in old.get("intelligence", {}).get("knownRooms", [])}
         for intel in current["intelligence"]["knownRooms"]:

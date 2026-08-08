@@ -15,6 +15,8 @@ from .screeps_client import ScreepsAPIClient, ScreepsAPIError
 from .transport import CommanderTransport, TransportError
 from .trends import TrendAnalyzer
 from .remote_ops import REMOTE_ACTIONS, RemoteEconomics, remote_snapshot
+from .autonomy import AutonomyController
+from .report import build_report
 
 
 def parser() -> argparse.ArgumentParser:
@@ -37,14 +39,28 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("operations", help="show active and evaluated AI operations")
     commands.add_parser("remotes", help="show deterministic remote health and economics")
     commands.add_parser("intel", help="show known, stale, and unknown territorial intelligence")
+    commands.add_parser("candidates", help="show remote and permanent-colony candidate rankings")
+    report = commands.add_parser("report", help="show a periodic operations briefing")
+    report.add_argument("--hours", type=float, default=24.0)
     authority = commands.add_parser("set-authority", help="set narrow operational authority")
     authority.add_argument("--scouting", choices=("OFF", "MANUAL", "AUTO"), required=True)
     authority.add_argument("--remotes", choices=("OFF", "MANUAL", "AUTO"), required=True)
+    authority.add_argument("--new-remotes", choices=("OFF", "MANUAL", "AUTO"), default="OFF")
+    authority.add_argument("--colonization", choices=("OFF", "MANUAL", "AUTO"), default="OFF")
     mode = commands.add_parser("set-mode", help="set observe or execute mode through the audited inbox")
     mode.add_argument("mode", choices=("observe", "execute"))
     scout = commands.add_parser("scout", help="queue the guarded SCOUT_ROOM action")
     scout.add_argument("room", help="room to observe, for example W38N10")
     scout.add_argument("origin", help="owned origin colony, for example W37N11")
+    start_remote = commands.add_parser("start-remote", help="queue guarded START_REMOTE_MINING")
+    start_remote.add_argument("target")
+    start_remote.add_argument("origin")
+    colonize = commands.add_parser("colonize", help="queue guarded COLONIZE_ROOM (human authority still required)")
+    colonize.add_argument("target")
+    colonize.add_argument("origin")
+    colonize.add_argument("layout")
+    colonize.add_argument("x", type=int)
+    colonize.add_argument("y", type=int)
     for name, action in (
         ("reassess-remote", "REASSESS_REMOTE"),
         ("ensure-remote-reservation", "ENSURE_REMOTE_RESERVATION"),
@@ -88,7 +104,21 @@ def display_status(transport: CommanderTransport) -> str:
     if health.telemetry:
         telemetry = health.telemetry
         hostile_count = sum(colony.defense.hostileCreeps for colony in telemetry.colonies.values())
+        execution = telemetry.authority.execution
         lines.extend([
+            "",
+            f"Commander: {'ONLINE' if health.status and health.status.commander.online else 'OFFLINE'}",
+            f"Mode: {telemetry.authority.mode.upper()}",
+            "",
+            "Authority:",
+            f"Autonomous scouting: {'ON' if execution.autoScouting else 'OFF'}",
+            f"Existing remote maintenance: {'ON' if execution.autoRemoteMaintenance else 'OFF'}",
+            f"New remote establishment: {'ON' if execution.autoNewRemotes else 'OFF'}",
+            f"Permanent colonization: {'ON' if execution.autoColonization else 'OFF'}",
+            f"Remote abandonment: {'ON' if execution.remoteAbandonment else 'OFF / HUMAN GATED'}",
+            f"Offensive combat: {'ON' if execution.offensiveCombat else 'OFF'}",
+            f"Market authority: {'ON' if execution.market else 'OFF'}",
+            f"Production authority: {'ON' if execution.production else 'OFF'}",
             "",
             "Empire:",
             f"Player: {telemetry.empire.player or 'UNKNOWN'}",
@@ -140,12 +170,21 @@ def watch(config: CommanderConfig, history: HistoryStore, transport: CommanderTr
     history.record_event("commander_startup", "Commander watch loop started", {"shard": config.screeps_shard})
     last_heartbeat = 0.0
     last_review = 0.0
+    autonomy = AutonomyController(history, transport)
     print(f"Watching {config.screeps_shard}; poll={config.poll_interval_seconds:.0f}s, review={config.review_interval_seconds:.0f}s")
     try:
         while True:
             health = transport.poll()
             now = time.monotonic()
-            if health.current_tick is not None and now - last_heartbeat >= config.heartbeat_interval_seconds:
+            automatic_order = None
+            if health.telemetry is not None:
+                try:
+                    automatic_order = autonomy.run(health.telemetry)
+                    if automatic_order:
+                        print(f"Deterministic autonomy queued {automatic_order.action}: {automatic_order.id}")
+                except TransportError as exc:
+                    history.record_event("autonomy_deferred", str(exc), {})
+            if automatic_order is None and health.current_tick is not None and now - last_heartbeat >= config.heartbeat_interval_seconds:
                 if transport.heartbeat():
                     last_heartbeat = now
             update = transport.last_observation
@@ -292,6 +331,29 @@ def show_intel(telemetry: Telemetry) -> None:
         )
 
 
+def show_candidates(telemetry: Telemetry) -> None:
+    print("=== REMOTE CANDIDATES ===")
+    if not telemetry.remoteCandidates:
+        print("No fresh remote candidates are available.")
+    for candidate in telemetry.remoteCandidates:
+        print(
+            f"- {candidate.room} from {candidate.origin or 'n/a'}: {candidate.score} "
+            f"{'ELIGIBLE' if candidate.eligible else 'BLOCKED'}; "
+            f"predicted {candidate.predictedEconomics.quality}; "
+            f"factors={candidate.factors}; blockers={candidate.disqualifiers or 'none'}"
+        )
+    print("\n=== PERMANENT COLONY CANDIDATES ===")
+    for candidate in telemetry.claimCandidates:
+        print(
+            f"- {candidate.room}: {candidate.score} {candidate.claimCandidateStatus}; "
+            f"role={candidate.currentOperationalRole}; factors={candidate.factors}; "
+            f"layout={candidate.layout or 'none'}; blockers={candidate.disqualifiers or 'none'}"
+        )
+    readiness = telemetry.expansionReadiness
+    print(
+        f"\nReadiness: {readiness.status}; recommended={readiness.recommendedRoom or 'none'}; "
+        f"origin={readiness.origin or 'none'}; reasons={readiness.reasons or 'none'}"
+    )
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
@@ -319,13 +381,17 @@ def main(argv: list[str] | None = None) -> int:
             if args.command == "status":
                 print(display_status(transport))
                 return 0 if health.screeps_online else 1
-            if args.command in {"remotes", "intel"}:
+            if args.command in {"remotes", "intel", "candidates", "report"}:
                 if health.telemetry is None:
                     raise TransportError("No valid telemetry is available")
                 if args.command == "remotes":
                     show_remotes(history, health.telemetry)
-                else:
+                elif args.command == "intel":
                     show_intel(health.telemetry)
+                elif args.command == "candidates":
+                    show_candidates(health.telemetry)
+                else:
+                    print(build_report(history, health.telemetry, max(0.1, args.hours)))
                 return 0
             if health.current_tick is None:
                 raise TransportError("No Phase 1 telemetry/status tick is available; activate ai-test first")
@@ -345,8 +411,9 @@ def main(argv: list[str] | None = None) -> int:
             elif args.command == "set-authority":
                 order = transport.send_safe_command(
                     "SET_OPERATIONAL_AUTHORITY",
-                    {"scouting": args.scouting, "remoteMaintenance": args.remotes},
-                    reason="Human operator set narrow Phase 4 authority through the CLI",
+                    {"scouting": args.scouting, "remoteMaintenance": args.remotes,
+                     "newRemotes": args.new_remotes, "colonization": args.colonization},
+                    reason="Human operator set narrow Phase 5 authority through the CLI",
                 )
             elif args.command == "set-mode":
                 order = transport.send_safe_command(
@@ -358,6 +425,18 @@ def main(argv: list[str] | None = None) -> int:
                     "SCOUT_ROOM",
                     {"room": args.room, "origin": args.origin},
                     reason=f"Manual Phase 4 intelligence request for {args.room}",
+                )
+            elif args.command == "start-remote":
+                order = transport.send_safe_command(
+                    "START_REMOTE_MINING", {"target": args.target, "origin": args.origin},
+                    reason=f"Human-authorized Phase 5 remote establishment for {args.target}",
+                )
+            elif args.command == "colonize":
+                order = transport.send_safe_command(
+                    "COLONIZE_ROOM",
+                    {"target": args.target, "origin": args.origin,
+                     "layout": {"name": args.layout, "origin": {"x": args.x, "y": args.y}}},
+                    reason=f"Human-authorized guarded colonization for {args.target}",
                 )
             elif args.command in {
                 "reassess-remote", "ensure-remote-reservation",
