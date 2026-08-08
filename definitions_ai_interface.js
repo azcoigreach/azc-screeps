@@ -22,9 +22,11 @@ global.AIInterface = {
 	ACTIONS: {
 		NOOP: true,
 		REQUEST_STATUS: true,
-		SET_EXPLANATION: true
+		SET_EXPLANATION: true,
+		SCOUT_ROOM: true
 	},
 	OBSERVE_ACTIONS: {
+		NOOP: true,
 		REQUEST_STATUS: true,
 		SET_EXPLANATION: true
 	},
@@ -47,6 +49,9 @@ global.AIInterface = {
 		this._default(["ai", "policy", "allowCombat"], false, _.isBoolean);
 		this._default(["ai", "policy", "allowMarket"], false, _.isBoolean);
 		this._default(["ai", "policy", "allowProduction"], false, _.isBoolean);
+		this._default(["ai", "policy", "allowScouting"], false, _.isBoolean);
+		this._default(["ai", "policy", "intelligenceRadius"], 2, value => this._isInteger(value) && value >= 1 && value <= 5);
+		this._default(["ai", "policy", "intelStaleTicks"], 10000, value => this._isInteger(value) && value >= 100);
 
 		if (!_.isObject(_.get(Memory, ["ai", "commander"])) || _.isArray(_.get(Memory, ["ai", "commander"])))
 			_.set(Memory, ["ai", "commander"], {});
@@ -73,6 +78,15 @@ global.AIInterface = {
 			_.set(Memory, ["ai", "transport"], {});
 		this._default(["ai", "transport", "lastInboxHash"], null);
 		this._default(["ai", "transport", "lastError"], null);
+
+		if (!_.isObject(_.get(Memory, ["ai", "metrics"])) || _.isArray(_.get(Memory, ["ai", "metrics"])))
+			_.set(Memory, ["ai", "metrics"], {});
+		if (!_.isObject(_.get(Memory, ["ai", "intelligence"])) || _.isArray(_.get(Memory, ["ai", "intelligence"])))
+			_.set(Memory, ["ai", "intelligence"], { rooms: {}, hostileEvents: [] });
+		if (!_.isObject(_.get(Memory, ["ai", "intelligence", "rooms"])))
+			_.set(Memory, ["ai", "intelligence", "rooms"], {});
+		if (!_.isArray(_.get(Memory, ["ai", "intelligence", "hostileEvents"])))
+			_.set(Memory, ["ai", "intelligence", "hostileEvents"], []);
 	},
 
 	_default: function (path, value, validator) {
@@ -160,7 +174,22 @@ global.AIInterface = {
 			if (!_.isString(order.parameters.explanation) || order.parameters.explanation.length < 1 || order.parameters.explanation.length > 2000)
 				return "explanation must be a non-empty string of at most 2000 characters";
 		}
+		if (order.action === "SCOUT_ROOM") {
+			if (keys.length !== 2 || !_.has(order.parameters, "room") || !_.has(order.parameters, "origin"))
+				return "SCOUT_ROOM requires only parameters.room and parameters.origin";
+			if (!this._isRoomName(order.parameters.room))
+				return "SCOUT_ROOM room is invalid";
+			if (!this._isRoomName(order.parameters.origin))
+				return "SCOUT_ROOM origin is invalid";
+			let origin = _.get(Game, ["rooms", order.parameters.origin]);
+			if (!origin || _.get(origin, ["controller", "my"], false) !== true)
+				return "SCOUT_ROOM origin is not an owned visible colony";
+		}
 		return null;
+	},
+
+	_isRoomName: function (value) {
+		return _.isString(value) && /^[WE]\d+[NS]\d+$/.test(value);
 	},
 
 	_isInteger: function (value) {
@@ -273,6 +302,8 @@ global.AIInterface = {
 		if (_.get(Memory, ["ai", "mode"], "observe") !== "execute"
 			&& !Object.prototype.hasOwnProperty.call(this.OBSERVE_ACTIONS, order.action))
 			return "Observe mode prevents execution";
+		if (order.action === "SCOUT_ROOM" && !_.get(Memory, ["ai", "policy", "allowScouting"], false))
+			return "Scouting is not authorized by policy";
 		if (order.expiresTick < Game.time)
 			return "Order expired before execution";
 		return null;
@@ -294,7 +325,69 @@ global.AIInterface = {
 			return "Status published to segment 92";
 		if (order.action === "SET_EXPLANATION")
 			return "Explanation updated";
+		if (order.action === "SCOUT_ROOM")
+			return this._queueScoutMission(order);
 		throw new Error("Unsupported action reached executor");
+	},
+
+	_queueScoutMission: function (order) {
+		let roomName = order.parameters.room;
+		let originName = order.parameters.origin;
+		let origin = _.get(Game, ["rooms", originName]);
+		if (!origin || _.get(origin, ["controller", "my"], false) !== true)
+			throw new Error("Scout origin is no longer an owned visible colony");
+
+		let requests = _.get(Memory, ["rooms", originName, "scout_requests"], []);
+		if (!_.isArray(requests))
+			requests = [];
+		let existing = _.find(requests, request => request && request.ai_managed === true
+			&& _.get(request, ["dest_pos", "roomName"]) === roomName
+			&& request._completed !== true);
+		if (existing)
+			return `Scout mission ${existing.id} already covers ${roomName}`;
+
+		let rally = _.head(_.filter(_.get(Game, "spawns", {}), spawn => _.get(spawn, ["room", "name"]) === originName));
+		let rallyPos = rally && rally.pos
+			? { x: rally.pos.x, y: rally.pos.y, roomName: originName, shard: _.get(Game, ["shard", "name"], "sim") }
+			: { x: 25, y: 25, roomName: originName, shard: _.get(Game, ["shard", "name"], "sim") };
+		let route = [originName];
+		if (_.isFunction(_.get(Game, ["map", "findRoute"]))) {
+			let result = Game.map.findRoute(originName, roomName);
+			if (typeof ERR_NO_PATH !== "undefined" && result === ERR_NO_PATH)
+				throw new Error(`No route from ${originName} to ${roomName}`);
+			if (_.isArray(result))
+				_.each(result, step => {
+					if (step && _.isString(step.room) && _.last(route) !== step.room)
+						route.push(step.room);
+				});
+		}
+		if (_.last(route) !== roomName)
+			route.push(roomName);
+
+		let mission = {
+			id: `ai-scout:${order.id}`,
+			ai_managed: true,
+			ai_order_id: order.id,
+			colony: originName,
+			colony_shard: _.get(Game, ["shard", "name"], "sim"),
+			created: Game.time,
+			rally_pos: rallyPos,
+			dest_pos: { x: 25, y: 25, roomName: roomName, shard: _.get(Game, ["shard", "name"], "sim") },
+			custom: { priority: 22, level: 1, body: "scout", name: null },
+			list_route: _.uniq(route),
+			spawn_rooms: null,
+			creeps: [],
+			spawned_total: 0,
+			count: 1,
+			respawn: false,
+			wait_for_full_rally: false,
+			patrol_mode: "station",
+			rally_ready: false,
+			status: "queued"
+		};
+		requests.push(mission);
+		_.set(Memory, ["rooms", originName, "scout_requests"], requests);
+		return `Scout mission ${mission.id} queued for ${originName} -> ${roomName}`;
 	},
 
 	_complete: function (order, message) {
@@ -476,7 +569,8 @@ global.AIInterface = {
 			`Expansion: ${policy.allowExpansion ? "enabled" : "disabled"}`,
 			`Combat: ${policy.allowCombat ? "enabled" : "disabled"}`,
 			`Market: ${policy.allowMarket ? "enabled" : "disabled"}`,
-			`Production: ${policy.allowProduction ? "enabled" : "disabled"}`
+			`Production: ${policy.allowProduction ? "enabled" : "disabled"}`,
+			`Scouting: ${policy.allowScouting ? "enabled" : "disabled"}`
 		];
 		let output = lines.join("\n");
 		console.log(output);

@@ -1,36 +1,32 @@
 /* ***********************************************************
- *  DEFINITIONS: AI COMMANDER OBSERVER
+ *  DEFINITIONS: AI COMMANDER STRATEGIC OBSERVER
  * *********************************************************** */
 
-// Builds a compact, JSON-safe strategic view. Raw game objects and detailed
-// per-creep state deliberately stay out of the commander protocol.
+// Builds a compact, JSON-safe strategic view. Expensive raw game objects,
+// individual creep state, and long time-series histories stay out of segments.
 global.AIObserver = {
 
-	SCHEMA_VERSION: 1,
+	SCHEMA_VERSION: 2,
+	MAX_HOSTILE_EVENTS: 50,
+	MAX_INTEL_ROOMS: 150,
+	STRUCTURE_TYPES: [
+		"spawn", "extension", "tower", "storage", "terminal", "link", "lab",
+		"factory", "extractor", "observer", "nuker", "powerSpawn"
+	],
 
 	buildSnapshot: function () {
-		let colonies = {};
+		this._populationCache = null;
 		let alerts = [];
 		let ownedRooms = _.filter(_.get(Game, "rooms", {}), room => {
 			return _.get(room, ["controller", "my"], false) === true;
 		});
+		let ownedNames = _.map(ownedRooms, room => room.name);
+		this._refreshVisibleIntelligence(ownedNames);
 
+		let colonies = {};
 		_.each(ownedRooms, room => {
-			let hostileCount = _.size(_.get(Memory, ["rooms", room.name, "defense", "hostiles"], []));
-			let spawnCount = _.filter(_.get(Game, "spawns", {}), spawn => {
-				return _.get(spawn, ["room", "name"]) === room.name;
-			}).length;
-
-			colonies[room.name] = {
-				rcl: _.get(room, ["controller", "level"], 0),
-				energyAvailable: _.get(room, "energyAvailable", 0),
-				energyCapacity: _.get(room, "energyCapacityAvailable", 0),
-				storageEnergy: _.get(room, ["storage", "store", "energy"], 0),
-				terminalEnergy: _.get(room, ["terminal", "store", "energy"], 0),
-				spawns: spawnCount,
-				hostiles: hostileCount
-			};
-
+			colonies[room.name] = this._colony(room);
+			let hostileCount = _.get(colonies, [room.name, "defense", "hostileCreeps"], 0);
 			if (hostileCount > 0)
 				alerts.push(`HOSTILES:${room.name}:${hostileCount}`);
 			if (_.get(Memory, ["rooms", room.name, "survey", "downgrade_critical"], false))
@@ -39,6 +35,8 @@ global.AIObserver = {
 				alerts.push(`SPAWN_ASSIST:${room.name}`);
 		});
 
+		let territory = this._territory(ownedNames);
+		let gclLevel = _.get(Game, ["gcl", "level"], 0);
 		return {
 			schemaVersion: this.SCHEMA_VERSION,
 			tick: _.get(Game, "time", 0),
@@ -49,8 +47,13 @@ global.AIObserver = {
 				bucket: _.get(Game, ["cpu", "bucket"], 0)
 			},
 			empire: {
-				gcl: _.get(Game, ["gcl", "level"], 0),
-				ownedRooms: ownedRooms.length,
+				gcl: {
+					level: gclLevel,
+					progress: _.get(Game, ["gcl", "progress"], 0),
+					progressTotal: _.get(Game, ["gcl", "progressTotal"], 0),
+					ownedRooms: ownedRooms.length,
+					availableClaimSlots: Math.max(0, gclLevel - ownedRooms.length)
+				},
 				creeps: _.size(_.get(Game, "creeps", {})),
 				credits: _.get(Game, ["market", "credits"], 0)
 			},
@@ -58,26 +61,291 @@ global.AIObserver = {
 			operations: {
 				colonizations: this._colonizations(),
 				remoteMining: this._remoteMining(),
-				combat: this._combat()
+				combat: this._combat(),
+				scouting: this._scouting()
+			},
+			intelligence: territory.intelligence,
+			expansionCandidates: territory.candidates,
+			authority: {
+				mode: _.get(Memory, ["ai", "mode"], "observe"),
+				allowedActions: ["NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SCOUT_ROOM"],
+				execution: {
+					scouting: _.get(Memory, ["ai", "policy", "allowScouting"], false) === true,
+					expansion: false,
+					remoteMiningChanges: false,
+					market: false,
+					production: false,
+					offensiveCombat: false
+				}
 			},
 			alerts: alerts
 		};
 	},
 
 	serialize: function (snapshot) {
-		return JSON.stringify(snapshot == null ? this.buildSnapshot() : snapshot);
+		let started = _.isFunction(_.get(Game, ["cpu", "getUsed"])) ? Game.cpu.getUsed() : 0;
+		let value = snapshot == null ? this.buildSnapshot() : snapshot;
+		let measured = _.isFunction(_.get(Game, ["cpu", "getUsed"])) ? Math.max(0, Game.cpu.getUsed() - started) : 0;
+		value.observer = { cpuUsed: measured, payloadBytes: 0 };
+		let serialized = JSON.stringify(value);
+		// Re-serialize until the self-reported UTF-8 byte length is stable. Memory
+		// Segment limits are bytes, while JavaScript string length counts UTF-16.
+		for (let i = 0; i < 3; i++) {
+			let payloadBytes = this._utf8Bytes(serialized);
+			if (value.observer.payloadBytes === payloadBytes)
+				break;
+			value.observer.payloadBytes = payloadBytes;
+			serialized = JSON.stringify(value);
+		}
+		_.set(Memory, ["ai", "metrics", "observerCpu"], measured);
+		_.set(Memory, ["ai", "metrics", "payloadBytes"], this._utf8Bytes(serialized));
+		return serialized;
+	},
+
+	_utf8Bytes: function (value) {
+		let bytes = 0;
+		for (let i = 0; i < value.length; i++) {
+			let code = value.charCodeAt(i);
+			if (code < 0x80)
+				bytes += 1;
+			else if (code < 0x800)
+				bytes += 2;
+			else if (code >= 0xD800 && code <= 0xDBFF && i + 1 < value.length
+				&& value.charCodeAt(i + 1) >= 0xDC00 && value.charCodeAt(i + 1) <= 0xDFFF) {
+				bytes += 4;
+				i++;
+			} else
+				bytes += 3;
+		}
+		return bytes;
+	},
+
+	recordPopulationTarget: function (scope, colony, room, target) {
+		let expected = {};
+		_.each(target || {}, (settings, role) => {
+			let amount = _.get(settings, "amount", 0);
+			if (_.isNumber(amount) && amount > 0)
+				expected[role] = amount;
+		});
+		_.set(Memory, ["ai", "metrics", "population", scope, room], {
+			colony: colony,
+			expected: expected,
+			updatedTick: Game.time
+		});
+	},
+
+	recordRemoteDelivery: function (creep, amount) {
+		if (!creep || !_.isNumber(amount) || amount <= 0)
+			return;
+		let remote = _.get(creep, ["memory", "room"]);
+		let colony = _.get(creep, ["memory", "colony"]);
+		if (!remote || !colony || remote === colony || !_.has(Memory, ["sites", "mining", remote]))
+			return;
+		let path = ["ai", "metrics", "remotes", remote];
+		_.set(Memory, path.concat("energyDeliveredTotal"), _.get(Memory, path.concat("energyDeliveredTotal"), 0) + amount);
+		_.set(Memory, path.concat("lastDeliveryTick"), Game.time);
+	},
+
+	recordRemoteLoss: function (creepMemory) {
+		let remote = _.get(creepMemory, "room");
+		let colony = _.get(creepMemory, "colony");
+		if (!remote || !colony || remote === colony || !_.has(Memory, ["sites", "mining", remote]))
+			return;
+		let path = ["ai", "metrics", "remotes", remote];
+		_.set(Memory, path.concat("creepLossesTotal"), _.get(Memory, path.concat("creepLossesTotal"), 0) + 1);
+		_.set(Memory, path.concat("lastCreepLossTick"), Game.time);
+	},
+
+	recordRemoteInterruption: function (roomName) {
+		let path = ["ai", "metrics", "remotes", roomName];
+		_.set(Memory, path.concat("hostileInterruptionsTotal"), _.get(Memory, path.concat("hostileInterruptionsTotal"), 0) + 1);
+		_.set(Memory, path.concat("lastInterruptionTick"), Game.time);
+	},
+
+	_colony: function (room) {
+		let structures = this._find(room, typeof FIND_STRUCTURES !== "undefined" ? FIND_STRUCTURES : null);
+		let construction = this._find(room, typeof FIND_MY_CONSTRUCTION_SITES !== "undefined" ? FIND_MY_CONSTRUCTION_SITES : null);
+		let dropped = this._find(room, typeof FIND_DROPPED_RESOURCES !== "undefined" ? FIND_DROPPED_RESOURCES : null);
+		let hostiles = this._find(room, typeof FIND_HOSTILE_CREEPS !== "undefined" ? FIND_HOSTILE_CREEPS : null);
+		let hostileStructures = this._find(room, typeof FIND_HOSTILE_STRUCTURES !== "undefined" ? FIND_HOSTILE_STRUCTURES : null);
+		let level = _.get(room, ["controller", "level"], 0);
+		let structureSummary = this._structureSummary(structures, level);
+		let controller = _.get(room, "controller", {});
+		let progress = _.get(controller, "progress", 0);
+		let progressTotal = _.get(controller, "progressTotal", 0);
+		let spawns = _.filter(structures, structure => structure.structureType === "spawn");
+		if (spawns.length === 0)
+			spawns = _.filter(_.get(Game, "spawns", {}), spawn => _.get(spawn, ["room", "name"]) === room.name);
+		let busy = _.filter(spawns, spawn => _.get(spawn, "spawning") != null).length;
+		let queue = this._spawnQueue(room.name);
+		let containers = _.filter(structures, structure => structure.structureType === "container");
+		let towers = _.filter(structures, structure => structure.structureType === "tower");
+		let ramparts = _.filter(structures, structure => structure.structureType === "rampart");
+		let walls = _.filter(structures, structure => structure.structureType === "constructedWall");
+		let recentHostiles = _.filter(_.get(Memory, ["ai", "intelligence", "hostileEvents"], []), event => {
+			return event.room === room.name && Game.time - event.tick <= 20000;
+		});
+		let expected = _.get(Memory, ["ai", "metrics", "population", "colonies", room.name, "expected"], {});
+		let terminalAllowed = _.get(structureSummary, ["terminal", "allowed"], 0) > 0;
+
+		return {
+			controller: {
+				rcl: level,
+				progress: progress,
+				progressTotal: progressTotal,
+				progressPercent: progressTotal > 0 ? Math.round(progress * 10000 / progressTotal) / 100 : 100,
+				ticksToDowngrade: _.get(controller, "ticksToDowngrade", null),
+				downgradeCritical: _.get(Memory, ["rooms", room.name, "survey", "downgrade_critical"], false) === true,
+				safeMode: _.get(controller, "safeMode", null),
+				safeModeAvailable: _.get(controller, "safeModeAvailable", 0),
+				safeModeCooldown: _.get(controller, "safeModeCooldown", null)
+			},
+			energy: {
+				available: _.get(room, "energyAvailable", 0),
+				capacity: _.get(room, "energyCapacityAvailable", 0),
+				storageEnergy: this._resource(_.get(room, "storage"), "energy"),
+				terminalEnergy: terminalAllowed ? this._resource(_.get(room, "terminal"), "energy") : null,
+				droppedEnergy: _.sum(_.map(dropped, resource => _.get(resource, "resourceType") === "energy" ? _.get(resource, "amount", 0) : 0)),
+				containers: {
+					count: containers.length,
+					energy: _.sum(_.map(containers, container => this._resource(container, "energy"))),
+					capacity: _.sum(_.map(containers, container => this._capacity(container, "energy")))
+				}
+			},
+			structures: structureSummary,
+			capabilities: {
+				canUseStorage: _.get(structureSummary, ["storage", "allowed"], 0) > 0,
+				canUseTerminal: terminalAllowed,
+				canUseLabs: _.get(structureSummary, ["lab", "allowed"], 0) > 0,
+				canUseFactory: _.get(structureSummary, ["factory", "allowed"], 0) > 0,
+				canUseLinks: _.get(structureSummary, ["link", "allowed"], 0) > 0,
+				canUseExtractor: _.get(structureSummary, ["extractor", "allowed"], 0) > 0
+			},
+			spawning: {
+				spawns: spawns.length,
+				busy: busy,
+				idle: Math.max(0, spawns.length - busy),
+				queueDepth: queue.length,
+				queuedRoles: _.countBy(queue, request => _.get(request, ["args", "role"], _.get(request, "role", "unknown")))
+			},
+			construction: {
+				sites: construction.length,
+				byType: _.countBy(construction, site => _.get(site, "structureType", "unknown")),
+				outstandingEnergy: _.sum(_.map(construction, site => Math.max(0, _.get(site, "progressTotal", 0) - _.get(site, "progress", 0))))
+			},
+			defense: {
+				towers: towers.length,
+				towerEnergy: _.sum(_.map(towers, tower => this._resource(tower, "energy"))),
+				ramparts: this._hitSummary(ramparts),
+				walls: this._hitSummary(walls),
+				hostileCreeps: hostiles.length || _.size(_.get(Memory, ["rooms", room.name, "defense", "hostiles"], [])),
+				hostileStructures: hostileStructures.length,
+				recentHostileEvents: recentHostiles.length,
+				lastHostileSightingTick: _.get(Memory, ["ai", "intelligence", "rooms", room.name, "lastHostileSightingTick"], null)
+			},
+			population: this._populationSummary(room.name, room.name, expected)
+		};
+	},
+
+	_structureSummary: function (structures, level) {
+		let result = {};
+		_.each(this.STRUCTURE_TYPES, type => {
+			result[type] = {
+				count: _.filter(structures, structure => structure.structureType === type && _.get(structure, "my", true) !== false).length,
+				allowed: this._allowed(type, level)
+			};
+		});
+		return result;
+	},
+
+	_allowed: function (type, level) {
+		if (typeof CONTROLLER_STRUCTURES === "undefined")
+			return 0;
+		return _.get(CONTROLLER_STRUCTURES, [type, level], 0) || 0;
+	},
+
+	_hitSummary: function (structures) {
+		let hits = _.sortBy(_.map(structures, structure => _.get(structure, "hits", 0)));
+		if (hits.length === 0)
+			return { count: 0, min: null, median: null, max: null };
+		let middle = Math.floor(hits.length / 2);
+		let median = hits.length % 2 === 1 ? hits[middle] : Math.round((hits[middle - 1] + hits[middle]) / 2);
+		return { count: hits.length, min: hits[0], median: median, max: hits[hits.length - 1] };
+	},
+
+	_spawnQueue: function (roomName) {
+		let queues = [];
+		queues = queues.concat(_.get(Memory, ["hive", "spawn_requests"], []));
+		queues = queues.concat(_.get(Memory, ["shard", "spawn_requests"], []));
+		return _.filter(queues, request => request && (_.get(request, "room") === roomName
+			|| _.includes(_.get(request, "listRooms", []), roomName)));
+	},
+
+	_populationSummary: function (roomName, colonyName, expected) {
+		if (!this._populationCache)
+			this._buildPopulationCache();
+		let key = `${colonyName}|${roomName}`;
+		let actual = _.get(this._populationCache, key, {});
+		let queued = {};
+		_.each(this._spawnQueue(colonyName), request => {
+			let args = _.get(request, "args", {});
+			if (_.get(args, "room") !== roomName)
+				return;
+			let role = _.get(args, "role", _.get(request, "role", "unknown"));
+			queued[role] = _.get(queued, role, 0) + 1;
+		});
+		let roles = {};
+		let names = _.uniq(_.keys(expected || {}).concat(_.keys(actual), _.keys(queued)));
+		_.each(names, role => {
+			let state = _.get(actual, role, { alive: 0, spawning: 0, dyingSoon: 0 });
+			roles[role] = {
+				expected: _.get(expected, role, 0),
+				alive: state.alive,
+				spawning: state.spawning,
+				queued: _.get(queued, role, 0),
+				dyingSoon: state.dyingSoon
+			};
+		});
+		let expectedTotal = _.sum(_.map(roles, role => role.expected));
+		let staffed = _.sum(_.map(roles, role => Math.min(role.expected, role.alive + role.spawning)));
+		return {
+			roles: roles,
+			expectedTotal: expectedTotal,
+			aliveTotal: _.sum(_.map(roles, role => role.alive)),
+			spawningTotal: _.sum(_.map(roles, role => role.spawning)),
+			dyingSoonTotal: _.sum(_.map(roles, role => role.dyingSoon)),
+			demandSatisfaction: expectedTotal > 0 ? Math.round(staffed * 10000 / expectedTotal) / 100 : null
+		};
+	},
+
+	_buildPopulationCache: function () {
+		let cache = {};
+		_.each(_.get(Game, "creeps", {}), creep => {
+			let room = _.get(creep, ["memory", "room"], _.get(creep, ["room", "name"]));
+			let colony = _.get(creep, ["memory", "colony"], room);
+			let role = _.get(creep, ["memory", "role"], "unknown");
+			if (!room || !colony)
+				return;
+			let key = `${colony}|${room}`;
+			if (!cache[key])
+				cache[key] = {};
+			if (!cache[key][role])
+				cache[key][role] = { alive: 0, spawning: 0, dyingSoon: 0 };
+			if (_.get(creep, "spawning", false))
+				cache[key][role].spawning++;
+			else
+				cache[key][role].alive++;
+			if (_.isNumber(_.get(creep, "ticksToLive")) && creep.ticksToLive <= 100)
+				cache[key][role].dyingSoon++;
+		});
+		this._populationCache = cache;
 	},
 
 	_colonizations: function () {
 		let result = [];
 		_.each(_.get(Memory, ["sites", "colonization"], {}), (site, id) => {
-			if (!site)
-				return;
-			result.push({
-				id: id,
-				from: _.get(site, "from", null),
-				target: _.get(site, "target", id)
-			});
+			if (site)
+				result.push({ id: id, from: _.get(site, "from", null), target: _.get(site, "target", id) });
 		});
 		return result;
 	},
@@ -87,10 +355,62 @@ global.AIObserver = {
 		_.each(_.get(Memory, ["sites", "mining"], {}), (site, roomName) => {
 			if (!site || _.get(site, "colony") === roomName)
 				return;
+			let colony = _.get(site, "colony", null);
+			let room = _.get(Game, ["rooms", roomName]);
+			let visible = room != null;
+			let sources = visible ? (room.findSources ? room.findSources() : this._find(room, typeof FIND_SOURCES !== "undefined" ? FIND_SOURCES : null)) : [];
+			let structures = visible ? this._find(room, typeof FIND_STRUCTURES !== "undefined" ? FIND_STRUCTURES : null) : [];
+			let containers = _.filter(structures, structure => structure.structureType === "container");
+			let dropped = visible ? this._find(room, typeof FIND_DROPPED_RESOURCES !== "undefined" ? FIND_DROPPED_RESOURCES : null) : [];
+			let expected = _.get(Memory, ["ai", "metrics", "population", "remotes", roomName, "expected"], {});
+			let metrics = _.get(Memory, ["ai", "metrics", "remotes", roomName], {});
+			let intel = _.get(Memory, ["ai", "intelligence", "rooms", roomName], {});
+			let reservation = _.get(room, ["controller", "reservation"], null);
+			let hostileCount = _.size(_.get(site, ["defense", "hostiles"], []));
+			let route = _.isArray(_.get(site, "list_route")) ? site.list_route.slice(0, 12) : [];
+
 			result.push({
 				room: roomName,
-				colony: _.get(site, "colony", null),
-				hasKeepers: _.get(site, "has_keepers", false) === true
+				colony: colony,
+				configured: true,
+				active: _.get(site, "can_mine", false) === true,
+				hasKeepers: _.get(site, "has_keepers", false) === true,
+				visible: visible,
+				lastSeenTick: _.get(intel, "lastSeenTick", null),
+				intelAgeTicks: _.has(intel, "lastSeenTick") ? Math.max(0, Game.time - intel.lastSeenTick) : null,
+				sourceCount: visible ? sources.length : _.get(site, ["survey", "source_amount"], null),
+				route: { length: route.length > 0 ? route.length - 1 : null, rooms: route },
+				reservation: {
+					username: _.get(reservation, "username", null),
+					ticksToEnd: _.get(reservation, "ticksToEnd", null)
+				},
+				population: this._populationSummary(roomName, colony, expected),
+				mining: {
+					visibleSources: sources.length,
+					sourceEnergy: _.sum(_.map(sources, source => _.get(source, "energy", 0))),
+					minimumRegenerationTicks: sources.length > 0 ? _.min(_.map(sources, source => _.get(source, "ticksToRegeneration", 0))) : null,
+					containers: containers.length,
+					containerEnergy: visible ? _.sum(_.map(containers, container => this._resource(container, "energy"))) : _.get(site, "store_total", 0),
+					containerHits: this._hitSummary(containers),
+					droppedEnergy: _.sum(_.map(dropped, resource => _.get(resource, "resourceType") === "energy" ? _.get(resource, "amount", 0) : 0)),
+					energyWaiting: (visible ? _.sum(_.map(containers, container => this._resource(container, "energy"))) : _.get(site, "store_total", 0))
+						+ _.sum(_.map(dropped, resource => _.get(resource, "resourceType") === "energy" ? _.get(resource, "amount", 0) : 0))
+				},
+				delivery: {
+					energyDeliveredTotal: _.get(metrics, "energyDeliveredTotal", 0),
+					lastDeliveryTick: _.get(metrics, "lastDeliveryTick", null)
+				},
+				losses: {
+					creepLossesTotal: _.get(metrics, "creepLossesTotal", 0),
+					lastCreepLossTick: _.get(metrics, "lastCreepLossTick", null),
+					hostileInterruptionsTotal: _.get(metrics, "hostileInterruptionsTotal", 0),
+					lastInterruptionTick: _.get(metrics, "lastInterruptionTick", null)
+				},
+				security: {
+					isSafe: _.get(site, ["defense", "is_safe"], false) === true,
+					hostileCreeps: hostileCount,
+					lastHostileSightingTick: _.get(intel, "lastHostileSightingTick", null)
+				}
 			});
 		});
 		return result;
@@ -99,15 +419,289 @@ global.AIObserver = {
 	_combat: function () {
 		let result = [];
 		_.each(_.get(Memory, ["sites", "combat"], {}), (site, id) => {
-			if (!site)
-				return;
-			result.push({
-				id: id,
-				colony: _.get(site, "colony", null),
-				target: _.get(site, "target_room", null),
-				tactic: _.get(site, ["tactic", "type"], null)
+			if (site)
+				result.push({ id: id, colony: _.get(site, "colony", null), target: _.get(site, "target_room", null), tactic: _.get(site, ["tactic", "type"], null) });
+		});
+		return result;
+	},
+
+	_scouting: function () {
+		let result = [];
+		_.each(_.get(Memory, "rooms", {}), (roomMemory, origin) => {
+			_.each(_.get(roomMemory, "scout_requests", []), request => {
+				if (!request || request.ai_managed !== true)
+					return;
+				result.push({
+					id: request.id,
+					origin: origin,
+					room: _.get(request, ["dest_pos", "roomName"], null),
+					status: _.get(request, "status", "queued"),
+					createdTick: _.get(request, "created", null),
+					observedTick: _.get(request, "observed_tick", null),
+					activeScouts: _.get(request, "active", 0)
+				});
 			});
 		});
 		return result;
+	},
+
+	_refreshVisibleIntelligence: function (ownedNames) {
+		let intelRooms = _.get(Memory, ["ai", "intelligence", "rooms"], {});
+		let hostileEvents = _.get(Memory, ["ai", "intelligence", "hostileEvents"], []);
+		_.each(_.get(Game, "rooms", {}), room => {
+			if (!room || !room.name)
+				return;
+			let previous = _.get(intelRooms, room.name, {});
+			let structures = this._find(room, typeof FIND_STRUCTURES !== "undefined" ? FIND_STRUCTURES : null);
+			let hostiles = this._find(room, typeof FIND_HOSTILE_CREEPS !== "undefined" ? FIND_HOSTILE_CREEPS : null);
+			hostiles = _.filter(hostiles, creep => _.get(creep, ["owner", "username"]) !== "Source Keeper");
+			let hostileStructures = _.filter(structures, structure => _.get(structure, "my", false) !== true
+				&& !_.includes(["controller", "keeperLair", "portal", "road", "container"], structure.structureType));
+			let sources = room.findSources ? room.findSources() : this._find(room, typeof FIND_SOURCES !== "undefined" ? FIND_SOURCES : null);
+			let minerals = this._find(room, typeof FIND_MINERALS !== "undefined" ? FIND_MINERALS : null);
+			let controller = _.get(room, "controller", null);
+			let nearest = this._nearestColony(room.name, ownedNames);
+			let terrainSwampPercent = _.get(previous, "terrainSwampPercent", null);
+			if (terrainSwampPercent == null)
+				terrainSwampPercent = this._swampPercent(room);
+			let routeLength = null;
+			let routeStatus = nearest ? "unknown" : "unavailable";
+			if (nearest && _.isFunction(_.get(Game, ["map", "findRoute"]))) {
+				let route = Game.map.findRoute(nearest.room, room.name);
+				if (_.isArray(route)) {
+					routeLength = route.length;
+					routeStatus = "available";
+				} else {
+					routeStatus = "no_path";
+				}
+			}
+			let usernames = _.uniq(_.map(hostiles, creep => _.get(creep, ["owner", "username"], "unknown"))).slice(0, 8);
+			let current = {
+				room: room.name,
+				lastSeenTick: Game.time,
+				classification: this._roomClassification(room.name),
+				sourceCount: sources.length,
+				mineralType: _.get(_.head(minerals), "mineralType", null),
+				terrainSwampPercent: terrainSwampPercent,
+				controller: {
+					status: !controller ? "none" : (_.get(controller, "my", false) ? "owned" : (_.get(controller, ["owner", "username"]) ? "owned_other" : (_.get(controller, ["reservation", "username"]) ? "reserved" : "neutral"))),
+					owner: _.get(controller, ["owner", "username"], null),
+					reservation: _.get(controller, ["reservation", "username"], null),
+					reservationTicks: _.get(controller, ["reservation", "ticksToEnd"], null),
+					rcl: _.get(controller, "level", 0),
+					safeMode: _.get(controller, "safeMode", null)
+				},
+				structures: {
+					spawns: _.filter(structures, structure => structure.structureType === "spawn").length,
+					towers: _.filter(structures, structure => structure.structureType === "tower").length,
+					storage: _.filter(structures, structure => structure.structureType === "storage").length,
+					terminal: _.filter(structures, structure => structure.structureType === "terminal").length,
+					hostile: hostileStructures.length,
+					fortifications: this._hitSummary(_.filter(structures, structure => _.includes(["rampart", "constructedWall"], structure.structureType)))
+				},
+				hostileCreeps: hostiles.length,
+				hostilePlayers: usernames,
+				lastHostileSightingTick: hostiles.length > 0 ? Game.time : _.get(previous, "lastHostileSightingTick", null),
+				hostileSightingsTotal: _.get(previous, "hostileSightingsTotal", 0) + ((hostiles.length > 0 && _.get(previous, "hostileCreeps", 0) === 0) ? 1 : 0),
+				nearestColony: nearest ? nearest.room : null,
+				distanceFromColony: nearest ? nearest.distance : null,
+				routeLength: routeLength,
+				routeStatus: routeStatus
+			};
+			if (hostiles.length > 0 && _.get(previous, "hostileCreeps", 0) === 0) {
+				hostileEvents.push({ tick: Game.time, room: room.name, players: usernames, count: hostiles.length });
+				if (hostileEvents.length > this.MAX_HOSTILE_EVENTS)
+					hostileEvents.splice(0, hostileEvents.length - this.MAX_HOSTILE_EVENTS);
+			}
+			intelRooms[room.name] = current;
+			this._markScoutObserved(room.name);
+		});
+
+		let intelNames = _.keys(intelRooms);
+		if (intelNames.length > this.MAX_INTEL_ROOMS) {
+			let oldest = _.sortBy(intelNames, name => _.get(intelRooms, [name, "lastSeenTick"], 0));
+			_.each(oldest.slice(0, intelNames.length - this.MAX_INTEL_ROOMS), name => delete intelRooms[name]);
+		}
+		if (hostileEvents.length > this.MAX_HOSTILE_EVENTS)
+			hostileEvents.splice(0, hostileEvents.length - this.MAX_HOSTILE_EVENTS);
+		_.set(Memory, ["ai", "intelligence", "rooms"], intelRooms);
+		_.set(Memory, ["ai", "intelligence", "hostileEvents"], hostileEvents);
+	},
+
+	_markScoutObserved: function (roomName) {
+		_.each(_.get(Memory, "rooms", {}), roomMemory => {
+			_.each(_.get(roomMemory, "scout_requests", []), request => {
+				if (request && request.ai_managed === true && _.get(request, ["dest_pos", "roomName"]) === roomName) {
+					request.status = "observed";
+					request.observed_tick = Game.time;
+				}
+			});
+		});
+	},
+
+	_territory: function (ownedNames) {
+		let radius = _.get(Memory, ["ai", "policy", "intelligenceRadius"], 2);
+		let staleTicks = _.get(Memory, ["ai", "policy", "intelStaleTicks"], 10000);
+		let nearby = this._nearbyRooms(ownedNames, radius);
+		let intelRooms = _.get(Memory, ["ai", "intelligence", "rooms"], {});
+		let known = [];
+		let unknown = [];
+		let stale = [];
+		let candidates = [];
+		_.each(nearby, name => {
+			let intel = _.get(intelRooms, name);
+			if (!intel) {
+				unknown.push(name);
+				return;
+			}
+			let copy = _.cloneDeep(intel);
+			copy.intelAgeTicks = Math.max(0, Game.time - copy.lastSeenTick);
+			copy.stale = copy.intelAgeTicks > staleTicks;
+			known.push(copy);
+			if (copy.stale)
+				stale.push(name);
+			let score = this._candidateScore(copy, ownedNames);
+			if (score)
+				candidates.push(score);
+		});
+		candidates = _.sortBy(candidates, candidate => -candidate.score).slice(0, 20);
+		return {
+			intelligence: {
+				radius: radius,
+				staleAfterTicks: staleTicks,
+				knownRooms: known,
+				unknownRooms: _.sortBy(unknown),
+				staleRooms: _.sortBy(stale),
+				hostileEvents: _.get(Memory, ["ai", "intelligence", "hostileEvents"], []).slice(-20)
+			},
+			candidates: candidates
+		};
+	},
+
+	_nearbyRooms: function (ownedNames, radius) {
+		let seen = {};
+		let frontier = [];
+		_.each(ownedNames, name => { seen[name] = 0; frontier.push(name); });
+		if (!_.isFunction(_.get(Game, ["map", "describeExits"])))
+			return _.keys(seen);
+		while (frontier.length > 0) {
+			let current = frontier.shift();
+			let depth = seen[current];
+			if (depth >= radius)
+				continue;
+			let exits = Game.map.describeExits(current) || {};
+			_.each(exits, neighbor => {
+				if (_.isString(neighbor) && !_.has(seen, neighbor)) {
+					seen[neighbor] = depth + 1;
+					frontier.push(neighbor);
+				}
+			});
+		}
+		return _.keys(seen);
+	},
+
+	_candidateScore: function (intel, ownedNames) {
+		if (_.includes(ownedNames, intel.room))
+			return null;
+		let reasons = [];
+		let disqualified = false;
+		let status = _.get(intel, ["controller", "status"]);
+		if (status === "owned_other") {
+			disqualified = true;
+			reasons.push("owned_by_another_player");
+		}
+		if (_.includes(["highway", "source_keeper", "sector_center"], intel.classification) || status === "none") {
+			disqualified = true;
+			reasons.push("not_a_claimable_normal_room");
+		}
+		let factors = {
+			sources: Math.min(30, _.get(intel, "sourceCount", 0) * 15),
+			distance: Math.max(0, 20 - Math.max(0, _.get(intel, "distanceFromColony", 1) - 1) * 4),
+			terrain: Math.max(0, 15 - Math.round(_.get(intel, "terrainSwampPercent", 50) * 0.3)),
+			mineral: _.get(intel, "mineralType") ? 10 : 0,
+			security: (_.get(intel, "hostileCreeps", 0) === 0 && _.get(intel, ["structures", "towers"], 0) === 0) ? 20 : 0
+		};
+		let score = _.sum(_.values(factors));
+		if (_.get(intel, "stale", false))
+			reasons.push("intelligence_stale");
+		if (_.get(intel, "sourceCount", 0) < 2)
+			reasons.push("fewer_than_two_sources");
+		return {
+			room: intel.room,
+			score: score,
+			factors: factors,
+			intelAgeTicks: intel.intelAgeTicks,
+			disqualified: disqualified,
+			disqualifiers: reasons
+		};
+	},
+
+	_nearestColony: function (roomName, ownedNames) {
+		if (ownedNames.length === 0)
+			return null;
+		let best = null;
+		_.each(ownedNames, colony => {
+			let distance = colony === roomName ? 0 : (_.isFunction(_.get(Game, ["map", "getRoomLinearDistance"])) ? Game.map.getRoomLinearDistance(colony, roomName) : null);
+			if (distance != null && (!best || distance < best.distance))
+				best = { room: colony, distance: distance };
+		});
+		return best;
+	},
+
+	_roomClassification: function (roomName) {
+		let match = /^([WE])(\d+)([NS])(\d+)$/.exec(roomName);
+		if (!match)
+			return "unknown";
+		let x = parseInt(match[2], 10) % 10;
+		let y = parseInt(match[4], 10) % 10;
+		if (x === 0 || y === 0)
+			return "highway";
+		if (x === 5 && y === 5)
+			return "sector_center";
+		if (x >= 4 && x <= 6 && y >= 4 && y <= 6)
+			return "source_keeper";
+		return "normal";
+	},
+
+	_swampPercent: function (room) {
+		if (!room || !_.isFunction(_.get(room, "getTerrain")))
+			return null;
+		let terrain = room.getTerrain();
+		let swamps = 0;
+		let swampMask = typeof TERRAIN_MASK_SWAMP !== "undefined" ? TERRAIN_MASK_SWAMP : 2;
+		for (let x = 0; x < 50; x++)
+			for (let y = 0; y < 50; y++)
+				if (terrain.get(x, y) === swampMask)
+					swamps++;
+		return Math.round(swamps * 10000 / 2500) / 100;
+	},
+
+	_find: function (room, constant) {
+		if (!room || constant == null || !_.isFunction(_.get(room, "find")))
+			return [];
+		let result = room.find(constant);
+		return _.isArray(result) ? result : [];
+	},
+
+	_resource: function (object, resource) {
+		if (!object)
+			return 0;
+		if (_.get(object, ["store", resource]) != null)
+			return _.get(object, ["store", resource], 0);
+		if (resource === "energy")
+			return _.get(object, "energy", 0);
+		return 0;
+	},
+
+	_capacity: function (object, resource) {
+		if (!object)
+			return 0;
+		if (_.isFunction(_.get(object, ["store", "getCapacity"])))
+			return object.store.getCapacity(resource) || 0;
+		if (_.get(object, "storeCapacity") != null)
+			return object.storeCapacity;
+		if (resource === "energy")
+			return _.get(object, "energyCapacity", 0);
+		return 0;
 	}
 };

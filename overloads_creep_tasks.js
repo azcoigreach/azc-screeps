@@ -269,7 +269,19 @@
 			switch (this.memory.task["resource"]) {
 				case "energy":
 					Stats_Visual.CreepSay(this, 'transfer');
-					if (target != null && this.transfer(target, this.memory.task["resource"]) == ERR_NOT_IN_RANGE) {
+					let carriedEnergy = _.get(this, ["carry", "energy"], _.get(this, ["store", "energy"], 0));
+					let freeCapacity = target == null ? 0
+						: (_.isFunction(_.get(target, ["store", "getFreeCapacity"]))
+							? target.store.getFreeCapacity("energy")
+							: Math.max(0, _.get(target, "energyCapacity", 0) - _.get(target, "energy", 0)));
+					let delivered = Math.min(carriedEnergy, freeCapacity);
+					let transferResult = target == null ? ERR_INVALID_TARGET : this.transfer(target, this.memory.task["resource"]);
+					if (transferResult == OK && delivered > 0
+						&& _.get(this, ["memory", "room"]) !== _.get(this, ["memory", "colony"])
+						&& _.get(target, ["room", "name"]) === _.get(this, ["memory", "colony"])
+						&& typeof AIObserver !== "undefined" && _.isFunction(_.get(AIObserver, "recordRemoteDelivery")))
+						AIObserver.recordRemoteDelivery(this, delivered);
+					if (target != null && transferResult == ERR_NOT_IN_RANGE) {
 						if (_.get(target, "energy") != null && _.get(target, "energy") == _.get(target, "energyCapacity")) {
 							delete this.memory.task;
 							return;

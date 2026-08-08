@@ -105,6 +105,15 @@
 			return AIInterface.consoleExplain();
 		};
 
+		help_ai.push("ai.scouting(true|false) - Allow or deny AI scout mission execution");
+		ai.scouting = function (allowed) {
+			AIInterface.initMemory();
+			if (!_.isBoolean(allowed))
+				return `[AI] Error: scouting policy must be true or false.`;
+			_.set(Memory, ["ai", "policy", "allowScouting"], allowed);
+			return `[AI] Scouting policy ${allowed ? "enabled" : "disabled"} by human operator.`;
+		};
+
 
 
 		help_allies.push("allies.add(ally)");

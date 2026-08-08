@@ -274,6 +274,7 @@
 					let baseUpgraders = 1;
 					let additionalUpgraders = Math.floor(remoteMiningSources / 2);
 					let totalUpgraders = baseUpgraders + additionalUpgraders;
+					_.set(popTarget, ["upgrader", "amount"], totalUpgraders);
 					
 					// Check if we need upgraders
 					if (_.get(popActual, "upgrader", 0) < totalUpgraders) {
@@ -287,6 +288,9 @@
 						});
 					}
 				}
+
+				if (typeof AIObserver !== "undefined" && _.isFunction(_.get(AIObserver, "recordPopulationTarget")))
+					AIObserver.recordPopulationTarget("colonies", rmColony, rmColony, popTarget);
 			},
 
 
@@ -679,10 +683,14 @@
 					: _.filter(Game.rooms[rmHarvest].find(FIND_HOSTILE_CREEPS), c => { 
 						return c.isHostile() && (c.hasPart("attack") || c.hasPart("ranged_attack")); 
 					});
+				let was_safe = _.get(Memory, ["sites", "mining", rmHarvest, "defense", "is_safe"], true);
 				let is_safe = visible && dangerous_hostiles.length == 0 && invaderCore == null;
 				_.set(Memory, ["rooms", rmHarvest, "defense", "is_safe"], is_safe);
 				_.set(Memory, ["sites", "mining", rmHarvest, "defense", "is_safe"], is_safe);
 				_.set(Memory, ["sites", "mining", rmHarvest, "defense", "hostiles"], hostiles);
+				if (visible && was_safe === true && is_safe === false
+					&& typeof AIObserver !== "undefined" && _.isFunction(_.get(AIObserver, "recordRemoteInterruption")))
+					AIObserver.recordRemoteInterruption(rmHarvest);
 
 				// Can only mine a site/room if it is not reserved, or is reserved by the player
 				let reservation = _.get(Game, ["rooms", rmHarvest, "controller", "reservation"], null);
@@ -830,6 +838,9 @@
 
 				// Grafana population stats
 				Stats_Grafana.populationTally(rmColony, popTarget, popActual);
+
+				if (typeof AIObserver !== "undefined" && _.isFunction(_.get(AIObserver, "recordPopulationTarget")))
+					AIObserver.recordPopulationTarget("remotes", rmColony, rmHarvest, popTarget);
 
 				if (_.get(popActual, "paladin", 0) < _.get(popTarget, ["paladin", "amount"], 0)) {
 					Memory["shard"]["spawn_requests"].push({

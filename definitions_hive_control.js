@@ -287,6 +287,8 @@
 				}
 
 				this.unregisterRemoteMissionCreep(c);
+				if (typeof AIObserver !== "undefined" && _.isFunction(_.get(AIObserver, "recordRemoteLoss")))
+					AIObserver.recordRemoteLoss(Memory.creeps[c]);
 				delete Memory.creeps[c];
 				deadCreeps.push(c);
 			});
