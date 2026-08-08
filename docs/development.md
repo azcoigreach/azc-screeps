@@ -57,6 +57,8 @@ azc-screeps/
 | `definitions_visual_elements.js` | [sec08a] | Visual overlays |
 | `definitions_cpu_profiling.js` | [sec09a] | CPU profiling |
 | `definitions_grafana_statistics.js` | [sec10a] | Statistics export |
+| `definitions_ai_observer.js` | [sec15a] | Compact strategic telemetry for an external commander |
+| `definitions_ai_interface.js` | [sec15b] | Safe segment transport, order validation, and acknowledgements |
 
 ## Screeps MCP Integration
 
@@ -551,6 +553,16 @@ mcp_screeps_execute_command({ command: "visuals.clear_cache()" });
 - Short pulse: 6-12 ticks (frequent tasks)
 - Long pulse: 24-48 ticks (infrequent tasks)
 
+## AI Commander Interface
+
+The optional Phase 1 AI commander boundary uses Memory Segments 90 (telemetry), 91 (inbox), and 92 (status/results). It defaults to disabled observe mode and has no dependency path into existing colony execution. See [AI Commander Foundation](ai-commander.md) for the schemas, safety rules, console commands, and live verification procedure.
+
+Run its lightweight local regression suite with:
+
+```bash
+node tests/ai_commander.test.js
+```
+
 ## Pixel Generation
 
 The bot includes an automated pixel generation system that intelligently generates pixels when CPU usage is low. See `PIXEL_GENERATION.md` for comprehensive documentation.
@@ -1001,4 +1013,3 @@ When making changes:
 ---
 
 **Remember**: This user prefers thorough documentation for continuity across chat sessions. Always document what you changed, where, why, and how to test it.
-
