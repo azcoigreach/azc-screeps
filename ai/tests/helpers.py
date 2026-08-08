@@ -17,6 +17,7 @@ def config(database_path: Path, **overrides) -> CommanderConfig:
         "heartbeat_interval_seconds": 120.0,
         "review_interval_seconds": 300.0,
         "http_timeout_seconds": 10.0,
+        "openai_timeout_seconds": 120.0,
         "command_expiry_ticks": 1000,
         "write_explanation": True,
         "auto_scout": False,

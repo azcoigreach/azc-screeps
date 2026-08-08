@@ -27,6 +27,7 @@ class ConfigTests(unittest.TestCase):
                 self.assertEqual(config.screeps_token, "screeps-value")
                 self.assertEqual(config.openai_token, "openai-value")
                 self.assertEqual(config.openai_model, "gpt-5.4-nano")
+                self.assertEqual(config.openai_timeout_seconds, 120.0)
                 self.assertNotIn("OPENAI_API_KEY", os.environ)
 
     def test_environment_overrides_env_file(self) -> None:

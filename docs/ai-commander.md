@@ -229,7 +229,9 @@ From `ai/`, use the local virtual environment:
 `history` is the engineering/audit view. `journal` is the readable story of the
 empire. `cost` shows today's, seven-day, lifetime, count, and average estimated
 OpenAI cost. The default model and cost rates are configurable in `.env` using
-the exact credential names `SCREEPS_API_TOKEN` and `OPENAI_API_TOKEN`.
+the exact credential names `SCREEPS_API_TOKEN` and `OPENAI_API_TOKEN`. OpenAI
+uses its own `OPENAI_TIMEOUT_SECONDS` setting (120 seconds by default), separate
+from the shorter Screeps transport timeout.
 
 ## Local verification
 

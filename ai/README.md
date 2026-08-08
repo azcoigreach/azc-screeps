@@ -31,7 +31,8 @@ context.
 
 The default shard is `shard0`. Override `SCREEPS_SHARD` if the test colony is
 on another shard. `OPENAI_MODEL`, polling, heartbeat, strategic review interval,
-database location, and cost rates are configurable using `ai/.env.example`.
+the separate OpenAI request timeout, database location, and cost rates are
+configurable using `ai/.env.example`.
 
 ## Commands
 

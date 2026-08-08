@@ -64,6 +64,7 @@ class CommanderConfig:
     heartbeat_interval_seconds: float
     review_interval_seconds: float
     http_timeout_seconds: float
+    openai_timeout_seconds: float
     command_expiry_ticks: int
     write_explanation: bool
     auto_scout: bool
@@ -88,6 +89,7 @@ class CommanderConfig:
             heartbeat_interval_seconds=_float("AI_HEARTBEAT_INTERVAL_SECONDS", 120.0),
             review_interval_seconds=_float("AI_REVIEW_INTERVAL_SECONDS", 300.0),
             http_timeout_seconds=_float("SCREEPS_HTTP_TIMEOUT", 10.0),
+            openai_timeout_seconds=_float("OPENAI_TIMEOUT_SECONDS", 120.0),
             command_expiry_ticks=_int("AI_COMMAND_EXPIRY_TICKS", 1000),
             write_explanation=_bool("AI_WRITE_EXPLANATION", True),
             auto_scout=_bool("AI_AUTO_SCOUT", False),
@@ -100,6 +102,8 @@ class CommanderConfig:
             raise ValueError("AI_HEARTBEAT_INTERVAL_SECONDS must be at least 60")
         if config.review_interval_seconds < 60:
             raise ValueError("AI_REVIEW_INTERVAL_SECONDS must be at least 60")
+        if config.openai_timeout_seconds <= 0:
+            raise ValueError("OPENAI_TIMEOUT_SECONDS must be positive")
         return config
 
     def require_screeps(self) -> None:

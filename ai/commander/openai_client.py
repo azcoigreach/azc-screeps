@@ -33,7 +33,7 @@ class OpenAIAdvisorClient:
                 raise OpenAIAdvisorError(
                     "The OpenAI SDK is not installed; install ai/requirements.txt"
                 ) from exc
-            client = OpenAI(api_key=config.openai_token, timeout=config.http_timeout_seconds)
+            client = OpenAI(api_key=config.openai_token, timeout=config.openai_timeout_seconds)
         self.client = client
 
     def request_advisory(self, system_prompt: str, telemetry_json: str) -> OpenAIAdvisoryResult:
