@@ -22,6 +22,13 @@ DIAGNOSTIC_ACTIONS = {
     "HAULER_SHORTAGE": "REBALANCE_REMOTE_LOGISTICS",
 }
 
+ACTION_OBJECTIVES = {
+    "REASSESS_REMOTE": "reassess",
+    "ENSURE_REMOTE_RESERVATION": "reservation",
+    "ENSURE_REMOTE_INFRASTRUCTURE": "infrastructure",
+    "REBALANCE_REMOTE_LOGISTICS": "logistics",
+}
+
 
 class AutonomyController:
     """Select at most one bounded deterministic action per poll."""
@@ -55,7 +62,12 @@ class AutonomyController:
         for remote in telemetry.operations.remoteMining:
             for diagnostic in remote.diagnostics:
                 action = DIAGNOSTIC_ACTIONS.get(diagnostic.diagnostic)
-                if action and self._cooled_down(action, remote.room, telemetry.tick, self.ROUTINE_COOLDOWN):
+                objective = ACTION_OBJECTIVES.get(action or "")
+                if (
+                    action
+                    and objective not in remote.objectives
+                    and self._cooled_down(action, remote.room, telemetry.tick, self.ROUTINE_COOLDOWN)
+                ):
                     options.append((severity[diagnostic.severity], action, remote))
         if not options:
             return None

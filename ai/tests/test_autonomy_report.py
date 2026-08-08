@@ -52,6 +52,21 @@ class AutonomyReportTests(unittest.TestCase):
         self.assertEqual(order.parameters, {"room": "W1N2"})
         self.assertEqual(self.history.recent_operations()[0]["action"], "ENSURE_REMOTE_RESERVATION")
 
+    def test_active_remote_objective_prevents_duplicate_maintenance_order(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"]["autoRemoteMaintenance"] = True
+        remote = payload["operations"]["remoteMining"][0]
+        remote["diagnostics"] = [{
+            "diagnostic": "RESERVATION_EXPIRING", "severity": "HIGH", "evidence": {"ticksToEnd": 100}
+        }]
+        remote["reasons"] = ["RESERVATION_EXPIRING"]
+        remote["objectives"] = ["reservation"]
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        self.assertIsNone(AutonomyController(self.history, transport).run(telemetry))
+        self.assertEqual(transport.sent, [])
+
     def test_autonomous_scouting_is_bounded_and_resolves_unknown_intel(self) -> None:
         payload = telemetry_payload()
         payload["authority"]["mode"] = "execute"
