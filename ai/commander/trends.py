@@ -43,13 +43,24 @@ class TrendAnalyzer:
 
     def _window(self, current: Telemetry, target_tick: int, label: str) -> dict[str, Any]:
         baseline_row = self.history.observation_at_or_before(target_tick)
+        partial_window = False
         if baseline_row is None or baseline_row["telemetry"].get("schemaVersion") != 2:
-            return {
-                "available": False,
-                "label": label,
-                "targetTick": target_tick,
-                "reason": "No Phase 3 baseline exists at or before the requested tick",
-            }
+            baseline_row = next(
+                (
+                    row for row in self.history.observations_since(target_tick)
+                    if row["telemetry"].get("schemaVersion") == 2
+                    and row["screeps_tick"] <= current.tick
+                ),
+                None,
+            )
+            if baseline_row is None:
+                return {
+                    "available": False,
+                    "label": label,
+                    "targetTick": target_tick,
+                    "reason": "No Phase 3 baseline exists in the requested period",
+                }
+            partial_window = True
 
         baseline = baseline_row["telemetry"]
         span = max(0, current.tick - int(baseline["tick"]))
@@ -121,6 +132,7 @@ class TrendAnalyzer:
             "baselineTick": int(baseline["tick"]),
             "currentTick": current.tick,
             "spanTicks": span,
+            "partialWindow": partial_window,
             "sampleCount": len(rows),
             "colonies": colony_trends,
             "remotes": remote_trends,

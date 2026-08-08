@@ -46,6 +46,7 @@ class TrendsJournalTests(unittest.TestCase):
 
         self.assertTrue(trend["available"])
         self.assertEqual(trend["spanTicks"], 5000)
+        self.assertFalse(trend["partialWindow"])
         self.assertEqual(trend["colonies"]["W1N1"]["storageEnergy"]["netChange"], 84202)
         self.assertEqual(trend["colonies"]["W1N1"]["controller"]["progressDeltaAtSameRcl"], 25000)
         self.assertEqual(trend["remotes"]["W1N2"]["grossEnergyDelivered"], 52300)
@@ -55,6 +56,10 @@ class TrendsJournalTests(unittest.TestCase):
         self.assertEqual(trend["empire"]["creepDelta"], 2)
         self.assertIn("gross measured delivery", TrendAnalyzer(self.history).build(update.telemetry)["dataProvenance"])
         self.assertIn("net colony balance", TrendAnalyzer(self.history).build(update.telemetry)["dataProvenance"])
+        early = TrendAnalyzer(self.history).build(update.telemetry)["windows"]["20000"]
+        self.assertTrue(early["available"])
+        self.assertTrue(early["partialWindow"])
+        self.assertEqual(early["baselineTick"], 1000)
 
     def test_room_intelligence_staleness_candidates_and_readiness_enum_parse_strictly(self) -> None:
         payload = telemetry_payload()
