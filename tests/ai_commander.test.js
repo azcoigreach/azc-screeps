@@ -573,7 +573,7 @@ test("human console functions remain available", function () {
 	assert.strictEqual(logs.length, 0, "console helpers should produce one Screeps return rendering");
 });
 
-test("telemetry schema v3 reports identity, capabilities, defense, territory, and exact byte size", function () {
+test("telemetry schema v4 reports identity, capabilities, defense, territory, and exact byte size", function () {
 	reset();
 	let structures = [
 		{ structureType: "spawn", my: true, spawning: null },
@@ -603,7 +603,7 @@ test("telemetry schema v3 reports identity, capabilities, defense, territory, an
 	Memory.rooms.W1N1 = { defense: { hostiles: [{ id: "enemy" }] } };
 	let serialized = AIObserver.serialize();
 	let snapshot = JSON.parse(serialized);
-	assert.strictEqual(snapshot.schemaVersion, 3);
+	assert.strictEqual(snapshot.schemaVersion, 4);
 	assert.strictEqual(snapshot.empire.player, "tester");
 	assert.strictEqual(snapshot.colonies.W1N1.controller.rcl, 5);
 	assert.strictEqual(snapshot.colonies.W1N1.energy.storageEnergy, 240000);

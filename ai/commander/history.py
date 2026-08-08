@@ -780,7 +780,7 @@ class HistoryStore:
     def _journal_observation_changes(self, previous: dict[str, Any] | None, telemetry: Telemetry) -> None:
         current = telemetry.model_dump(by_alias=True)
         self._journal_phase6_changes(previous, current, telemetry.tick, telemetry.shard)
-        if previous is None or previous["telemetry"].get("schemaVersion") != 3:
+        if previous is None or previous["telemetry"].get("schemaVersion") not in (3, 4):
             rooms = ", ".join(sorted(telemetry.colonies)) or "no owned rooms"
             self.append_journal(
                 telemetry.tick,

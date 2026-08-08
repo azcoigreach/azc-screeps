@@ -52,10 +52,10 @@ class RemoteEconomics:
             if window is not None else None
         )
         partial = False
-        if baseline_row is None or baseline_row["telemetry"].get("schemaVersion") != 3:
+        if baseline_row is None or baseline_row["telemetry"].get("schemaVersion") not in (3, 4):
             rows = [
                 row for row in self.history.observations_since(0 if window is None else telemetry.tick - window)
-                if row["telemetry"].get("schemaVersion") == 3
+                if row["telemetry"].get("schemaVersion") in (3, 4)
             ]
             baseline_row = rows[0] if rows else None
             partial = True
@@ -68,7 +68,7 @@ class RemoteEconomics:
         span = max(0, telemetry.tick - int(baseline_row["screeps_tick"]))
         rows = [
             row for row in self.history.observations_since(int(baseline_row["screeps_tick"]))
-            if row["telemetry"].get("schemaVersion") == 3
+            if row["telemetry"].get("schemaVersion") in (3, 4)
             and row["screeps_tick"] <= telemetry.tick
         ]
         samples = [item for row in rows if (item := self._remote(row["telemetry"], remote.room))]
