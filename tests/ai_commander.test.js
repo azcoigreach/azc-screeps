@@ -837,6 +837,28 @@ test("respawn protection retains normal GCL claim capacity", function () {
 	assert.strictEqual(snapshot.colonies.W1N1.protection.status, "respawn");
 });
 
+test("expansion readiness treats demand satisfaction as a percentage", function () {
+	reset();
+	AIInterface.initMemory();
+	Memory.ai.protection.summary = { currentProtectionClaimSlots: 22 };
+	let candidate = { room: "W1N2", eligible: true };
+	let colonies = {
+		W1N1: {
+			energy: { storageEnergy: 500000 },
+			population: { demandSatisfaction: 13.33 },
+			spawning: { spawns: 1 }
+		}
+	};
+	let constrained = AIObserver._expansionReadiness([candidate], colonies);
+	assert.ok(constrained.reasons.includes("BLOCKED_BY_HOME_POPULATION"));
+	assert.strictEqual(constrained.recommendedSimultaneousColonizations, 0);
+	assert.strictEqual(constrained.operationalLimitReason, "HOME_STAFFING_OR_BOOTSTRAP_CAPACITY");
+	colonies.W1N1.population.demandSatisfaction = 80;
+	let recovered = AIObserver._expansionReadiness([candidate], colonies);
+	assert.ok(!recovered.reasons.includes("BLOCKED_BY_HOME_POPULATION"));
+	assert.strictEqual(recovered.recommendedSimultaneousColonizations, 1);
+});
+
 test("normal and closed statuses use explicit claim and reachability rules", function () {
 	reset();
 	AIInterface.initMemory();

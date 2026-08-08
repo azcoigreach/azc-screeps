@@ -938,7 +938,7 @@ global.AIObserver = {
 		let healthyOrigin = _.find(_.keys(colonies), room => {
 			let colony = colonies[room];
 			return _.get(colony, ["energy", "storageEnergy"], 0) >= 100000
-				&& (_.get(colony, ["population", "demandSatisfaction"], 0) || 0) >= 0.8
+				&& (_.get(colony, ["population", "demandSatisfaction"], 0) || 0) >= 80
 				&& _.get(colony, ["spawning", "spawns"], 0) > 0;
 		});
 		if (!healthyOrigin) reasons.push("BLOCKED_BY_HOME_POPULATION");
