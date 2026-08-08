@@ -812,7 +812,9 @@ global.AIObserver = {
 	_markScoutObserved: function (roomName) {
 		_.each(_.get(Memory, "rooms", {}), roomMemory => {
 			_.each(_.get(roomMemory, "scout_requests", []), request => {
-				if (request && request.ai_managed === true && _.get(request, ["dest_pos", "roomName"]) === roomName) {
+				if (request && request.ai_managed === true
+					&& !_.includes(["COMPLETED", "FAILED", "EXPIRED"], _.get(request, "status"))
+					&& _.get(request, ["dest_pos", "roomName"]) === roomName) {
 					request.status = "OBSERVED";
 					request.observed_tick = Game.time;
 					request.intel_last_seen_tick = Game.time;

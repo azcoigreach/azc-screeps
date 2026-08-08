@@ -89,7 +89,10 @@ class AutonomyController:
         return order
 
     def _scout(self, telemetry: Telemetry) -> StrategicOrder | None:
-        active = [mission for mission in telemetry.operations.scouting if mission.status not in {"COMPLETED", "FAILED", "EXPIRED"}]
+        active = [
+            mission for mission in telemetry.operations.scouting
+            if mission.status not in {"OBSERVED", "COMPLETED", "FAILED", "EXPIRED"}
+        ]
         if active:
             return None
         targets = list(telemetry.intelligence.unknownRooms) + list(telemetry.intelligence.staleRooms)

@@ -90,6 +90,18 @@ class AutonomyReportTests(unittest.TestCase):
         finally:
             other_history.close()
 
+        payload["operations"]["scouting"][0]["status"] = "OBSERVED"
+        observed = Telemetry.model_validate(payload)
+        observed_history = HistoryStore(Path(self.temp.name) / "observed.db")
+        try:
+            follow_up = AutonomyController(
+                observed_history, FakeTransport(observed_history, observed.tick)
+            ).run(observed)
+            self.assertIsNotNone(follow_up)
+            self.assertEqual(follow_up.action, "SCOUT_ROOM")
+        finally:
+            observed_history.close()
+
     def test_periodic_report_includes_operations_economics_intel_and_cost(self) -> None:
         telemetry = Telemetry.model_validate(telemetry_payload())
         report = build_report(self.history, telemetry, 24)

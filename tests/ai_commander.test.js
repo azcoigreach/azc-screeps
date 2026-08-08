@@ -992,6 +992,18 @@ test("scout terminal failure and expiry do not report successful observation", f
 	assert.strictEqual(Memory.ai.orders.rejected[0].status, "expired");
 });
 
+test("fresh vision cannot rewrite a terminal scout state", function () {
+	reset();
+	AIInterface.initMemory();
+	Memory.rooms.W1N1 = { scout_requests: [{
+		id: "done-scout", ai_managed: true, status: "COMPLETED",
+		dest_pos: { roomName: "W1N2" }, observed_tick: 900
+	}] };
+	AIObserver._markScoutObserved("W1N2");
+	assert.strictEqual(Memory.rooms.W1N1.scout_requests[0].status, "COMPLETED");
+	assert.strictEqual(Memory.rooms.W1N1.scout_requests[0].observed_tick, 900);
+});
+
 test("status acknowledgements serialize to segment 92", function () {
 	reset();
 	configureExecution();
