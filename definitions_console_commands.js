@@ -181,6 +181,17 @@
 		help_ai.push('ai.roomPolicy("W1N2", "PRIORITIZE"|"EXCLUDE"|"NO_REMOTE"|"NO_COLONY"|"NONE")');
 		ai.roomPolicy = function (room, policy) { return AIInterface.consoleRoomPolicy(room, policy); };
 
+		help_ai.push('ai.playerRelation("username", "ALLY"|"NEUTRAL"|"SUSPICIOUS"|"HOSTILE"|"WAR"|"AUTO")');
+		ai.playerRelation = function (username, relation) {
+			if (!_.isString(username) || username.length < 1 || username.length > 50)
+				return "[AI] Error: username must be 1-50 characters.";
+			let allowed = ["ALLY", "NEUTRAL", "SUSPICIOUS", "HOSTILE", "WAR", "AUTO"];
+			if (!_.includes(allowed, relation)) return `[AI] Error: relationship must be ${allowed.join(", ")}.`;
+			if (relation === "AUTO") delete Memory.ai.intelligence.relationshipOverrides[username];
+			else _.set(Memory, ["ai", "intelligence", "relationshipOverrides", username], relation);
+			return `[AI] ${username} relationship ${relation === "AUTO" ? "returned to derived classification" : `set to ${relation}`}.`;
+		};
+
 		help_ai.push("ai.operations() - Show active strategic orders and objectives");
 		ai.operations = function () { return AIInterface.consoleOperations(); };
 

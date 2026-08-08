@@ -146,6 +146,8 @@ class AutonomyReportTests(unittest.TestCase):
         self.assertIn("Expansion planning", report)
         self.assertIn("Protection NOVICE", report)
         self.assertIn("Military preparation", report)
+        self.assertIn("Military intelligence and feasibility", report)
+        self.assertIn("Offensive execution remains disabled", report)
         self.assertIn("Candidate sets", report)
         self.assertIn("API cost", report)
 

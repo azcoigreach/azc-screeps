@@ -132,6 +132,8 @@ global.AIInterface = {
 			_.set(Memory, ["ai", "intelligence", "rooms"], {});
 		if (!_.isArray(_.get(Memory, ["ai", "intelligence", "hostileEvents"])))
 			_.set(Memory, ["ai", "intelligence", "hostileEvents"], []);
+		if (!_.isObject(_.get(Memory, ["ai", "intelligence", "relationshipOverrides"])))
+			_.set(Memory, ["ai", "intelligence", "relationshipOverrides"], {});
 		if (!_.isObject(_.get(Memory, ["ai", "remoteObjectives"])) || _.isArray(_.get(Memory, ["ai", "remoteObjectives"])))
 			_.set(Memory, ["ai", "remoteObjectives"], {});
 		if (!_.isArray(_.get(Memory, ["ai", "scoutHistory"])))

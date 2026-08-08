@@ -6,7 +6,7 @@
 // individual creep state, and long time-series histories stay out of segments.
 global.AIObserver = {
 
-	SCHEMA_VERSION: 4,
+	SCHEMA_VERSION: 5,
 	MAX_HOSTILE_EVENTS: 50,
 	MAX_INTEL_ROOMS: 150,
 	STRUCTURE_TYPES: [
@@ -45,6 +45,8 @@ global.AIObserver = {
 		this._updateColonizations(colonies);
 		let readiness = this._expansionReadiness(territory.claimCandidates, colonies);
 		_.set(Memory, ["ai", "strategy", "expansionReadiness"], _.cloneDeep(readiness));
+		let militaryPreparation = this._militaryPreparation(ownedRooms, protection.empire);
+		let combatAssessments = this._combatAssessments(territory.intelligence.knownRooms, militaryPreparation);
 		let gclLevel = _.get(Game, ["gcl", "level"], 0);
 		return {
 			schemaVersion: this.SCHEMA_VERSION,
@@ -67,7 +69,7 @@ global.AIObserver = {
 					currentProtectionClaimSlots: _.get(protection, ["empire", "currentProtectionClaimSlots"], Math.max(0, gclLevel - ownedRooms.length))
 				},
 				protection: protection.empire,
-				militaryPreparation: this._militaryPreparation(ownedRooms, protection.empire),
+				militaryPreparation: militaryPreparation,
 				creeps: _.size(_.get(Game, "creeps", {})),
 				credits: _.get(Game, ["market", "credits"], 0)
 			},
@@ -84,7 +86,8 @@ global.AIObserver = {
 			remoteCandidates: territory.remoteCandidates,
 			claimCandidates: territory.claimCandidates,
 			expansionReadiness: readiness,
-			playerHistory: _.values(_.get(Memory, ["ai", "intelligence", "players"], {})),
+			playerHistory: this._playerHistory(),
+			combatAssessments: combatAssessments,
 			authority: {
 				mode: _.get(Memory, ["ai", "mode"], "observe"),
 				allowedActions: [
@@ -902,15 +905,24 @@ global.AIObserver = {
 			_.each(encountered, username => {
 				let record = _.get(players, username, {
 					username: username, firstSeenTick: Game.time, lastSeenTick: Game.time,
-					ownedRooms: [], reservations: [], hostileActionsObserved: 0,
+					ownedRooms: [], reservations: [], rcls: {}, hostileActionsObserved: 0,
 					ourCreepsKilled: 0, theirCreepsKilled: 0, territorialProximity: null,
-					currentRelationship: this._relation(username)
+					lastConflictTick: null, currentRelationship: this._relation(username),
+					manualRelationship: null
 				});
 				record.lastSeenTick = Game.time;
 				record.currentRelationship = this._relation(username);
-				if (_.get(controller, ["owner", "username"]) === username) record.ownedRooms = _.uniq(record.ownedRooms.concat(room.name)).slice(-25);
+				record.manualRelationship = _.get(Memory, ["ai", "intelligence", "relationshipOverrides", username], null);
+				if (!_.isObject(record.rcls)) record.rcls = {};
+				if (_.get(controller, ["owner", "username"]) === username) {
+					record.ownedRooms = _.uniq(record.ownedRooms.concat(room.name)).slice(-25);
+					record.rcls[room.name] = _.get(controller, "level", 0);
+				}
 				if (_.get(controller, ["reservation", "username"]) === username) record.reservations = _.uniq(record.reservations.concat(room.name)).slice(-25);
-				if (_.includes(usernames, username) && !_.includes(_.get(previous, "hostilePlayers", []), username)) record.hostileActionsObserved++;
+				if (_.includes(usernames, username) && !_.includes(_.get(previous, "hostilePlayers", []), username)) {
+					record.hostileActionsObserved++;
+					record.lastConflictTick = Game.time;
+				}
 				record.territorialProximity = nearest ? nearest.distance : null;
 				players[username] = record;
 			});
@@ -937,16 +949,22 @@ global.AIObserver = {
 					reservationRelation: this._relation(_.get(controller, ["reservation", "username"], null)),
 					reservationTicks: _.get(controller, ["reservation", "ticksToEnd"], null),
 					rcl: _.get(controller, "level", 0),
-					safeMode: _.get(controller, "safeMode", null)
+					safeMode: _.get(controller, "safeMode", null),
+					safeModeAvailable: _.get(controller, "safeModeAvailable", null),
+					safeModeCooldown: _.get(controller, "safeModeCooldown", null),
+					position: _.get(controller, "pos") ? { x: controller.pos.x, y: controller.pos.y } : null
 				},
 				structures: {
 					spawns: _.filter(structures, structure => structure.structureType === "spawn").length,
+					extensions: _.filter(structures, structure => structure.structureType === "extension").length,
 					towers: _.filter(structures, structure => structure.structureType === "tower").length,
 					towerEnergy: _.sum(_.map(_.filter(structures, structure => structure.structureType === "tower"), tower => this._resource(tower, "energy"))),
 					storage: _.filter(structures, structure => structure.structureType === "storage").length,
 					terminal: _.filter(structures, structure => structure.structureType === "terminal").length,
 					hostile: hostileStructures.length,
-					fortifications: this._hitSummary(_.filter(structures, structure => _.includes(["rampart", "constructedWall"], structure.structureType)))
+					fortifications: this._hitSummary(_.filter(structures, structure => _.includes(["rampart", "constructedWall"], structure.structureType))),
+					ramparts: this._hitSummary(_.filter(structures, structure => structure.structureType === "rampart")),
+					walls: this._hitSummary(_.filter(structures, structure => structure.structureType === "constructedWall"))
 				},
 				hostileCreeps: hostiles.length,
 				hostilePlayers: usernames,
@@ -955,6 +973,7 @@ global.AIObserver = {
 					bodyParts: _.countBy(_.get(creep, "body", []), part => _.get(part, "type", "unknown")),
 					boosts: _.uniq(_.filter(_.map(_.get(creep, "body", []), part => _.get(part, "boost", null))))
 				})),
+				combatSummary: this._hostileCombatSummary(hostiles),
 				playerRelations: _.map(usernames, username => ({ username: username, relation: this._relation(username) })),
 				lastHostileSightingTick: hostiles.length > 0 ? Game.time : _.get(previous, "lastHostileSightingTick", null),
 				hostileSightingsTotal: _.get(previous, "hostileSightingsTotal", 0) + ((hostiles.length > 0 && _.get(previous, "hostileCreeps", 0) === 0) ? 1 : 0),
@@ -962,6 +981,7 @@ global.AIObserver = {
 				distanceFromColony: nearest ? nearest.distance : null,
 				routeLength: routeLength,
 				routeRooms: routeRooms,
+				reinforcementRoutes: routeRooms.length > 0 ? [routeRooms] : [],
 				routeStatus: routeStatus
 			};
 			if (hostiles.length > 0 && _.get(previous, "hostileCreeps", 0) === 0) {
@@ -1390,6 +1410,122 @@ global.AIObserver = {
 		return blocked;
 	},
 
+	_hostileCombatSummary: function (creeps) {
+		let result = {
+			creeps: (creeps || []).length, meleeDps: 0, rangedDps: 0,
+			healingPerTick: 0, dismantlePerTick: 0, activeBodyParts: {}, boosts: []
+		};
+		_.each(creeps || [], creep => {
+			_.each(_.get(creep, "body", []), part => {
+				if (_.get(part, "hits", 100) <= 0) return;
+				let type = _.get(part, "type", part);
+				let boost = _.get(part, "boost", null);
+				result.activeBodyParts[type] = _.get(result.activeBodyParts, type, 0) + 1;
+				if (boost) result.boosts.push(boost);
+				let multiplier = action => {
+					if (!boost || typeof BOOSTS === "undefined") return 1;
+					return _.get(BOOSTS, [type, boost, action], 1);
+				};
+				if (type === "attack") result.meleeDps += 30 * multiplier("attack");
+				if (type === "ranged_attack") result.rangedDps += 10 * multiplier("rangedAttack");
+				if (type === "heal") result.healingPerTick += 12 * multiplier("heal");
+				if (type === "work") result.dismantlePerTick += 50 * multiplier("dismantle");
+			});
+		});
+		result.boosts = _.uniq(result.boosts);
+		return result;
+	},
+
+	_bodyTemplateSummary: function (name, level) {
+		if (typeof Creep_Body === "undefined" || !_.isFunction(_.get(Creep_Body, "getBody")))
+			return { available: false, reason: "CREEP_BODY_LIBRARY_UNAVAILABLE" };
+		let body = Creep_Body.getBody(name, level) || [];
+		let costs = { move: 50, work: 100, carry: 50, attack: 80, ranged_attack: 150, heal: 250, claim: 600, tough: 10 };
+		let combat = this._hostileCombatSummary([{ body: _.map(body, type => ({ type: type, hits: 100 })) }]);
+		return {
+			available: body.length > 0, level: level, parts: _.countBy(body), bodyParts: body.length,
+			energyCost: _.sum(_.map(body, type => _.get(costs, type, 0))), spawnTicks: body.length * 3,
+			meleeDps: combat.meleeDps, rangedDps: combat.rangedDps,
+			healingPerTick: combat.healingPerTick, dismantlePerTick: combat.dismantlePerTick
+		};
+	},
+
+	_towerPowerAtRange: function (basePower, distance, towers) {
+		let optimal = typeof TOWER_OPTIMAL_RANGE !== "undefined" ? TOWER_OPTIMAL_RANGE : 5;
+		let falloffRange = typeof TOWER_FALLOFF_RANGE !== "undefined" ? TOWER_FALLOFF_RANGE : 20;
+		let falloff = typeof TOWER_FALLOFF !== "undefined" ? TOWER_FALLOFF : 0.75;
+		let multiplier = distance <= optimal ? 1 : (distance >= falloffRange ? 1 - falloff
+			: 1 - falloff * (distance - optimal) / (falloffRange - optimal));
+		return Math.round(Math.max(0, towers) * basePower * multiplier);
+	},
+
+	_combatAssessments: function (rooms, capability) {
+		let staleAfter = _.get(Memory, ["ai", "policy", "intelStaleTicks"], 10000);
+		let templates = _.get(capability, "combatBodyTemplates", {});
+		let soldier = _.get(templates, "soldier", {}), healer = _.get(templates, "healer", {}), dismantler = _.get(templates, "dismantler", {});
+		let ourMelee = _.get(soldier, "available", false) ? _.get(soldier, "meleeDps", 0) * 2 : 0;
+		let ourRanged = _.get(soldier, "available", false) ? _.get(soldier, "rangedDps", 0) * 2 : 0;
+		let ourHealing = _.get(healer, "available", false) ? _.get(healer, "healingPerTick", 0) * 2 : 0;
+		let ourDismantle = _.get(dismantler, "available", false) ? _.get(dismantler, "dismantlePerTick", 0) : 0;
+		return _.map(_.filter(rooms || [], intel => {
+			let relation = _.get(intel, ["controller", "ownerRelation"], "NEUTRAL");
+			return (_.get(intel, ["controller", "owner"]) != null && !_.includes(["SELF", "ALLY"], relation))
+				|| (relation !== "SELF" && _.get(intel, "hostileCreeps", 0) > 0);
+		}), intel => {
+			let age = _.get(intel, "intelAgeTicks", Math.max(0, Game.time - _.get(intel, "lastSeenTick", Game.time)));
+			let stale = _.get(intel, "stale", age >= staleAfter);
+			let towers = _.get(intel, ["structures", "towers"], 0);
+			let towerEnergy = _.get(intel, ["structures", "towerEnergy"], 0);
+			let activeTowers = towerEnergy > 0 ? Math.min(towers, Math.ceil(towerEnergy / 10)) : 0;
+			let towerAttack = typeof TOWER_POWER_ATTACK !== "undefined" ? TOWER_POWER_ATTACK : 600;
+			let towerHeal = typeof TOWER_POWER_HEAL !== "undefined" ? TOWER_POWER_HEAL : 400;
+			let enemy = _.get(intel, "combatSummary", {});
+			let towerDps10 = this._towerPowerAtRange(towerAttack, 10, activeTowers);
+			let enemyPressure = towerDps10 + _.get(enemy, "meleeDps", 0) + _.get(enemy, "rangedDps", 0) + _.get(enemy, "healingPerTick", 0);
+			let ourPressure = ourMelee + ourRanged + ourHealing;
+			let advantage = enemyPressure > 0 ? ourPressure / enemyPressure : (ourPressure > 0 ? 5 : 0);
+			let confidence = stale ? 0 : Math.max(0.1, Math.min(1, 1 - age / staleAfter));
+			let safeMode = _.get(intel, ["controller", "safeMode"], null);
+			let fortificationHits = _.max([
+				_.get(intel, ["structures", "ramparts", "max"], 0) || 0,
+				_.get(intel, ["structures", "walls", "max"], 0) || 0,
+				_.get(intel, ["structures", "fortifications", "max"], 0) || 0
+			]);
+			let breachTicks = ourDismantle > 0 ? Math.ceil(fortificationHits / ourDismantle) : null;
+			let travelTicks = (_.get(intel, "routeLength", 0) || 0) * 50;
+			let travelLoss = Math.min(1, travelTicks / 1500);
+			let success = safeMode ? 0 : Math.max(0, Math.min(0.99,
+				(advantage / (advantage + 1)) * confidence * (1 - travelLoss * 0.5)));
+			let recommendation = stale ? "STALE_INTEL" : (safeMode ? "SAFE_MODE_ACTIVE"
+				: (_.get(capability, ["spawnThroughput", "spawns"], 0) < 1 || ourPressure <= 0 ? "INSUFFICIENT_CAPABILITY"
+					: (success >= 0.7 && (breachTicks == null || breachTicks <= 1500) ? "FEASIBLE" : "HIGH_RISK")));
+			return {
+				target: intel.room, owner: _.get(intel, ["controller", "owner"], null), intelAgeTicks: age,
+				intelConfidence: Math.round(confidence * 100) / 100,
+				defense: {
+					towers: towers, activeTowers: activeTowers, towerEnergy: towerEnergy,
+					towerDpsByRange: { range5: this._towerPowerAtRange(towerAttack, 5, activeTowers), range10: towerDps10, range20: this._towerPowerAtRange(towerAttack, 20, activeTowers) },
+					towerHealingByRange: { range5: this._towerPowerAtRange(towerHeal, 5, activeTowers), range10: this._towerPowerAtRange(towerHeal, 10, activeTowers), range20: this._towerPowerAtRange(towerHeal, 20, activeTowers) },
+					defenders: _.get(enemy, "creeps", 0), meleeDps: _.get(enemy, "meleeDps", 0), rangedDps: _.get(enemy, "rangedDps", 0),
+					healingPerTick: _.get(enemy, "healingPerTick", 0), rampartMax: _.get(intel, ["structures", "ramparts", "max"], null), wallMax: _.get(intel, ["structures", "walls", "max"], null)
+				},
+				ourCapability: {
+					attackers: 2, healers: 2, dismantlers: _.get(dismantler, "available", false) ? 1 : 0,
+					meleeDps: ourMelee, rangedDps: ourRanged, healingPerTick: ourHealing, dismantlePerTick: ourDismantle,
+					spawnReplacementPartsPer1000: _.get(capability, ["spawnThroughput", "theoreticalBodyPartsPer1000Ticks"], 0)
+				},
+				constraints: {
+					safeModeTicks: safeMode, safeModeAvailable: _.get(intel, ["controller", "safeModeAvailable"], null), breachTicks: breachTicks,
+					routeLength: _.get(intel, "routeLength", null), travelTicks: travelTicks, travelLifetimeLoss: Math.round(travelLoss * 100) / 100,
+					boostEffectsIncluded: _.get(enemy, "boosts", []).length > 0
+				},
+				estimatedForceAdvantage: Math.round(advantage * 100) / 100,
+				estimatedSuccess: Math.round(success * 100) / 100,
+				recommendation: recommendation, executionAuthorized: false
+			};
+		});
+	},
+
 	_militaryPreparation: function (ownedRooms, protection) {
 		let structures = [];
 		_.each(ownedRooms || [], room => {
@@ -1412,6 +1548,24 @@ global.AIObserver = {
 			});
 		});
 		let nukers = _.filter(structures, structure => structure.structureType === "nuker" && _.get(structure, "my", true) !== false).length;
+		let terminals = _.filter(structures, structure => structure.structureType === "terminal" && _.get(structure, "my", true) !== false).length;
+		let labs = _.filter(structures, structure => structure.structureType === "lab" && _.get(structure, "my", true) !== false).length;
+		let maxRcl = _.max(_.map(ownedRooms || [], room => _.get(room, ["controller", "level"], 0))) || 0;
+		let maxEnergyCapacity = _.max(_.map(ownedRooms || [], room => _.get(room, "energyCapacityAvailable", 0))) || 0;
+		let templateLevel = Math.max(1, maxRcl);
+		let combatBodyTemplates = {};
+		_.each(["soldier", "ranger", "healer", "dismantler"], name => {
+			let template = this._bodyTemplateSummary(name, templateLevel);
+			if (_.get(template, "energyCost", 0) > maxEnergyCapacity) {
+				template.available = false;
+				template.reason = `ENERGY_CAPACITY_${maxEnergyCapacity}_BELOW_COST_${template.energyCost}`;
+			}
+			combatBodyTemplates[name] = template;
+		});
+		let boostResources = {};
+		_.each(resources, (amount, resourceType) => {
+			if (resourceType !== "energy") boostResources[resourceType] = amount;
+		});
 		return {
 			spawnThroughput: {
 				spawns: spawns.length,
@@ -1421,6 +1575,14 @@ global.AIObserver = {
 				theoreticalBodyPartsPer1000Ticks: Math.floor(spawns.length * 1000 / 3)
 			},
 			availableCombatResources: resources,
+			availableEnergy: _.get(resources, "energy", 0),
+			terminalStructures: terminals,
+			labStructures: labs,
+			boostResources: boostResources,
+			combatBodyTemplates: combatBodyTemplates,
+			maximumRcl: maxRcl,
+			maximumSpawnEnergyCapacity: maxEnergyCapacity,
+			capabilityLimit: maxRcl < 6 ? "RCL_BELOW_LABS_AND_TERMINAL_FORCE_PROJECTION" : (labs < 1 ? "NO_LABS" : "FULLER_CAPABILITY_AVAILABLE"),
 			nukerStructures: nukers,
 			nukersOperational: _.get(protection, ["rules", "nukersAllowed"], false) && nukers > 0,
 			offensiveCombatAuthorized: false
@@ -1531,6 +1693,9 @@ global.AIObserver = {
 		let player = this._player === undefined ? this._playerName() : this._player;
 		if (player && username === player)
 			return "SELF";
+		let override = _.get(Memory, ["ai", "intelligence", "relationshipOverrides", username]);
+		if (_.includes(["ALLY", "NEUTRAL", "SUSPICIOUS", "HOSTILE", "WAR"], override))
+			return override;
 		if (_.includes(_.get(Memory, ["hive", "allies"], []), username))
 			return "ALLY";
 		if (username === "Invader" || username === "Source Keeper")
@@ -1538,6 +1703,16 @@ global.AIObserver = {
 		if (_.includes(_.get(Memory, ["hive", "enemies"], []), username))
 			return "HOSTILE";
 		return player ? "NEUTRAL" : "UNKNOWN";
+	},
+
+	_playerHistory: function () {
+		return _.map(_.values(_.get(Memory, ["ai", "intelligence", "players"], {})), record => {
+			let copy = _.cloneDeep(record);
+			let override = _.get(Memory, ["ai", "intelligence", "relationshipOverrides", copy.username], null);
+			copy.manualRelationship = override;
+			copy.currentRelationship = override || this._relation(copy.username);
+			return copy;
+		});
 	},
 
 	_nearestColony: function (roomName, ownedNames) {

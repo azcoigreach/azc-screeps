@@ -260,7 +260,7 @@ and `ATTACK_ROOM` remain unavailable.
 
 | Segment | Direction | Contents |
 |---|---|---|
-| 90 | Bot to commander | Strategic telemetry schema v3 |
+| 90 | Bot to commander | Strategic telemetry schema v5 |
 | 91 | Commander to bot | Heartbeat and command inbox schema v1 |
 | 92 | Bot to commander | Status and command results schema v1 |
 
@@ -461,6 +461,7 @@ ai.scouting(true|false)
 ai.autoScouting(true|false)
 ai.colonization(true|false)       // manual colonization authority
 ai.autoColonization(true|false)   // explicit automatic authority; default off
+ai.playerRelation("username", "ALLY"|"NEUTRAL"|"SUSPICIOUS"|"HOSTILE"|"WAR"|"AUTO")
 ai.mode("observe"|"execute")
 ai.pause()
 ai.resume()
@@ -474,6 +475,7 @@ From `ai/`:
 .venv/bin/python -m commander.main operations
 .venv/bin/python -m commander.main remotes
 .venv/bin/python -m commander.main intel
+.venv/bin/python -m commander.main military
 .venv/bin/python -m commander.main advise
 .venv/bin/python -m commander.main journal --last 20
 .venv/bin/python -m commander.main cost
@@ -514,10 +516,31 @@ only switches the active World branch:
 PYTHONPATH=ai ai/.venv/bin/python tools/screeps_branch.py activate default --production
 ```
 
-For a live Phase 4 test, first collect schema-v3 telemetry in observe mode and
+For a live deployment test, first collect schema-v5 telemetry and
 confirm all colonies/remotes, player identity, population demand, CPU, bucket,
 and payload. Then enable only the needed policy, issue one action for one existing
 remote, disable automatic authority after dispatch, wait through the declared
 evaluation window, and inspect `operations`, `remotes`, `journal`, and `cost`.
 Never combine the first remote intervention with claiming, new remote
 establishment, combat, markets, or production changes.
+
+## Phase 7A military intelligence
+
+Telemetry schema v5 adds a read-only military foundation. Player records persist
+first/last seen ticks, rooms, reservations, observed RCLs, proximity, conflict
+counters, last conflict, and the current relationship. Human relationship
+overrides support `ALLY`, `NEUTRAL`, `SUSPICIOUS`, `HOSTILE`, and `WAR`, and take
+precedence over derived classifications.
+
+Visible strategically relevant rooms summarize controller and safe-mode state,
+tower energy, spawns/extensions, storage/terminal, separate rampart and wall
+statistics, active hostile body parts, boosts, route distance, reinforcement
+route, and intel age. Stale intel produces `STALE_INTEL`; it is never treated as
+a current combat picture.
+
+The deterministic feasibility layer calculates tower attack/heal falloff,
+boosted hostile melee/ranged/heal/dismantle output, affordable AZC combat-template
+output, fortification breach time, spawn replacement throughput, route travel
+loss, and safe-mode constraints. `python -m commander.main military` renders the
+local report. Phase 7A deliberately exposes no `ATTACK_ROOM` action:
+`executionAuthorized` and offensive authority remain false.

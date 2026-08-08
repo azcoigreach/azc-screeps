@@ -90,6 +90,20 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
                 f"reserved {len(player.reservations)}, proximity {player.territorialProximity}, "
                 f"hostile actions {player.hostileActionsObserved}."
             )
+    lines.extend(["", "Military intelligence and feasibility"])
+    lines.append(
+        f"Capability: RCL {military.maximumRcl}, room energy capacity "
+        f"{military.maximumSpawnEnergyCapacity}, {military.terminalStructures} terminals, "
+        f"{military.labStructures} labs; {military.capabilityLimit}. Offensive execution remains disabled."
+    )
+    if not telemetry.combatAssessments:
+        lines.append("- No fresh foreign-owned or currently hostile room is available for deterministic assessment.")
+    for assessment in telemetry.combatAssessments:
+        lines.append(
+            f"- {assessment.get('target')}: {assessment.get('recommendation')}; intel confidence "
+            f"{assessment.get('intelConfidence')}; force advantage {assessment.get('estimatedForceAdvantage')}; "
+            f"estimated success {assessment.get('estimatedSuccess')}; execution authorized NO."
+        )
     readiness = telemetry.expansionReadiness
     lines.extend(["", "Expansion planning"])
     lines.append(

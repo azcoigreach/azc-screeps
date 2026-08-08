@@ -570,10 +570,63 @@ test("human console functions remain available", function () {
 	assert.ok(ai.explain().indexOf("No explanation") >= 0);
 	assert.ok(ai.autoColonization(false).indexOf("disabled") >= 0);
 	assert.strictEqual(Memory.ai.policy.autoColonization, false);
+	assert.ok(ai.playerRelation("Neighbor", "SUSPICIOUS").indexOf("SUSPICIOUS") >= 0);
+	AIObserver._player = "tester";
+	assert.strictEqual(AIObserver._relation("Neighbor"), "SUSPICIOUS");
+	assert.ok(ai.playerRelation("Neighbor", "AUTO").indexOf("derived") >= 0);
+	assert.strictEqual(AIObserver._relation("Neighbor"), "NEUTRAL");
 	assert.strictEqual(logs.length, 0, "console helpers should produce one Screeps return rendering");
 });
 
-test("telemetry schema v4 reports identity, capabilities, defense, territory, and exact byte size", function () {
+test("combat math uses tower falloff, active boosted parts, safe mode, and stale-intel gates", function () {
+	reset();
+	AIInterface.initMemory();
+	global.BOOSTS = {
+		attack: { XUH2O: { attack: 4 } },
+		heal: { XLHO2: { heal: 4 } }
+	};
+	let hostile = AIObserver._hostileCombatSummary([{
+		body: [
+			{ type: "attack", hits: 100, boost: "XUH2O" },
+			{ type: "heal", hits: 100, boost: "XLHO2" },
+			{ type: "ranged_attack", hits: 0 }
+		]
+	}]);
+	assert.strictEqual(hostile.meleeDps, 120);
+	assert.strictEqual(hostile.healingPerTick, 48);
+	assert.strictEqual(hostile.rangedDps, 0, "destroyed body parts must not contribute DPS");
+	assert.strictEqual(AIObserver._towerPowerAtRange(600, 5, 2), 1200);
+	assert.strictEqual(AIObserver._towerPowerAtRange(600, 20, 2), 300);
+
+	let room = {
+		room: "W2N2", lastSeenTick: Game.time, intelAgeTicks: 100, stale: false,
+		controller: { owner: "Enemy", ownerRelation: "NEUTRAL", safeMode: 500, safeModeAvailable: 1 },
+		structures: {
+			towers: 1, towerEnergy: 1000,
+			fortifications: { max: 100000 }, ramparts: { max: 100000 }, walls: { max: 50000 }
+		},
+		hostileCreeps: 1, combatSummary: hostile, routeLength: 2
+	};
+	let capability = {
+		spawnThroughput: { spawns: 1, theoreticalBodyPartsPer1000Ticks: 333 },
+		combatBodyTemplates: {
+			soldier: { available: true, meleeDps: 300, rangedDps: 20 },
+			healer: { available: true, healingPerTick: 120 },
+			dismantler: { available: true, dismantlePerTick: 250 }
+		}
+	};
+	let assessment = AIObserver._combatAssessments([room], capability)[0];
+	assert.strictEqual(assessment.recommendation, "SAFE_MODE_ACTIVE");
+	assert.strictEqual(assessment.estimatedSuccess, 0);
+	assert.strictEqual(assessment.constraints.breachTicks, 400);
+	assert.strictEqual(assessment.executionAuthorized, false);
+	room.stale = true;
+	room.intelAgeTicks = 11000;
+	assert.strictEqual(AIObserver._combatAssessments([room], capability)[0].recommendation, "STALE_INTEL");
+	delete global.BOOSTS;
+});
+
+test("telemetry schema v5 reports identity, capabilities, defense, territory, and exact byte size", function () {
 	reset();
 	let structures = [
 		{ structureType: "spawn", my: true, spawning: null },
@@ -603,7 +656,7 @@ test("telemetry schema v4 reports identity, capabilities, defense, territory, an
 	Memory.rooms.W1N1 = { defense: { hostiles: [{ id: "enemy" }] } };
 	let serialized = AIObserver.serialize();
 	let snapshot = JSON.parse(serialized);
-	assert.strictEqual(snapshot.schemaVersion, 4);
+	assert.strictEqual(snapshot.schemaVersion, 5);
 	assert.strictEqual(snapshot.empire.player, "tester");
 	assert.strictEqual(snapshot.colonies.W1N1.controller.rcl, 5);
 	assert.strictEqual(snapshot.colonies.W1N1.energy.storageEnergy, 240000);

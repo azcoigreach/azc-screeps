@@ -45,6 +45,7 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("operations", help="show active and evaluated AI operations")
     commands.add_parser("remotes", help="show deterministic remote health and economics")
     commands.add_parser("intel", help="show known, stale, and unknown territorial intelligence")
+    commands.add_parser("military", help="show deterministic military capability and combat feasibility")
     commands.add_parser("candidates", help="show remote and permanent-colony candidate rankings")
     report = commands.add_parser("report", help="show a periodic operations briefing")
     report.add_argument("--hours", type=float, default=24.0)
@@ -449,6 +450,50 @@ def show_intel(telemetry: Telemetry) -> None:
         )
 
 
+def show_military(telemetry: Telemetry) -> None:
+    military = telemetry.empire.militaryPreparation
+    print("=== DETERMINISTIC MILITARY INTELLIGENCE ===")
+    print("Offensive execution: DISABLED")
+    print(
+        f"Spawns: {military.spawnThroughput.spawns} "
+        f"({military.spawnThroughput.idle} idle); replacement throughput "
+        f"{military.spawnThroughput.theoreticalBodyPartsPer1000Ticks} body parts/1k ticks"
+    )
+    print(
+        f"Energy: {military.availableEnergy:,}; terminals: {military.terminalStructures}; "
+        f"labs: {military.labStructures}; boosts: {military.boostResources or 'none'}"
+    )
+    print(
+        f"Maximum RCL/room energy capacity: {military.maximumRcl}/"
+        f"{military.maximumSpawnEnergyCapacity}; limit: {military.capabilityLimit}"
+    )
+    print("Combat body templates:")
+    for name, template in military.combatBodyTemplates.items():
+        print(
+            f"- {name}: {'AVAILABLE' if template.get('available') else 'UNAVAILABLE'}; "
+            f"cost={template.get('energyCost', 'unknown')}; parts={template.get('bodyParts', 'unknown')}; "
+            f"melee/ranged/heal/dismantle={template.get('meleeDps', 0)}/"
+            f"{template.get('rangedDps', 0)}/{template.get('healingPerTick', 0)}/"
+            f"{template.get('dismantlePerTick', 0)}; reason={template.get('reason', 'none')}"
+        )
+    print("Combat feasibility:")
+    if not telemetry.combatAssessments:
+        print("- No fresh foreign-owned or currently hostile room is in the intelligence set.")
+    for assessment in telemetry.combatAssessments:
+        defense = assessment.get("defense", {})
+        capability = assessment.get("ourCapability", {})
+        constraints = assessment.get("constraints", {})
+        print(
+            f"- {assessment.get('target')}: {assessment.get('recommendation')}; "
+            f"intel age/confidence={assessment.get('intelAgeTicks')}/{assessment.get('intelConfidence')}; "
+            f"towers/defenders={defense.get('towers', 0)}/{defense.get('defenders', 0)}; "
+            f"our DPS/heal={capability.get('meleeDps', 0) + capability.get('rangedDps', 0)}/"
+            f"{capability.get('healingPerTick', 0)}; advantage/success="
+            f"{assessment.get('estimatedForceAdvantage')}/{assessment.get('estimatedSuccess')}; "
+            f"safe mode={constraints.get('safeModeTicks')}; breach ticks={constraints.get('breachTicks')}"
+        )
+
+
 def show_candidates(telemetry: Telemetry) -> None:
     print("=== REMOTE CANDIDATES ===")
     if not telemetry.remoteCandidates:
@@ -520,13 +565,15 @@ def main(argv: list[str] | None = None) -> int:
             if args.command == "status":
                 print(display_status(transport))
                 return 0 if health.screeps_online else 1
-            if args.command in {"remotes", "intel", "candidates", "report"}:
+            if args.command in {"remotes", "intel", "military", "candidates", "report"}:
                 if health.telemetry is None:
                     raise TransportError("No valid telemetry is available")
                 if args.command == "remotes":
                     show_remotes(history, health.telemetry)
                 elif args.command == "intel":
                     show_intel(health.telemetry)
+                elif args.command == "military":
+                    show_military(health.telemetry)
                 elif args.command == "candidates":
                     show_candidates(health.telemetry)
                 else:

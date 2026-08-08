@@ -117,7 +117,7 @@ def telemetry_payload(tick: int = 12345) -> dict:
         }
 
     return {
-        "schemaVersion": 4,
+        "schemaVersion": 5,
         "tick": tick,
         "shard": "shard0",
         "cpu": {"limit": 100.0, "used": 12.5, "bucket": 9000},

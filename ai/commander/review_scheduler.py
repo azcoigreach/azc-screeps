@@ -322,6 +322,14 @@ class ReviewScheduler:
                 )
                 for player in data.get("playerHistory", [])
             ),
+            "combatAssessments": sorted(
+                (
+                    item.get("target"), item.get("recommendation"),
+                    round(float(item.get("intelConfidence") or 0), 1),
+                    round(float(item.get("estimatedForceAdvantage") or 0), 1),
+                )
+                for item in data.get("combatAssessments", [])
+            ),
             "cpuState": "CRITICAL" if data.get("cpu", {}).get("bucket", 0) < 1000 else "LOW" if data.get("cpu", {}).get("bucket", 0) < 3000 else "NORMAL",
         }
         encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
@@ -439,6 +447,16 @@ class ReviewScheduler:
                 add(
                     f"player_relationship:{username}:{player.get('currentRelationship')}", MATERIAL,
                     f"Relationship with {username} changed to {player.get('currentRelationship')}",
+                )
+
+        old_combat = {item.get("target"): item for item in old.get("combatAssessments", [])}
+        new_combat = {item.get("target"): item for item in new.get("combatAssessments", [])}
+        for target, assessment in new_combat.items():
+            before = old_combat.get(target, {})
+            if before.get("recommendation") != assessment.get("recommendation"):
+                add(
+                    f"combat_feasibility:{target}:{assessment.get('recommendation')}", MATERIAL,
+                    f"Deterministic military assessment for {target} changed to {assessment.get('recommendation')}",
                 )
 
         old_readiness = old.get("expansionReadiness", {})

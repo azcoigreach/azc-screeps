@@ -68,6 +68,7 @@ PYTHONPATH=ai ai/.venv/bin/python -m commander.main explain "Testing external co
 PYTHONPATH=ai ai/.venv/bin/python -m commander.main history
 PYTHONPATH=ai ai/.venv/bin/python -m commander.main journal --last 20
 PYTHONPATH=ai ai/.venv/bin/python -m commander.main cost
+PYTHONPATH=ai ai/.venv/bin/python -m commander.main military
 PYTHONPATH=ai ai/.venv/bin/python -m commander.main candidates
 PYTHONPATH=ai ai/.venv/bin/python -m commander.main report --hours 24
 PYTHONPATH=ai ai/.venv/bin/python -m commander.main colonize W38N11 W37N11 def_hor 20 20
@@ -86,6 +87,18 @@ Scheduler state and metrics persist in SQLite, and an expiring ownership lease
 prevents two watcher processes from running against the same shard/database.
 Manual `advise` requests always run. `Ctrl-C` stops only the external commander;
 the existing deterministic Screeps bot continues independently.
+
+`military` is deterministic and never issues an attack. It reports spawn
+replacement throughput, available energy/terminal/lab/boost capacity, the AZC
+combat body templates the current rooms can afford, and fresh foreign-room
+feasibility assessments. The math includes tower falloff, active hostile body
+parts and boosts, healing, breach time, travel loss, safe mode, and intel
+confidence; every assessment retains `executionAuthorized: false`.
+
+Use `ai.playerRelation("username", "ALLY"|"NEUTRAL"|"SUSPICIOUS"|"HOSTILE"|"WAR"|"AUTO")`
+in the Screeps console to set or clear a persistent human relationship override.
+Human overrides win over derived reputation, and owning a room alone does not
+classify another player as hostile.
 
 Memory-segment writes use a persistent quota budget shared through the SQLite
 database. Server `X-RateLimit-*` headers override the conservative local

@@ -91,6 +91,14 @@ class SpawnThroughput(StrictModel):
 class MilitaryPreparation(StrictModel):
     spawnThroughput: SpawnThroughput = Field(default_factory=SpawnThroughput)
     availableCombatResources: dict[str, int] = Field(default_factory=dict)
+    availableEnergy: int = 0
+    terminalStructures: int = 0
+    labStructures: int = 0
+    boostResources: dict[str, int] = Field(default_factory=dict)
+    combatBodyTemplates: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    maximumRcl: int = 0
+    maximumSpawnEnergyCapacity: int = 0
+    capabilityLimit: str = "UNKNOWN"
     nukerStructures: int = 0
     nukersOperational: bool = False
     offensiveCombatAuthorized: bool = False
@@ -419,22 +427,28 @@ class OperationsState(StrictModel):
 class IntelController(StrictModel):
     status: Literal["none", "owned", "owned_other", "reserved", "neutral"]
     owner: str | None
-    ownerRelation: Literal["SELF", "ALLY", "NEUTRAL", "HOSTILE", "UNKNOWN"]
+    ownerRelation: Literal["SELF", "ALLY", "NEUTRAL", "SUSPICIOUS", "HOSTILE", "WAR", "UNKNOWN"]
     reservation: str | None
-    reservationRelation: Literal["SELF", "ALLY", "NEUTRAL", "HOSTILE", "UNKNOWN"]
+    reservationRelation: Literal["SELF", "ALLY", "NEUTRAL", "SUSPICIOUS", "HOSTILE", "WAR", "UNKNOWN"]
     reservationTicks: int | None
     rcl: int
     safeMode: int | None
+    safeModeAvailable: int | None = None
+    safeModeCooldown: int | None = None
+    position: dict[str, int] | None = None
 
 
 class IntelStructures(StrictModel):
     spawns: int
+    extensions: int = 0
     towers: int
     towerEnergy: int = 0
     storage: int
     terminal: int
     hostile: int
     fortifications: HitSummary
+    ramparts: HitSummary = Field(default_factory=lambda: HitSummary(count=0, min=None, median=None, max=None))
+    walls: HitSummary = Field(default_factory=lambda: HitSummary(count=0, min=None, median=None, max=None))
 
 
 class RoomIntel(StrictModel):
@@ -453,6 +467,7 @@ class RoomIntel(StrictModel):
     hostileCreeps: int
     hostilePlayers: list[str]
     hostileCombat: list[dict[str, Any]] = Field(default_factory=list)
+    combatSummary: dict[str, Any] = Field(default_factory=dict)
     playerRelations: list[dict[str, str]]
     lastHostileSightingTick: int | None
     hostileSightingsTotal: int
@@ -460,6 +475,7 @@ class RoomIntel(StrictModel):
     distanceFromColony: int | None
     routeLength: int | None
     routeRooms: list[str] = Field(default_factory=list)
+    reinforcementRoutes: list[list[str]] = Field(default_factory=list)
     routeStatus: Literal["available", "no_path", "protected_boundary", "unknown", "unavailable"]
     intelAgeTicks: int
     stale: bool
@@ -575,11 +591,14 @@ class PlayerHistory(StrictModel):
     lastSeenTick: int
     ownedRooms: list[str]
     reservations: list[str]
+    rcls: dict[str, int] = Field(default_factory=dict)
     hostileActionsObserved: int
     ourCreepsKilled: int
     theirCreepsKilled: int
+    lastConflictTick: int | None = None
     territorialProximity: int | None
-    currentRelationship: Literal["SELF", "ALLY", "NEUTRAL", "HOSTILE", "UNKNOWN"]
+    currentRelationship: Literal["SELF", "ALLY", "NEUTRAL", "SUSPICIOUS", "HOSTILE", "WAR", "UNKNOWN"]
+    manualRelationship: Literal["ALLY", "NEUTRAL", "SUSPICIOUS", "HOSTILE", "WAR"] | None = None
 
 
 class ExecutionAuthority(StrictModel):
@@ -616,7 +635,7 @@ class ObserverMetrics(StrictModel):
 
 
 class Telemetry(StrictModel):
-    schemaVersion: Literal[3, 4]
+    schemaVersion: Literal[3, 4, 5]
     tick: int
     shard: str
     cpu: CPUState
@@ -632,6 +651,7 @@ class Telemetry(StrictModel):
         origin=None, claimSlots=0, spawnCapacity="CONSTRAINED"
     ))
     playerHistory: list[PlayerHistory] = Field(default_factory=list)
+    combatAssessments: list[dict[str, Any]] = Field(default_factory=list)
     authority: AuthorityState
     alerts: list[str]
     observer: ObserverMetrics

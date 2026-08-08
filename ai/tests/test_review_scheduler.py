@@ -131,6 +131,21 @@ class ReviewSchedulerTests(unittest.TestCase):
         self.assertEqual(decision.reason, "urgent strategic event")
         self.assertTrue(any(event.key == "colonizations:W1N2:FAILED" for event in decision.events))
 
+    def test_combat_feasibility_change_is_a_material_strategic_event(self) -> None:
+        payload = self.establish_reviewed_baseline()
+        assessed = json.loads(json.dumps(payload))
+        assessed["tick"] += 1
+        assessed["combatAssessments"] = [{
+            "target": "W2N2", "recommendation": "HIGH_RISK",
+            "intelConfidence": 0.9, "estimatedForceAdvantage": 0.7,
+        }]
+        decision = self.scheduler.evaluate(self.process(assessed), self.now + 200)
+        self.assertFalse(decision.should_review, "material military changes still debounce")
+        self.assertTrue(any(
+            event.key == "combat_feasibility:W2N2:HIGH_RISK" and event.priority == "MATERIAL"
+            for event in decision.events
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()
