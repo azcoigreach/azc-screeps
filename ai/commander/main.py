@@ -258,7 +258,7 @@ def watch(config: CommanderConfig, history: HistoryStore, transport: CommanderTr
                             print(f"Deterministic autonomy queued {automatic_order.action}: {automatic_order.id}")
                     except TransportError as exc:
                         history.record_event("autonomy_deferred", str(exc), {})
-                if automatic_order is None and health.current_tick is not None and now - last_heartbeat >= config.heartbeat_interval_seconds:
+                if queued_order is None and automatic_order is None and health.current_tick is not None and now - last_heartbeat >= config.heartbeat_interval_seconds:
                     if transport.heartbeat():
                         last_heartbeat = now
                 update = transport.last_observation

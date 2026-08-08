@@ -156,6 +156,24 @@ class TransportHistoryTests(unittest.TestCase):
         self.assertFalse(transport.heartbeat())
         self.assertEqual(len(fake.writes), write_count)
 
+    def test_newer_empty_status_releases_heartbeat_from_stale_sent_order(self) -> None:
+        now = [1_000.0]
+        fake = FakeScreepsClient(json.dumps(telemetry_payload()), json.dumps(status_payload()))
+        transport = CommanderTransport(fake, self.history, self.config, clock=lambda: now[0])
+        transport.poll()
+        transport.send_safe_command("NOOP", reason="acknowledgement was pruned")
+        write_count = len(fake.writes)
+
+        newer_status = status_payload(12346)
+        newer_status["orders"]["pending"] = 0
+        newer_status["orders"]["active"] = 0
+        fake.status = json.dumps(newer_status)
+        transport.poll()
+        now[0] += 121
+
+        self.assertTrue(transport.heartbeat())
+        self.assertEqual(len(fake.writes), write_count + 1)
+
     def test_active_order_releases_heartbeat_after_contact_cadence(self) -> None:
         payload = telemetry_payload()
         now = [1_000.0]

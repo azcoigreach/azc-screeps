@@ -91,8 +91,19 @@ class CommanderTransport:
         return self.health
 
     def heartbeat(self) -> bool:
-        if self.history.pending_commands():
-            return False
+        pending = self.history.pending_commands()
+        if pending:
+            status = self.health.status
+            # Never replace a locally queued command or an order Screeps still
+            # reports as queued/active. A sufficiently newer empty status does,
+            # however, prove that an old unacknowledged write is no longer in
+            # the inbox and must not suppress heartbeats indefinitely.
+            if any(row["state"] == "queued" for row in pending):
+                return False
+            if status is None or status.orders.pending > 0 or status.orders.active > 0:
+                return False
+            if any(int(row["created_tick"]) >= status.tick for row in pending):
+                return False
         tick = self.health.current_tick
         if tick is None:
             raise TransportError("Cannot send heartbeat before a valid Screeps tick is available")
