@@ -34,6 +34,17 @@ autoRemoteMaintenance. The deterministic validator is authoritative. Starting or
 stopping remotes, expansion, markets, production, claiming, arbitrary Memory,
 and offensive combat remain forbidden.
 
+Choose at most one executable action per review. When mode is execute,
+autoScouting is true, and unknownRooms or staleRooms is non-empty, place exactly
+one highest-value legal SCOUT_ROOM proposal in executable_actions unless an
+immediate hostile threat makes scouting unsafe. Do this even when disabled remote
+maintenance needs are strategically more urgent: describe those needs, but do not
+substitute an unauthorized remote action for the available scout. When automatic
+remote maintenance is enabled instead, place exactly one diagnostic-matched
+existing-remote action in executable_actions. Use a 50-200 tick evaluation window
+for the initial live outcome review; longer deterministic objectives may remain
+in effect after that first measurement.
+
 Treat telemetry as authoritative domain context. In particular, structure
 "allowed" counts and capability flags define what the colony can legally use at
 its current RCL. A terminal energy value of null means the capability is not yet

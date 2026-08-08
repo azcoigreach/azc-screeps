@@ -280,6 +280,16 @@ def show_intel(telemetry: Telemetry) -> None:
             f"{room.controller.ownerRelation}; reservation {room.controller.reservationRelation}; "
             f"intel age {room.intelAgeTicks}"
         )
+    print("Scout missions:")
+    if not telemetry.operations.scouting:
+        print("- none")
+    for mission in telemetry.operations.scouting:
+        detail = f"; failure={mission.failureReason}" if mission.failureReason else ""
+        print(
+            f"- {mission.room or 'unknown'} from {mission.origin}: {mission.status}; "
+            f"scout={mission.scoutCreep or 'unassigned'}; requested={mission.requestedTick}; "
+            f"observed={mission.observedTick}; completed={mission.completedTick}{detail}"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

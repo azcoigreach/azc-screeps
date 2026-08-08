@@ -144,6 +144,33 @@ class TransportHistoryTests(unittest.TestCase):
                 "SET_EXECUTION_MODE", {"mode": "unsafe"}, reason="invalid"
             )
 
+    def test_rejected_command_closes_linked_operation_as_failed(self) -> None:
+        fake = FakeScreepsClient(json.dumps(telemetry_payload()), json.dumps(status_payload()))
+        transport = CommanderTransport(fake, self.history, self.config)
+        transport.poll()
+        command = transport.send_safe_command(
+            "REBALANCE_REMOTE_LOGISTICS", {"room": "W1N2"}, reason="confirmed backlog"
+        )
+        self.history.create_operation(
+            "op-rejected", command.id, "ENERGY_BACKLOG", "W1N2",
+            command.action, command.reason, 0.9, 12345, {}, "reduce backlog", 13345,
+        )
+        fake.status = json.dumps(status_payload(results=[{
+            "id": command.id,
+            "action": command.action,
+            "status": "rejected",
+            "message": "Execution gate closed",
+            "reason": "remote maintenance authority is off",
+            "tick": 12346,
+        }]))
+
+        transport.poll()
+
+        operation = self.history.recent_operations()[0]
+        self.assertEqual(operation["outcome"], "FAILED")
+        self.assertEqual(operation["result"], {"commandStatus": "rejected"})
+        self.assertEqual(operation["outcome_reason"], "remote maintenance authority is off")
+
 
 if __name__ == "__main__":
     unittest.main()

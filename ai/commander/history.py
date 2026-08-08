@@ -80,6 +80,7 @@ class HistoryStore:
                 output_tokens INTEGER,
                 total_tokens INTEGER,
                 estimated_cost_usd REAL,
+                advisory_json TEXT,
                 created_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_recommendations_tick ON recommendations(observation_tick DESC);
@@ -131,6 +132,7 @@ class HistoryStore:
         )
         self._ensure_column("recommendations", "expansion_readiness", "TEXT")
         self._ensure_column("recommendations", "journal_entry", "TEXT")
+        self._ensure_column("recommendations", "advisory_json", "TEXT")
         self.connection.commit()
 
     def _ensure_column(self, table: str, column: str, declaration: str) -> None:
@@ -246,7 +248,7 @@ class HistoryStore:
 
     def recent_commands(self, limit: int = 10) -> list[dict[str, Any]]:
         rows = self.connection.execute(
-            "SELECT * FROM commands ORDER BY updated_at DESC LIMIT ?", (limit,)
+            "SELECT * FROM commands ORDER BY created_tick DESC, created_at DESC LIMIT ?", (limit,)
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -265,8 +267,8 @@ class HistoryStore:
                 recommendation_id, observation_tick, model, summary, strategic_assessment,
                 concerns_json, recommended_actions_json, questions_json, ready_for_expansion,
                 expansion_readiness, journal_entry, confidence, input_tokens, output_tokens,
-                total_tokens, estimated_cost_usd, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                total_tokens, estimated_cost_usd, advisory_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 recommendation_id, observation_tick, model, advisory.summary, advisory.strategic_assessment,
@@ -276,7 +278,7 @@ class HistoryStore:
                 1 if advisory.expansion_readiness == "READY" else 0,
                 advisory.expansion_readiness, advisory.journal_narrative, advisory.confidence,
                 usage.get("input_tokens"), usage.get("output_tokens"), usage.get("total_tokens"),
-                estimated_cost_usd, utc_now(),
+                estimated_cost_usd, advisory.model_dump_json(by_alias=True), utc_now(),
             ),
         )
         self.append_journal(
@@ -422,6 +424,27 @@ class HistoryStore:
             (tick, utc_now(), command_id),
         )
         self.connection.commit()
+
+    def fail_operation_by_command(
+        self,
+        command_id: str,
+        tick: int,
+        command_status: str,
+        reason: str,
+    ) -> None:
+        operation = self.connection.execute(
+            "SELECT operation_id FROM operations WHERE command_id = ? AND outcome IS NULL",
+            (command_id,),
+        ).fetchone()
+        if operation is None:
+            return
+        self.complete_operation(
+            operation["operation_id"],
+            tick,
+            "FAILED",
+            {"commandStatus": command_status},
+            reason,
+        )
 
     def due_operations(self, tick: int) -> list[dict[str, Any]]:
         rows = self.connection.execute(

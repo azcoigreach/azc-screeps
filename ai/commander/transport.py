@@ -166,6 +166,9 @@ class CommanderTransport:
             self.history.update_command(result.id, state, result.model_dump())
             if state == "completed":
                 self.history.mark_operation_executed(result.id, result.tick)
+            elif state in {"rejected", "failed", "expired"}:
+                detail = result.reason or result.message or f"Command ended with status {state}"
+                self.history.fail_operation_by_command(result.id, result.tick, state, detail)
 
     def _expire_local_commands(self) -> None:
         tick = self.health.current_tick

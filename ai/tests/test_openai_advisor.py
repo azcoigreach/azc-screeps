@@ -144,7 +144,12 @@ class OpenAIAdvisorTests(unittest.TestCase):
             run = service.advise(telemetry)
             self.assertEqual(run.explanation_command_id, "writeback-1")
             self.assertEqual(transport.calls[0][0], "SET_EXPLANATION")
-            self.assertEqual(len(history.recent_recommendations()), 1)
+            recommendations = history.recent_recommendations()
+            self.assertEqual(len(recommendations), 1)
+            self.assertEqual(
+                Advisory.model_validate_json(recommendations[0]["advisory_json"]).summary,
+                advisory().summary,
+            )
             self.assertEqual(history.recent_journal()[0]["entry_type"], "ai_review")
             output = format_advisory(run, telemetry.tick)
             self.assertIn("AI COMMANDER ADVISORY", output)
