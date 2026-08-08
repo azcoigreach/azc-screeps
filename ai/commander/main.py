@@ -116,7 +116,8 @@ def display_status(transport: CommanderTransport) -> str:
         lines.extend([
             f"Interface: {'enabled' if health.status.interface.enabled else 'disabled'} / {health.status.interface.mode}",
             f"Commander seen by Screeps: {'ONLINE' if health.status.commander.online else 'OFFLINE'}",
-            f"Orders completed/rejected: {health.status.orders.completed}/{health.status.orders.rejected}",
+            f"Orders current queued/active: {health.status.orders.pending}/{health.status.orders.active}",
+            f"Orders lifetime completed/rejected: {health.status.orders.completed}/{health.status.orders.rejected}",
         ])
     if health.telemetry:
         telemetry = health.telemetry

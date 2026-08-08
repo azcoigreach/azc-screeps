@@ -97,6 +97,13 @@ global.AIInterface = {
 			if (!_.isArray(_.get(Memory, ["ai", "orders", key])))
 				_.set(Memory, ["ai", "orders", key], []);
 		});
+		if (!_.isObject(_.get(Memory, ["ai", "orders", "totals"])) || _.isArray(_.get(Memory, ["ai", "orders", "totals"])))
+			_.set(Memory, ["ai", "orders", "totals"], {
+				completed: _.get(Memory, ["ai", "orders", "completed"], []).length,
+				rejected: _.get(Memory, ["ai", "orders", "rejected"], []).length
+			});
+		this._default(["ai", "orders", "totals", "completed"], 0, value => this._isInteger(value) && value >= 0);
+		this._default(["ai", "orders", "totals", "rejected"], 0, value => this._isInteger(value) && value >= 0);
 		if (!_.isObject(_.get(Memory, ["ai", "orders", "seen"])) || _.isArray(_.get(Memory, ["ai", "orders", "seen"])))
 			_.set(Memory, ["ai", "orders", "seen"], {});
 
@@ -814,6 +821,8 @@ global.AIInterface = {
 		if (details)
 			result.details = details;
 		completed.push(result);
+		_.set(Memory, ["ai", "orders", "totals", "completed"],
+			_.get(Memory, ["ai", "orders", "totals", "completed"], 0) + 1);
 		this._trim(completed, this.MAX_HISTORY);
 		console.log(`[AI] Command completed: ${order.id} (${order.action})`);
 	},
@@ -827,6 +836,8 @@ global.AIInterface = {
 			reason: reason,
 			tick: Game.time
 		});
+		_.set(Memory, ["ai", "orders", "totals", "rejected"],
+			_.get(Memory, ["ai", "orders", "totals", "rejected"], 0) + 1);
 		this._trim(rejected, this.MAX_HISTORY);
 		console.log(`[AI] Command rejected: ${id} (${reason})`);
 	},
@@ -897,8 +908,8 @@ global.AIInterface = {
 					action: order.action,
 					startedTick: _.get(order, "startedTick", _.get(order, "createdTick", Game.time))
 				})).slice(-this.MAX_ACTIVE),
-				completed: completed.length,
-				rejected: rejected.length,
+				completed: _.get(Memory, ["ai", "orders", "totals", "completed"], completed.length),
+				rejected: _.get(Memory, ["ai", "orders", "totals", "rejected"], rejected.length),
 				recentResults: completed.slice(-10).concat(rejected.slice(-10)).sort((left, right) => left.tick - right.tick).slice(-10)
 			},
 			lastDecision: _.get(Memory, ["ai", "status", "lastDecision"]),
@@ -988,16 +999,17 @@ global.AIInterface = {
 			`Commander: ${_.get(commander, "online", false) ? "ONLINE" : "OFFLINE"}`,
 			`Last Seen: ${lastSeenText}`,
 			"",
-			`Pending Orders: ${orders.pending.length}`,
-			`Active Orders: ${orders.active.length}`,
-			`Completed Orders: ${orders.completed.length}`,
-			`Rejected Orders: ${orders.rejected.length}`,
+			`Queued Orders (current): ${orders.pending.length}`,
+			`Active Orders (current): ${orders.active.length}`,
+			`Completed Orders (lifetime): ${_.get(orders, ["totals", "completed"], orders.completed.length)}`,
+			`Rejected Orders (lifetime): ${_.get(orders, ["totals", "rejected"], orders.rejected.length)}`,
+			`Recent Results Retained: ${orders.completed.length} completed / ${orders.rejected.length} rejected`,
 			"",
 			"Last Decision:",
 			decision == null ? "No decision received." : `${decision.action} (${decision.id}) at tick ${decision.tick}`,
 			"",
 			"Policy:",
-			`Expansion: ${policy.allowExpansion ? "enabled" : "disabled"}`,
+			`Permanent Colony Claims: ${policy.allowColonization ? (policy.autoColonization ? "AUTO" : "manual only") : "disabled"}`,
 			`Combat: ${policy.allowCombat ? "enabled" : "disabled"}`,
 			`Market: ${policy.allowMarket ? "enabled" : "disabled"}`,
 			`Production: ${policy.allowProduction ? "enabled" : "disabled"}`,
@@ -1007,36 +1019,29 @@ global.AIInterface = {
 			`Colonization: ${policy.allowColonization ? (policy.autoColonization ? "AUTO" : "allowed") : "disabled"}`,
 			`Offensive Combat: disabled`
 		];
-		let output = lines.join("\n");
-		console.log(output);
-		return output;
+		return lines.join("\n");
 	},
 
 	consoleOrders: function () {
 		this.initMemory();
 		let orders = _.get(Memory, ["ai", "orders"]);
-		let output = JSON.stringify({
-			pending: orders.pending,
-			active: orders.active,
-			completed: orders.completed,
-			rejected: orders.rejected
+		return JSON.stringify({
+			current: { queued: orders.pending, active: orders.active },
+			lifetime: _.get(orders, "totals", { completed: orders.completed.length, rejected: orders.rejected.length }),
+			recentHistory: { completed: orders.completed, rejected: orders.rejected }
 		}, null, 2);
-		console.log(output);
-		return output;
 	},
 
 	consoleExplain: function () {
 		this.initMemory();
 		let explanation = _.get(Memory, ["ai", "status", "lastExplanation"]);
-		let output = explanation || "No explanation received.";
-		console.log(output);
-		return output;
+		return explanation || "No explanation received.";
 	},
 
 	consoleAuthority: function () {
 		this.initMemory();
 		let policy = _.get(Memory, ["ai", "policy"]);
-		let output = [
+		return [
 			"=== AI AUTHORITY ===", "",
 			`Mode: ${_.get(Memory, ["ai", "mode"], "observe").toUpperCase()}`,
 			`SCOUT_ROOM: ${policy.allowScouting ? (policy.autoScouting ? "AUTO" : "MANUAL") : "DISABLED"}`,
@@ -1049,30 +1054,24 @@ global.AIInterface = {
 			`COLONIZE_ROOM: ${policy.allowColonization ? (policy.autoColonization ? "AUTO" : "MANUAL") : "DISABLED"}`,
 			"ATTACK_ROOM: DISABLED", "MARKET: DISABLED", "PRODUCTION: DISABLED"
 		].join("\n");
-		console.log(output);
-		return output;
 	},
 
 	consoleOperations: function () {
 		this.initMemory();
-		let output = JSON.stringify({
+		return JSON.stringify({
 			activeOrders: _.get(Memory, ["ai", "orders", "active"], []),
 			remoteObjectives: _.get(Memory, ["ai", "remoteObjectives"], {}),
 			scoutHistory: _.get(Memory, ["ai", "scoutHistory"], []).slice(-10)
 		}, null, 2);
-		console.log(output);
-		return output;
 	},
 
 	consoleRemoteOps: function () {
 		this.initMemory();
-		let output = JSON.stringify({
+		return JSON.stringify({
 			authorized: _.get(Memory, ["ai", "policy", "allowRemoteMaintenance"], false),
 			automatic: _.get(Memory, ["ai", "policy", "autoRemoteMaintenance"], false),
 			objectives: _.get(Memory, ["ai", "remoteObjectives"], {})
 		}, null, 2);
-		console.log(output);
-		return output;
 	},
 
 	consoleRoomPolicy: function (room, policy) {

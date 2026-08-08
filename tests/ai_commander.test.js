@@ -134,6 +134,7 @@ test("AI Memory initializes safely", function () {
 	assert.strictEqual(Memory.ai.enabled, false);
 	assert.strictEqual(Memory.ai.mode, "observe");
 	assert.deepStrictEqual(Memory.ai.orders.pending, []);
+	assert.deepStrictEqual(Memory.ai.orders.totals, { completed: 0, rejected: 0 });
 	assert.strictEqual(Memory.ai.policy.allowCombat, false);
 	assert.strictEqual(Memory.ai.policy.allowScouting, false);
 	assert.strictEqual(Memory.ai.policy.intelligenceRadius, 2);
@@ -554,7 +555,11 @@ test("human console functions remain available", function () {
 	reset();
 	require("../definitions_console_commands");
 	Console.Init();
-	assert.ok(ai.status().indexOf("=== AI COMMANDER ===") >= 0);
+	let status = ai.status();
+	assert.ok(status.indexOf("=== AI COMMANDER ===") >= 0);
+	assert.ok(status.indexOf("Permanent Colony Claims") >= 0);
+	assert.ok(status.indexOf("Completed Orders (lifetime)") >= 0);
+	assert.strictEqual(logs.length, 0, "returned console output must not also be logged");
 	assert.ok(ai.enable().indexOf("enabled") >= 0);
 	assert.strictEqual(Memory.ai.enabled, true);
 	assert.ok(ai.pause().indexOf("paused") >= 0);
@@ -563,6 +568,7 @@ test("human console functions remain available", function () {
 	assert.ok(ai.scouting(true).indexOf("enabled") >= 0);
 	assert.strictEqual(Memory.ai.policy.allowScouting, true);
 	assert.ok(ai.explain().indexOf("No explanation") >= 0);
+	assert.strictEqual(logs.length, 0, "console helpers should produce one Screeps return rendering");
 });
 
 test("telemetry schema v3 reports identity, capabilities, defense, territory, and exact byte size", function () {
@@ -1211,6 +1217,7 @@ test("status acknowledgements serialize to segment 92", function () {
 	let status = JSON.parse(RawMemory.segments[92]);
 	assert.strictEqual(status.schemaVersion, 1);
 	assert.strictEqual(status.orders.completed, 1);
+	assert.strictEqual(Memory.ai.orders.totals.completed, 1);
 	assert.deepStrictEqual(status.orders.activeOrders, []);
 	assert.strictEqual(status.orders.recentResults[0].id, "status-1");
 });
