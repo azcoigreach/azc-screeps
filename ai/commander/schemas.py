@@ -127,6 +127,8 @@ class PopulationRole(StrictModel):
     spawning: int
     queued: int
     dyingSoon: int
+    waitingTicks: int
+    lastSpawnResult: int | None
     state: Literal[
         "SATISFIED", "UNDERSTAFFED", "REPLACEMENT_PENDING",
         "INTENTIONALLY_DISABLED", "NOT_REQUIRED", "MISCONFIGURED"
@@ -148,6 +150,7 @@ class PopulationState(StrictModel):
     queuedTotal: int
     dyingSoonTotal: int
     lastDemandTick: int | None
+    oldestWaitingTicks: int
     demandSatisfaction: float | None
 
 
@@ -171,6 +174,7 @@ class ColonizationOperation(StrictModel):
 class RouteState(StrictModel):
     length: int | None
     rooms: list[str]
+    status: Literal["DIRECT", "CONFIGURED", "FAILED"]
 
 
 class ReservationState(StrictModel):

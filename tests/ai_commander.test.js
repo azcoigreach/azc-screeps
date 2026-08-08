@@ -44,6 +44,7 @@ global.isPulse_Mid = function () { return true; };
 
 require("../definitions_ai_observer");
 require("../definitions_ai_interface");
+require("../definitions_hive_control");
 
 function reset(options) {
 	options = options || {};
@@ -437,6 +438,7 @@ test("remote telemetry reports configuration, staffing, mining, delivery, losses
 	assert.strictEqual(remote.active, true);
 	assert.strictEqual(remote.sourceCount, 2);
 	assert.strictEqual(remote.route.length, 1);
+	assert.strictEqual(remote.route.status, "CONFIGURED");
 	assert.strictEqual(remote.reservation.ticksToEnd, 3000);
 	assert.strictEqual(remote.population.roles.remote_miner.alive, 1);
 	assert.strictEqual(remote.population.roles.remote_hauler.dyingSoon, 1);
@@ -527,16 +529,29 @@ test("population reports active demand, replacements, and undemanded roles witho
 		expected: { worker: 2, upgrader: 1 }, requested: { worker: 1 },
 		source: "AZC_DYNAMIC_COLONY_TARGET", updatedTick: Game.time
 	} } };
+	Memory.shard = { spawn_wait: { "W1N1|W1N1|worker|": { firstSeenTick: 500, lastResult: -6 } } };
 	Game.creeps.worker = { memory: { room: "W1N1", colony: "W1N1", role: "worker" }, ticksToLive: 1000 };
 	Game.creeps.carrier = { memory: { room: "W1N1", colony: "W1N1", role: "carrier" }, ticksToLive: 1000 };
 	let population = AIObserver.buildSnapshot().colonies.W1N1.population;
 	assert.strictEqual(population.state, "UNDERSTAFFED");
 	assert.strictEqual(population.roles.worker.state, "REPLACEMENT_PENDING");
+	assert.strictEqual(population.roles.worker.waitingTicks, 500);
+	assert.strictEqual(population.roles.worker.lastSpawnResult, -6);
 	assert.strictEqual(population.roles.upgrader.state, "UNDERSTAFFED");
 	assert.strictEqual(population.roles.carrier.state, "NOT_REQUIRED");
 	assert.strictEqual(population.aliveTotal, 1);
 	assert.strictEqual(population.assignedTotal, 2);
 	assert.strictEqual(population.demandSatisfaction, 33.33);
+});
+
+test("spawn demand aging bounds starvation without outranking emergency requests", function () {
+	reset({ time: 2000 });
+	let worker = { room: "W1N1", priority: 23, args: { room: "W1N1", role: "worker" } };
+	let emergency = { room: "W1N1", priority: 3, args: { room: "W1N1", role: "soldier" } };
+	assert.strictEqual(Control.spawnRequestKey(worker), "W1N1|W1N1|worker|");
+	assert.strictEqual(Control.effectiveSpawnPriority(worker, { firstSeenTick: 1000 }), 13);
+	assert.strictEqual(Control.effectiveSpawnPriority(worker, { firstSeenTick: 0 }), 10);
+	assert.strictEqual(Control.effectiveSpawnPriority(emergency, { firstSeenTick: 0 }), 3);
 });
 
 test("remote health exposes deterministic backlog, infrastructure, staffing, reservation, and safety diagnostics", function () {

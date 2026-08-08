@@ -1303,8 +1303,17 @@
 			_.set(Memory, ["shard", "spawn_requests"], shardRequests);
 		}
 
-		// Cache spawn requests to avoid repeated memory lookups
+		// Cache spawn requests to avoid repeated memory lookups. Population
+		// requests are rebuilt on pulses, so retain only bounded wait metadata to
+		// prevent low-priority but required roles from starving forever.
 		let spawnRequests = _.get(Memory, ["shard", "spawn_requests"]);
+		if (!_.isObject(_.get(Memory, ["shard", "spawn_wait"])) || _.isArray(_.get(Memory, ["shard", "spawn_wait"])))
+			_.set(Memory, ["shard", "spawn_wait"], {});
+		let wait = _.get(Memory, ["shard", "spawn_wait"]);
+		_.each(_.keys(wait), key => {
+			if (Game.time - _.get(wait, [key, "lastSeenTick"], Game.time) > 1000)
+				delete wait[key];
+		});
 		if (!spawnRequests || spawnRequests.length == 0) {
 			Stats_CPU.End("Hive", "processSpawnRequests");
 			return;
@@ -1333,6 +1342,12 @@
 		let requestsByRoom = {};
 		for (let request of spawnRequests) {
 			let room = _.get(request, "room");
+			let waitKey = this.spawnRequestKey(request);
+			if (!wait[waitKey])
+				wait[waitKey] = { firstSeenTick: Game.time, lastSeenTick: Game.time, attempts: 0 };
+			wait[waitKey].lastSeenTick = Game.time;
+			request._spawnWaitKey = waitKey;
+			request._effectivePriority = this.effectiveSpawnPriority(request, wait[waitKey]);
 			if (!requestsByRoom[room]) {
 				requestsByRoom[room] = [];
 			}
@@ -1344,7 +1359,13 @@
 			if (availableSpawns.length == 0) break;
 
 			// Sort by priority and get highest priority request
-			let roomRequests = requestsByRoom[room].sort((a, b) => _.get(a, "priority", 999) - _.get(b, "priority", 999));
+			let roomRequests = requestsByRoom[room].sort((a, b) => {
+				let priority = _.get(a, "_effectivePriority", 999) - _.get(b, "_effectivePriority", 999);
+				if (priority !== 0)
+					return priority;
+				return _.get(wait, [a._spawnWaitKey, "firstSeenTick"], Game.time)
+					- _.get(wait, [b._spawnWaitKey, "firstSeenTick"], Game.time);
+			});
 			let request = roomRequests[0];
 			if (!request) continue;
 
@@ -1453,6 +1474,12 @@
 				? bestSpawn.spawnCreep(body, name, { memory: request.args })
 				: bestSpawn.spawnCreep(body, name, { memory: request.args, energyStructures: energies });
 
+			if (_.has(wait, request._spawnWaitKey)) {
+				wait[request._spawnWaitKey].attempts++;
+				wait[request._spawnWaitKey].lastResult = result;
+				wait[request._spawnWaitKey].lastAttemptTick = Game.time;
+			}
+
 			if (result == OK) {
 				console.log(`[Spawns] Spawning `
 					+ (bestSpawn.room.name == room ? `${room}  ` : `${bestSpawn.room.name} -> ${room}  `)
@@ -1474,10 +1501,29 @@
 						roomSpawns.splice(roomIndex, 1);
 					}
 				}
+				delete wait[request._spawnWaitKey];
 			}
 		}
 
 		Stats_CPU.End("Hive", "processSpawnRequests");
+	},
+
+	spawnRequestKey: function (request) {
+		let args = _.get(request, "args", {});
+		return [
+			_.get(request, "room", "unknown"),
+			_.get(args, "room", _.get(request, "room", "unknown")),
+			_.get(args, "role", _.get(request, "role", "unknown")),
+			_.get(args, "subrole", "")
+		].join("|");
+	},
+
+	effectiveSpawnPriority: function (request, wait) {
+		let base = _.get(request, "priority", 999);
+		if (base < 10)
+			return base;
+		let age = Math.max(0, Game.time - _.get(wait, "firstSeenTick", Game.time));
+		return Math.max(10, base - Math.floor(age / 200) * 2);
 	},
 
 	processSpawnRenewing: function () {

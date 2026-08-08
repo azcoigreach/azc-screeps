@@ -32,8 +32,8 @@ def telemetry_payload(tick: int = 12345) -> dict:
     hit_summary = {"count": 0, "min": None, "median": None, "max": None}
     population = {
         "roles": {
-            "harvester": {"expected": 2, "desired": 2, "alive": 2, "spawning": 0, "queued": 0, "dyingSoon": 0, "state": "SATISFIED"},
-            "hauler": {"expected": 2, "desired": 2, "alive": 2, "spawning": 0, "queued": 0, "dyingSoon": 0, "state": "SATISFIED"},
+            "harvester": {"expected": 2, "desired": 2, "alive": 2, "spawning": 0, "queued": 0, "dyingSoon": 0, "waitingTicks": 0, "lastSpawnResult": None, "state": "SATISFIED"},
+            "hauler": {"expected": 2, "desired": 2, "alive": 2, "spawning": 0, "queued": 0, "dyingSoon": 0, "waitingTicks": 0, "lastSpawnResult": None, "state": "SATISFIED"},
         },
         "source": "AZC_DYNAMIC_COLONY_TARGET",
         "state": "SATISFIED",
@@ -45,12 +45,13 @@ def telemetry_payload(tick: int = 12345) -> dict:
         "queuedTotal": 0,
         "dyingSoonTotal": 0,
         "lastDemandTick": tick,
+        "oldestWaitingTicks": 0,
         "demandSatisfaction": 1.0,
     }
     remote_population = {
         "roles": {
-            "burrower": {"expected": 1, "desired": 1, "alive": 1, "spawning": 0, "queued": 0, "dyingSoon": 0, "state": "SATISFIED"},
-            "carrier": {"expected": 1, "desired": 1, "alive": 1, "spawning": 0, "queued": 0, "dyingSoon": 0, "state": "SATISFIED"},
+            "burrower": {"expected": 1, "desired": 1, "alive": 1, "spawning": 0, "queued": 0, "dyingSoon": 0, "waitingTicks": 0, "lastSpawnResult": None, "state": "SATISFIED"},
+            "carrier": {"expected": 1, "desired": 1, "alive": 1, "spawning": 0, "queued": 0, "dyingSoon": 0, "waitingTicks": 0, "lastSpawnResult": None, "state": "SATISFIED"},
         },
         "source": "AZC_DYNAMIC_REMOTE_TARGET",
         "state": "SATISFIED",
@@ -62,6 +63,7 @@ def telemetry_payload(tick: int = 12345) -> dict:
         "queuedTotal": 0,
         "dyingSoonTotal": 0,
         "lastDemandTick": tick,
+        "oldestWaitingTicks": 0,
         "demandSatisfaction": 1.0,
     }
 
@@ -76,7 +78,7 @@ def telemetry_payload(tick: int = 12345) -> dict:
             "lastSeenTick": tick,
             "intelAgeTicks": 0,
             "sourceCount": 2,
-            "route": {"length": 1, "rooms": ["W1N1", room]},
+            "route": {"length": 1, "rooms": ["W1N1", room], "status": "CONFIGURED"},
             "reservation": {
                 "username": "tester", "relation": "SELF", "ticksToEnd": 3000,
                 "warningTicks": 2000, "reserverPresent": 1,

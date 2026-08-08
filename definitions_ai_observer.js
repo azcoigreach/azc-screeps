@@ -330,6 +330,8 @@ global.AIObserver = {
 		let names = _.uniq(_.keys(expected || {}).concat(_.keys(actual), _.keys(queued)));
 		_.each(names, role => {
 			let state = _.get(actual, role, { alive: 0, spawning: 0, dyingSoon: 0 });
+			let wait = _.get(Memory, ["shard", "spawn_wait", `${colonyName}|${roomName}|${role}|`]);
+			let waitingTicks = wait ? Math.max(0, Game.time - _.get(wait, "firstSeenTick", Game.time)) : 0;
 			let desired = _.get(expected, role, 0);
 			let available = state.alive + state.spawning;
 			let roleState = desired <= 0
@@ -344,6 +346,8 @@ global.AIObserver = {
 				spawning: state.spawning,
 				queued: _.get(queued, role, 0),
 				dyingSoon: state.dyingSoon,
+				waitingTicks: waitingTicks,
+				lastSpawnResult: _.get(wait, "lastResult", null),
 				state: roleState
 			};
 		});
@@ -365,6 +369,7 @@ global.AIObserver = {
 			queuedTotal: _.sum(_.map(demandedRoles, role => role.queued)),
 			dyingSoonTotal: _.sum(_.map(demandedRoles, role => role.dyingSoon)),
 			lastDemandTick: _.get(metric, "updatedTick", null),
+			oldestWaitingTicks: _.max(_.map(demandedRoles, role => role.waitingTicks)) || 0,
 			demandSatisfaction: expectedTotal > 0 ? Math.round(staffed * 10000 / expectedTotal) / 100 : null
 		};
 	},
@@ -421,6 +426,9 @@ global.AIObserver = {
 			let reservation = _.get(room, ["controller", "reservation"], null);
 			let hostileCount = _.size(_.get(site, ["defense", "hostiles"], []));
 			let route = _.isArray(_.get(site, "list_route")) ? site.list_route.slice(0, 12) : [];
+			let routeStatus = _.get(site, "route_failure", false) === true
+				? "FAILED"
+				: (route.length > 0 ? "CONFIGURED" : (_.get(intel, "routeStatus") === "no_path" ? "FAILED" : "DIRECT"));
 			let population = this._populationSummary(roomName, colony, expected);
 
 			let remote = {
@@ -433,7 +441,11 @@ global.AIObserver = {
 				lastSeenTick: _.get(intel, "lastSeenTick", null),
 				intelAgeTicks: _.has(intel, "lastSeenTick") ? Math.max(0, Game.time - intel.lastSeenTick) : null,
 				sourceCount: visible ? sources.length : _.get(site, ["survey", "source_amount"], null),
-				route: { length: route.length > 0 ? route.length - 1 : null, rooms: route },
+				route: {
+					length: route.length > 0 ? route.length - 1 : _.get(intel, "routeLength", null),
+					rooms: route,
+					status: routeStatus
+				},
 				reservation: {
 					username: _.get(reservation, "username", null),
 					relation: this._relation(_.get(reservation, "username", null)),
@@ -491,8 +503,8 @@ global.AIObserver = {
 			add("STALE_INTEL", "HIGH", { intelAgeTicks: null, staleAfterTicks: staleLimit });
 		else if (!remote.visible && remote.intelAgeTicks > staleLimit)
 			add("STALE_INTEL", "MEDIUM", { intelAgeTicks: remote.intelAgeTicks, staleAfterTicks: staleLimit });
-		if (remote.route.length == null || remote.route.rooms.length < 2)
-			add("ROUTE_FAILURE", "HIGH", { route: remote.route.rooms });
+		if (remote.route.status === "FAILED")
+			add("ROUTE_FAILURE", "HIGH", { route: remote.route.rooms, status: remote.route.status });
 		if (!remote.security.isSafe || remote.security.hostileCreeps > 0)
 			add("HOSTILE_INTERRUPTION", "HIGH", { hostileCreeps: remote.security.hostileCreeps });
 		if (remote.visible && remote.mining.expectedSourceContainers > 0
