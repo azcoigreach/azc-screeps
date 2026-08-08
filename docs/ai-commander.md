@@ -29,10 +29,54 @@ spawns, tasks, paths, reservation, hauling, and infrastructure. Repeating the
 same target is idempotent.
 
 `COLONIZE_ROOM` is implemented against the existing `Memory.sites.colonization`
-API. It additionally requires a GCL slot and a layout selected from cached
-terrain-valid `def_hor`, `def_vert`, or `def_comp` origins. Automatic claiming
+API. It additionally requires a GCL slot, fresh neutral/self-reserved intel,
+protection-aware route, a layout selected from cached terrain-valid `def_hor`,
+`def_vert`, or `def_comp` origins, a healthy origin, energy reserve, candidate
+score, concurrency slot, and elapsed retry/cascade cooldown. Automatic claiming
 remains off. `STOP_REMOTE_MINING` remains human-gated; stop-loss recommendations
 never delete configuration.
+
+## Phase 6 permanent colonization
+
+Permanent-colony scoring is independent from remote scoring. It includes sources,
+terrain/swamps, mineral, route distance, supported layout feasibility,
+defensibility, adjacent remote potential, corridor value, neighboring players,
+bootstrap burden, and the room's current operational role. An `OUR_REMOTE` is a
+valid claim candidate, but its measured delivery per 1,000 ticks becomes an
+explicit temporary conversion cost. The origin is selected across all colonies
+using storage, population satisfaction, spawn count, energy capacity, threats,
+and distance; it is not hardcoded to the first colony.
+
+Readiness is authoritative and componentized:
+
+```text
+READY  INSUFFICIENT_INTEL  NO_GCL_CAPACITY  BLOCKED_BY_POPULATION
+BLOCKED_BY_SPAWN_CAPACITY  BLOCKED_BY_ECONOMY  BLOCKED_BY_ROUTE
+BLOCKED_BY_LAYOUT  BLOCKED_BY_THREAT  BLOCKED_BY_PROTECTION
+COLONIZATION_IN_PROGRESS  COLONIZATION_COOLDOWN
+```
+
+Legal GCL/protected-region capacity is reported separately from the operational
+recommendation. Defaults allow one concurrent colonization, require 250,000
+origin storage energy, 90% origin demand satisfaction, 800 energy capacity, and
+then require the new room to reach RCL 3, 75% population satisfaction, a local
+harvester, and evidence that its own spawn ran before success. These thresholds
+live in `Memory.ai.policy`, not in an LLM prompt.
+
+AZC continues to request and run the colonizer and build the supported blueprint.
+The AI record persists after AZC removes the temporary mission and tracks:
+
+```text
+AUTHORIZED -> CLAIMER_REQUESTED -> CLAIMER_EN_ROUTE -> CLAIMED
+-> SPAWN_BUILDING -> SPAWN_OPERATIONAL -> ECONOMY_BOOTSTRAPPING
+-> SUCCESS | FAILED
+```
+
+Claiming alone is never success. Failure removes only the AI-managed colonization
+mission, records cause/outcome and a retry deadline, and releases a converting
+remote. When an existing remote is converted, reserver replacement is suppressed;
+after claim its mining site becomes the new colony's local site so reservers are
+not sent to an owned controller.
 
 Remote continuity is deterministic. For reservers, miners/burrowers, and
 carriers, AZC combines configured/measured route travel, the actual configured
@@ -234,6 +278,16 @@ one budget. It retains the endpoint-specific `X-RateLimit-Limit`,
 `X-RateLimit-Remaining`, and `X-RateLimit-Reset` values instead of allowing later
 GET headers to replace the POST budget.
 
+Paid strategic reviews are also independent from polling. A persistent scheduler
+normalizes strategic state, classifies transitions as informational, material, or
+urgent, coalesces material events for two minutes, enforces a 15-minute minimum
+between normal reviews, and runs a one-hour idle fallback. Owned-room attacks,
+colony loss, protection transitions, major remote collapse, and colonization
+failure may bypass the successful-review cadence. Provider failures still back
+off. SQLite retains scheduler hashes, pending events, metrics, and an expiring
+single-watcher ownership lease across Docker restarts. Manual `advise` bypasses
+deduplication by design.
+
 At more than 20 writes remaining, normal command, heartbeat, and changed
 explanation traffic is allowed. At 20 or fewer, optional explanations are
 suppressed. Commands and required heartbeats continue while tokens remain. A 429
@@ -405,6 +459,8 @@ ai.remoteOps(true|false)       // allow manual remote objectives
 ai.autoRemoteOps(true|false)   // allow strategist dispatch
 ai.scouting(true|false)
 ai.autoScouting(true|false)
+ai.colonization(true|false)       // manual colonization authority
+ai.autoColonization(true|false)   // explicit automatic authority; default off
 ai.mode("observe"|"execute")
 ai.pause()
 ai.resume()
@@ -428,6 +484,9 @@ From `ai/`:
 .venv/bin/python -m commander.main ensure-remote-reservation W37N12
 .venv/bin/python -m commander.main ensure-remote-infrastructure W37N12
 .venv/bin/python -m commander.main rebalance-remote-logistics W37N12
+.venv/bin/python -m commander.main candidates
+.venv/bin/python -m commander.main report --hours 24
+.venv/bin/python -m commander.main colonize TARGET ORIGIN LAYOUT X Y
 ```
 
 ## Verification, deployment, and rollback

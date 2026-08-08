@@ -241,8 +241,36 @@ class ColonyState(StrictModel):
 
 class ColonizationOperation(StrictModel):
     id: str
+    orderId: str | None = None
     from_: str | None = Field(alias="from")
+    origin: str | None = None
     target: str | None
+    layout: dict[str, Any] | None = None
+    state: Literal[
+        "PROPOSED", "AUTHORIZED", "CLAIMER_REQUESTED", "CLAIMER_EN_ROUTE", "CLAIMED",
+        "SPAWN_BUILDING", "SPAWN_OPERATIONAL", "ECONOMY_BOOTSTRAPPING",
+        "SELF_SUSTAINING", "SUCCESS", "FAILED"
+    ] = "PROPOSED"
+    outcome: Literal["SUCCESS", "PARTIAL_SUCCESS", "FAILED", "INCONCLUSIVE"] | None = None
+    createdTick: int | None = None
+    updatedTick: int | None = None
+    claimTick: int | None = None
+    spawnSitePlacedTick: int | None = None
+    spawnOperationalTick: int | None = None
+    firstHarvestTick: int | None = None
+    firstIndependentSpawnTick: int | None = None
+    rclMilestones: dict[str, int] = Field(default_factory=dict)
+    bootstrapEnergyDelivered: int = 0
+    bootstrapSupport: dict[str, Any] = Field(default_factory=dict)
+    candidateScore: int | None = None
+    currentOperationalRole: str | None = None
+    candidatePlan: dict[str, Any] | None = None
+    remoteConversion: dict[str, Any] | None = None
+    failureReason: str | None = None
+    failedTick: int | None = None
+    successTick: int | None = None
+    retryAfterTick: int | None = None
+    stateHistory: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class RouteState(StrictModel):
@@ -452,6 +480,7 @@ class IntelligenceState(StrictModel):
     staleRooms: list[str]
     protectionByRoom: dict[str, RoomProtection] = Field(default_factory=dict)
     candidateSets: dict[str, dict[str, list[str]]] = Field(default_factory=dict)
+    territoryGraph: dict[str, dict[str, Any]] = Field(default_factory=dict)
     hostileEvents: list[HostileEvent]
 
 
@@ -459,16 +488,26 @@ class ClaimCandidate(StrictModel):
     room: str
     score: int
     factors: dict[str, int]
+    rawScore: int | None = None
     intelAgeTicks: int
     disqualified: bool
     disqualifiers: list[str]
     eligible: bool = False
     origin: str | None = None
     layout: dict[str, Any] | None = None
+    validLayouts: list[dict[str, Any]] = Field(default_factory=list)
+    economicConversion: dict[str, Any] = Field(default_factory=dict)
+    bootstrap: dict[str, Any] = Field(default_factory=dict)
+    strategy: dict[str, Any] = Field(default_factory=dict)
+    sourceCount: int = 0
+    mineralType: str | None = None
+    terrainSwampPercent: float | None = None
+    route: dict[str, Any] = Field(default_factory=dict)
+    security: dict[str, Any] = Field(default_factory=dict)
     currentOperationalRole: Literal[
         "OUR_COLONY", "OUR_REMOTE", "NEUTRAL_SCOUTED", "NEUTRAL_UNKNOWN",
         "SELF_RESERVED", "ALLY_RESERVED", "FOREIGN_RESERVED", "HOSTILE_OWNED",
-        "ALLY_OWNED", "SOURCE_KEEPER", "HIGHWAY", "OTHER"
+        "ALLY_OWNED", "FOREIGN_OWNED", "SOURCE_KEEPER", "HIGHWAY", "OTHER"
     ]
     claimCandidateStatus: Literal["ELIGIBLE", "NEEDS_FRESH_INTEL", "DISQUALIFIED"]
     accessibility: Literal[
@@ -508,19 +547,26 @@ class RemoteCandidate(StrictModel):
 
 class ExpansionReadiness(StrictModel):
     status: Literal[
-        "READY", "NOT_READY", "INSUFFICIENT_INTEL", "BLOCKED_BY_GCL",
-        "BLOCKED_BY_ECONOMY", "BLOCKED_BY_THREAT", "BLOCKED_BY_HOME_POPULATION",
-        "BLOCKED_BY_PROTECTION_CLAIM_LIMIT"
+        "READY", "NOT_READY", "INSUFFICIENT_INTEL", "NO_GCL_CAPACITY",
+        "BLOCKED_BY_POPULATION", "BLOCKED_BY_SPAWN_CAPACITY", "BLOCKED_BY_ECONOMY",
+        "BLOCKED_BY_ROUTE", "BLOCKED_BY_LAYOUT", "BLOCKED_BY_THREAT",
+        "BLOCKED_BY_PROTECTION", "COLONIZATION_IN_PROGRESS", "COLONIZATION_COOLDOWN"
     ]
     reasons: list[str]
     recommendedRoom: str | None
     origin: str | None
+    layout: dict[str, Any] | None = None
+    candidateScore: int | None = None
+    currentOperationalRole: str | None = None
+    bootstrap: dict[str, Any] | None = None
+    economicConversion: dict[str, Any] | None = None
     claimSlots: int
     globalGclClaimSlots: int = 0
     currentProtectionClaimSlots: int = 0
     recommendedSimultaneousColonizations: int = 0
     operationalLimitReason: str | None = None
     spawnCapacity: Literal["ADEQUATE", "CONSTRAINED"]
+    components: dict[str, Any] = Field(default_factory=dict)
 
 
 class PlayerHistory(StrictModel):

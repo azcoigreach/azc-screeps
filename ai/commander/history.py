@@ -643,6 +643,16 @@ class HistoryStore:
                 f"tick {evaluation_tick}."
             )
             entry_type = "remote_establishment"
+        elif action == "COLONIZE_ROOM":
+            title = f"Permanent colonization authorized: {room}"
+            narrative = (
+                f"After deterministic candidate and readiness validation, the commander authorized AZC's "
+                f"existing colonization system to establish {room}. Evidence: {trigger}. "
+                f"The operation will not count as successful at claim time; it must establish a spawn, "
+                f"local harvesting, functioning population control, and an independent spawn cycle. "
+                f"Expected outcome: {expected_outcome}"
+            )
+            entry_type = "colonization_authorized"
         else:
             title = f"Commander intervened in {room}"
             narrative = (
@@ -769,6 +779,7 @@ class HistoryStore:
 
     def _journal_observation_changes(self, previous: dict[str, Any] | None, telemetry: Telemetry) -> None:
         current = telemetry.model_dump(by_alias=True)
+        self._journal_phase6_changes(previous, current, telemetry.tick, telemetry.shard)
         if previous is None or previous["telemetry"].get("schemaVersion") != 3:
             rooms = ", ".join(sorted(telemetry.colonies)) or "no owned rooms"
             self.append_journal(
@@ -937,6 +948,100 @@ class HistoryStore:
                     f"classification {intel['classification']}, controller status {intel['controller']['status']}.",
                     {"room": intel["room"]}, dedupe_key=f"room-intel:{intel['room']}",
                 )
+
+    def _journal_phase6_changes(
+        self,
+        previous: dict[str, Any] | None,
+        current: dict[str, Any],
+        tick: int,
+        shard: str,
+    ) -> None:
+        readiness = current.get("expansionReadiness", {})
+        candidates = current.get("claimCandidates", [])
+        candidate = next(
+            (item for item in candidates if item.get("room") == readiness.get("recommendedRoom")),
+            candidates[0] if candidates else None,
+        )
+        self.append_journal(
+            tick,
+            "phase6_baseline",
+            "Permanent-colonization planning baseline established",
+            (
+                f"The commander began persistent Phase 6 planning with {len(candidates)} ranked claim "
+                f"candidates. Current readiness is {readiness.get('status', 'UNKNOWN')}; preferred room "
+                f"is {readiness.get('recommendedRoom') or 'not yet determined'} from "
+                f"{readiness.get('origin') or 'no healthy origin'}. Legal global/protected-region capacity "
+                f"is {readiness.get('globalGclClaimSlots', 0)}/{readiness.get('currentProtectionClaimSlots', 0)}."
+            ),
+            {"readiness": readiness, "topCandidate": candidate},
+            dedupe_key=f"phase6-baseline:{shard}",
+        )
+
+        old = {} if previous is None else previous.get("telemetry", {})
+        old_readiness = old.get("expansionReadiness", {})
+        if readiness.get("status") == "READY" and (
+            old_readiness.get("status") != "READY"
+            or old_readiness.get("recommendedRoom") != readiness.get("recommendedRoom")
+        ) and candidate:
+            layout = candidate.get("layout") or {}
+            origin = layout.get("origin") or {}
+            conversion = candidate.get("economicConversion") or {}
+            bootstrap = candidate.get("bootstrap") or {}
+            strategy = candidate.get("strategy") or {}
+            self.append_journal(
+                tick,
+                "colonization_ready",
+                f"A permanent colony is ready for authorization: {candidate['room']}",
+                (
+                    f"After comparing current territorial intelligence, the commander selected "
+                    f"{candidate['room']} from {candidate.get('origin')} at score {candidate.get('score')}. "
+                    f"Its current role is {candidate.get('currentOperationalRole')}; the supported layout "
+                    f"is {layout.get('name')} at {origin.get('x')},{origin.get('y')}. Estimated bootstrap "
+                    f"burden is {bootstrap.get('burden', 'unknown')} ({bootstrap.get('estimatedEnergy', 'unknown')} "
+                    f"energy). Existing remote income temporarily displaced is "
+                    f"{conversion.get('temporaryIncomeLossPer1000') or 0} energy/1,000 ticks. "
+                    f"The room opens approximately {strategy.get('adjacentRemotePotential', 0)} adjacent "
+                    f"remote opportunities. The first claim remains human-gated."
+                ),
+                {"candidate": candidate, "readiness": readiness},
+                dedupe_key=(
+                    f"colonization-ready:{candidate['room']}:{layout.get('name')}:"
+                    f"{origin.get('x')}:{origin.get('y')}"
+                ),
+            )
+
+        old_operations = {
+            item.get("target"): item
+            for item in old.get("operations", {}).get("colonizations", [])
+        }
+        for operation in current.get("operations", {}).get("colonizations", []):
+            target = operation.get("target")
+            prior = old_operations.get(target)
+            if prior and prior.get("state") == operation.get("state"):
+                continue
+            state = operation.get("state", "UNKNOWN")
+            titles = {
+                "AUTHORIZED": f"Colonization of {target} was authorized",
+                "CLAIMER_REQUESTED": f"A claimer was requested for {target}",
+                "CLAIMER_EN_ROUTE": f"The claimer is traveling to {target}",
+                "CLAIMED": f"{target} became an owned room",
+                "SPAWN_BUILDING": f"The first spawn is under construction in {target}",
+                "SPAWN_OPERATIONAL": f"The first spawn became operational in {target}",
+                "ECONOMY_BOOTSTRAPPING": f"{target}'s local economy began operating",
+                "SUCCESS": f"{target} became self-sustaining",
+                "FAILED": f"Colonization of {target} failed",
+            }
+            self.append_journal(
+                tick,
+                "colonization_failure" if state == "FAILED" else "colonization_milestone",
+                titles.get(state, f"{target} colonization entered {state}"),
+                (
+                    f"The deterministic colonization lifecycle for {target} advanced to {state}. "
+                    + (operation.get("failureReason") or "Progress remains governed by AZC's native executor.")
+                ),
+                {"operation": operation, "previousState": None if prior is None else prior.get("state")},
+                dedupe_key=f"colonization:{operation.get('id')}:{state}",
+            )
 
     def prune(self) -> None:
         self.connection.execute(

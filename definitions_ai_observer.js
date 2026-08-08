@@ -40,8 +40,11 @@ global.AIObserver = {
 				alerts.push(`SPAWN_ASSIST:${room.name}`);
 		});
 
-		let territory = this._territory(ownedNames);
+		let territory = this._territory(ownedNames, colonies);
 		this._updateEstablishments();
+		this._updateColonizations(colonies);
+		let readiness = this._expansionReadiness(territory.claimCandidates, colonies);
+		_.set(Memory, ["ai", "strategy", "expansionReadiness"], _.cloneDeep(readiness));
 		let gclLevel = _.get(Game, ["gcl", "level"], 0);
 		return {
 			schemaVersion: this.SCHEMA_VERSION,
@@ -80,7 +83,7 @@ global.AIObserver = {
 			expansionCandidates: territory.claimCandidates,
 			remoteCandidates: territory.remoteCandidates,
 			claimCandidates: territory.claimCandidates,
-			expansionReadiness: this._expansionReadiness(territory.claimCandidates, colonies),
+			expansionReadiness: readiness,
 			playerHistory: _.values(_.get(Memory, ["ai", "intelligence", "players"], {})),
 			authority: {
 				mode: _.get(Memory, ["ai", "mode"], "observe"),
@@ -421,12 +424,17 @@ global.AIObserver = {
 	},
 
 	_colonizations: function () {
-		let result = [];
+		let result = _.values(_.get(Memory, ["ai", "colonizations"], {}));
 		_.each(_.get(Memory, ["sites", "colonization"], {}), (site, id) => {
-			if (site)
-				result.push({ id: id, from: _.get(site, "from", null), target: _.get(site, "target", id) });
+			if (site && !_.some(result, operation => operation.target === _.get(site, "target", id)))
+				result.push({
+					id: `legacy:${id}`, orderId: null, from: _.get(site, "from", null),
+					origin: _.get(site, "from", null), target: _.get(site, "target", id),
+					state: "CLAIMER_REQUESTED", outcome: null, layout: _.get(site, "layout", null),
+					createdTick: null, updatedTick: Game.time, failureReason: null
+				});
 		});
-		return result;
+		return _.sortBy(result, operation => -_.get(operation, "updatedTick", 0)).slice(0, 20);
 	},
 
 	_remoteMining: function () {
@@ -516,6 +524,7 @@ global.AIObserver = {
 			remote.reasons = assessment.reasons;
 			remote.diagnostics = assessment.diagnostics;
 			remote.stopLoss = this._stopLoss(remote);
+			_.set(Memory, ["ai", "metrics", "remotes", roomName, "lastHealth"], remote.health);
 			result.push(remote);
 		});
 		return result;
@@ -641,6 +650,149 @@ global.AIObserver = {
 		});
 	},
 
+	_updateColonizations: function () {
+		let operations = _.get(Memory, ["ai", "colonizations"], {});
+		_.each(_.get(Memory, ["sites", "colonization"], {}), (site, key) => {
+			let target = _.get(site, "target", key);
+			if (!operations[target]) {
+				operations[target] = {
+					id: `legacy:${target}:${Game.time}`, orderId: _.get(site, "ai_order_id", null),
+					from: _.get(site, "from", null), origin: _.get(site, "from", null), target: target,
+					layout: _.get(site, "layout", null), state: "AUTHORIZED", outcome: null,
+					createdTick: Game.time, updatedTick: Game.time, claimTick: null,
+					spawnSitePlacedTick: null, spawnOperationalTick: null, firstHarvestTick: null,
+					firstIndependentSpawnTick: null, rclMilestones: {}, bootstrapEnergyDelivered: 0,
+					bootstrapSupport: { required: true, activeSupportCreeps: 0 },
+					failureReason: null, stateHistory: [{ state: "AUTHORIZED", tick: Game.time }]
+				};
+			}
+		});
+
+		_.each(operations, operation => {
+			if (_.includes(["SUCCESS", "FAILED"], operation.state)) return;
+			let previousState = operation.state;
+			let target = operation.target;
+			let origin = operation.origin || operation.from;
+			let site = _.get(Memory, ["sites", "colonization", target], null);
+			let room = _.get(Game, ["rooms", target], null);
+			let controller = _.get(room, "controller", null);
+			let owned = _.get(controller, "my", false) === true;
+			let age = Game.time - _.get(operation, "createdTick", Game.time);
+			let creeps = _.filter(_.get(Game, "creeps", {}), creep => {
+				let creepTarget = _.get(creep, ["memory", "target_key"], _.get(creep, ["memory", "room"]));
+				return creepTarget === target || _.get(creep, ["memory", "room"]) === target;
+			});
+			let colonizers = _.filter(creeps, creep => _.get(creep, ["memory", "role"]) === "colonizer"
+				|| (_.isString(_.get(creep, "name")) && creep.name.indexOf("colo:") === 0));
+			let queuedClaimer = _.some([].concat(
+				_.get(Memory, ["shard", "spawn_requests"], []), _.get(Memory, ["hive", "spawn_requests"], [])
+			), request => _.get(request, "role", _.get(request, ["args", "role"])) === "colonizer"
+				&& _.get(request, ["args", "target_key"], _.get(request, ["args", "room"])) === target);
+			let targetSpawns = _.filter(_.get(Game, "spawns", {}), spawn => _.get(spawn, ["room", "name"]) === target);
+			let construction = room ? this._find(room, typeof FIND_MY_CONSTRUCTION_SITES !== "undefined" ? FIND_MY_CONSTRUCTION_SITES : null) : [];
+			let spawnSites = _.filter(construction, item => _.get(item, "structureType") === "spawn");
+			let localWorkers = _.filter(creeps, creep => _.get(creep, ["memory", "colony"]) === target
+				&& _.includes(["burrower", "miner", "harvester", "worker"], _.get(creep, ["memory", "role"])));
+			let originSupport = _.filter(creeps, creep => _.get(creep, ["memory", "colony"]) === origin
+				&& _.get(creep, ["memory", "role"]) !== "colonizer");
+			let population = _.get(Memory, ["ai", "metrics", "population", "colonies", target], {});
+			let expected = _.sum(_.values(_.get(population, "expected", {})));
+			let actual = _.sum(_.values(_.get(population, "actual", {})));
+			let satisfaction = expected > 0 ? Math.min(100, actual * 100 / expected) : 0;
+
+			operation.updatedTick = Game.time;
+			operation.bootstrapSupport = {
+				required: _.get(Memory, ["rooms", target, "spawn_assist", "rooms"], null) != null,
+				activeSupportCreeps: originSupport.length
+			};
+
+			if (controller && _.get(controller, ["owner", "username"]) != null && !owned) {
+				this._failColonization(operation, "target controller became foreign-owned", owned);
+			} else if (!owned && (!_.get(Game, ["rooms", origin, "controller", "my"], false))) {
+				this._failColonization(operation, "origin colony is no longer available", false);
+			} else if (!owned && site && _.get(site, "route_failure", false)) {
+				this._failColonization(operation, "authoritative colonization route failed", false);
+			} else if (!owned && !site) {
+				this._failColonization(operation, "AZC colonization mission disappeared before claim", false);
+			} else if (!owned && age >= 15000) {
+				this._failColonization(operation, "claimer did not secure the controller before the startup deadline", false);
+			} else if (!owned) {
+				operation.state = colonizers.length > 0 ? "CLAIMER_EN_ROUTE"
+					: (queuedClaimer ? "CLAIMER_REQUESTED" : "CLAIMER_REQUESTED");
+			} else {
+				if (operation.claimTick == null) operation.claimTick = Game.time;
+				let level = _.get(controller, "level", 0);
+				for (let rcl = 1; rcl <= level; rcl++)
+					if (_.get(operation, ["rclMilestones", rcl]) == null) _.set(operation, ["rclMilestones", rcl], Game.time);
+
+				let remoteSite = _.get(Memory, ["sites", "mining", target]);
+				if (remoteSite && _.get(remoteSite, "colony") !== target) {
+					operation.remoteConversion = Object.assign({}, _.get(operation, "remoteConversion", {}), {
+						convertedTick: Game.time, formerOrigin: _.get(remoteSite, "colony"),
+						preservedMiningInfrastructure: true
+					});
+					remoteSite.colony = target;
+					remoteSite.ai_converting_to_colony = false;
+				}
+				if (_.get(Memory, ["rooms", target, "layout"]) == null && operation.layout)
+					_.set(Memory, ["rooms", target, "layout"], _.cloneDeep(operation.layout));
+				if (_.get(Memory, ["rooms", target, "spawn_assist", "rooms"]) == null)
+					_.set(Memory, ["rooms", target, "spawn_assist", "rooms"], [origin]);
+
+				if (spawnSites.length > 0 && operation.spawnSitePlacedTick == null) operation.spawnSitePlacedTick = Game.time;
+				if (targetSpawns.length > 0 && operation.spawnOperationalTick == null) operation.spawnOperationalTick = Game.time;
+				if (localWorkers.length > 0 && operation.firstHarvestTick == null) operation.firstHarvestTick = Game.time;
+				if (operation.firstIndependentSpawnTick == null && _.some(targetSpawns, spawn => {
+					let spawningName = _.get(spawn, ["spawning", "name"]);
+					return spawningName && _.get(Game, ["creeps", spawningName, "memory", "colony"]) === target;
+				})) operation.firstIndependentSpawnTick = Game.time;
+
+				let stableRcl = _.get(Memory, ["ai", "policy", "minimumStableColonyRcl"], 3);
+				let stablePopulation = _.get(Memory, ["ai", "policy", "minimumStableColonyPopulationSatisfaction"], 75);
+				let selfSustaining = targetSpawns.length > 0 && localWorkers.length > 0
+					&& operation.firstIndependentSpawnTick != null && level >= stableRcl
+					&& satisfaction >= stablePopulation;
+				if (selfSustaining) {
+					operation.state = "SUCCESS";
+					operation.outcome = "SUCCESS";
+					operation.successTick = Game.time;
+					operation.bootstrapSupport.required = false;
+				} else if (targetSpawns.length > 0 && localWorkers.length > 0) operation.state = "ECONOMY_BOOTSTRAPPING";
+				else if (targetSpawns.length > 0) operation.state = "SPAWN_OPERATIONAL";
+				else if (spawnSites.length > 0) operation.state = "SPAWN_BUILDING";
+				else operation.state = "CLAIMED";
+				if (targetSpawns.length === 0 && Game.time - operation.claimTick >= 20000)
+					this._failColonization(operation, "claimed room failed to establish a spawn before the bootstrap deadline", true);
+			}
+
+			if (operation.state !== previousState) {
+				let history = _.get(operation, "stateHistory", []);
+				history.push({ state: operation.state, tick: Game.time, reason: operation.failureReason || null });
+				if (history.length > 30) history.splice(0, history.length - 30);
+				operation.stateHistory = history;
+			}
+		});
+		_.set(Memory, ["ai", "colonizations"], operations);
+	},
+
+	_failColonization: function (operation, reason, claimed) {
+		operation.state = "FAILED";
+		operation.outcome = claimed ? "PARTIAL_SUCCESS" : "FAILED";
+		operation.failureReason = reason;
+		operation.failedTick = Game.time;
+		operation.retryAfterTick = Game.time + _.get(Memory, ["ai", "policy", "colonizationCooldownTicks"], 50000);
+		let site = _.get(Memory, ["sites", "colonization", operation.target]);
+		if (site && _.get(site, "ai_managed", false) === true) delete Memory.sites.colonization[operation.target];
+		let remoteSite = _.get(Memory, ["sites", "mining", operation.target]);
+		if (remoteSite) remoteSite.ai_converting_to_colony = false;
+		let failures = _.get(Memory, ["ai", "strategy", "candidateFailures", operation.target], { count: 0 });
+		failures.count = _.get(failures, "count", 0) + 1;
+		failures.lastFailureTick = Game.time;
+		failures.reason = reason;
+		failures.retryAfterTick = operation.retryAfterTick;
+		_.set(Memory, ["ai", "strategy", "candidateFailures", operation.target], failures);
+	},
+
 	_combat: function () {
 		let result = [];
 		_.each(_.get(Memory, ["sites", "combat"], {}), (site, id) => {
@@ -763,7 +915,8 @@ global.AIObserver = {
 				players[username] = record;
 			});
 			let layoutAnalysis = _.get(previous, "layoutAnalysis", null);
-			if (_.get(controller, "my", false) !== true && (!layoutAnalysis || Game.time - _.get(layoutAnalysis, "analyzedTick", 0) > 50000)
+			if (_.get(controller, "my", false) !== true && (!layoutAnalysis || _.get(layoutAnalysis, "version") !== 2
+				|| Game.time - _.get(layoutAnalysis, "analyzedTick", 0) > 50000)
 				&& typeof AIRemoteStrategy !== "undefined") layoutAnalysis = AIRemoteStrategy.analyzeLayouts(room);
 			let current = {
 				room: room.name,
@@ -846,7 +999,7 @@ global.AIObserver = {
 		});
 	},
 
-	_territory: function (ownedNames) {
+	_territory: function (ownedNames, colonies) {
 		let radius = _.get(Memory, ["ai", "policy", "intelligenceRadius"], 2);
 		let staleTicks = _.get(Memory, ["ai", "policy", "intelStaleTicks"], 10000);
 		let nearby = this._nearbyRooms(ownedNames, radius);
@@ -862,6 +1015,24 @@ global.AIObserver = {
 		let excludedClaims = _.filter(overrideRooms, room => _.includes(["EXCLUDE", "NO_COLONY"], overrides[room]));
 		let prioritizedRooms = _.filter(overrideRooms, room => overrides[room] === "PRIORITIZE");
 		let existingRemotes = _.filter(_.keys(_.get(Memory, ["sites", "mining"], {})), room => _.get(Memory, ["sites", "mining", room, "colony"]) !== room);
+		let strategicIntel = _.values(intelRooms);
+		let adjacentPotential = {};
+		let neighboringPlayers = {};
+		_.each(nearby, roomName => {
+			adjacentPotential[roomName] = _.filter(strategicIntel, intel => {
+				if (_.get(intel, "room") === roomName || _.get(intel, "classification") !== "normal") return false;
+				let distance = _.isFunction(_.get(Game, ["map", "getRoomLinearDistance"]))
+					? Game.map.getRoomLinearDistance(roomName, intel.room) : null;
+				return distance === 1 && _.get(intel, "sourceCount", 0) > 0
+					&& _.get(intel, ["controller", "ownerRelation"], "NEUTRAL") === "NEUTRAL";
+			}).length;
+			neighboringPlayers[roomName] = _.uniq(_.filter(_.map(strategicIntel, intel => {
+				let distance = _.isFunction(_.get(Game, ["map", "getRoomLinearDistance"]))
+					? Game.map.getRoomLinearDistance(roomName, intel.room) : null;
+				if (distance !== 1) return null;
+				return _.get(intel, ["controller", "owner"], _.get(intel, ["controller", "reservation"], null));
+			}), username => _.isString(username) && username !== this._player)).slice(0, 8);
+		});
 		_.each(nearby, name => {
 			let intel = _.get(intelRooms, name);
 			if (!intel) {
@@ -869,7 +1040,9 @@ global.AIObserver = {
 				return;
 			}
 			let copy = _.cloneDeep(intel);
-			let nearest = this._nearestColony(name, ownedNames);
+			let originAssessment = this._bestExpansionOrigin(name, colonies || {});
+			let nearest = originAssessment ? { room: originAssessment.room, distance: originAssessment.distance }
+				: this._nearestColony(name, ownedNames);
 			copy.protection = this._roomProtection(nearest ? nearest.room : null, name, _.get(Game, ["rooms", name]));
 			copy.intelAgeTicks = Math.max(0, Game.time - copy.lastSeenTick);
 			copy.stale = copy.intelAgeTicks > staleTicks;
@@ -886,10 +1059,21 @@ global.AIObserver = {
 					minimumScore: _.get(Memory, ["ai", "policy", "minimumRemoteScore"], 65)
 				});
 				remoteCandidates.push(remote);
+				let role = this._operationalRole(copy);
+				let exits = _.isFunction(_.get(Game, ["map", "describeExits"])) ? _.size(Game.map.describeExits(name) || {}) : 4;
+				let remoteEconomics = role === "OUR_REMOTE" ? this._remoteDeliveryEconomics(name) : null;
 				let claim = AIRemoteStrategy.claimCandidate(copy, {
 					excludedRooms: excludedClaims,
 					minimumScore: _.get(Memory, ["ai", "policy", "minimumClaimScore"], 70),
-					currentOperationalRole: this._operationalRole(copy)
+					currentOperationalRole: role,
+					origin: nearest ? nearest.room : null,
+					originAssessment: originAssessment,
+					adjacentRemotePotential: _.get(adjacentPotential, name, 0),
+					neighboringPlayers: _.get(neighboringPlayers, name, []),
+					exitCount: exits,
+					corridorValue: Math.max(0, _.get(adjacentPotential, name, 0) - _.get(neighboringPlayers, name, []).length),
+					remoteEconomics: remoteEconomics,
+					candidateFailure: _.get(Memory, ["ai", "strategy", "candidateFailures", name], null)
 				});
 				claim.intelAgeTicks = copy.intelAgeTicks;
 				claim.disqualified = !claim.eligible;
@@ -912,6 +1096,15 @@ global.AIObserver = {
 				claimRooms: _.map(_.filter(claimCandidates, candidate => candidate.availabilitySet === "POST_PROTECTION"), "room")
 			}
 		};
+		let territoryGraph = {};
+		_.each(ownedNames, colony => {
+			territoryGraph[colony] = {
+				remotes: _.sortBy(_.filter(existingRemotes, room => _.get(Memory, ["sites", "mining", room, "colony"]) === colony)),
+				nearbyCandidates: _.map(_.filter(claimCandidates, candidate => candidate.origin === colony), "room"),
+				neighboringPlayers: _.uniq(_.flatten(_.map(_.filter(claimCandidates, candidate => candidate.origin === colony), candidate => _.get(candidate, ["strategy", "neighboringPlayers"], [])))),
+				protectedBoundaryRooms: _.map(_.filter(claimCandidates, candidate => candidate.availabilitySet === "POST_PROTECTION" && candidate.origin === colony), "room")
+			};
+		});
 		return {
 			intelligence: {
 				radius: radius,
@@ -921,6 +1114,7 @@ global.AIObserver = {
 				staleRooms: _.sortBy(stale),
 				protectionByRoom: _.pick(this._protectionByRoom || {}, nearby),
 				candidateSets: candidateSets,
+				territoryGraph: territoryGraph,
 				hostileEvents: _.get(Memory, ["ai", "intelligence", "hostileEvents"], []).slice(-20)
 			},
 			remoteCandidates: remoteCandidates,
@@ -933,33 +1127,117 @@ global.AIObserver = {
 		let owned = _.size(colonies);
 		let globalSlots = Math.max(0, _.get(Game, ["gcl", "level"], 0) - owned);
 		let protectionSlots = _.get(Memory, ["ai", "protection", "summary", "currentProtectionClaimSlots"], globalSlots);
-		if (globalSlots < 1) reasons.push("BLOCKED_BY_GCL");
-		if (protectionSlots < 1 && globalSlots > 0) reasons.push("BLOCKED_BY_PROTECTION_CLAIM_LIMIT");
-		let healthyOrigin = _.find(_.keys(colonies), room => {
-			let colony = colonies[room];
-			return _.get(colony, ["energy", "storageEnergy"], 0) >= 100000
-				&& (_.get(colony, ["population", "demandSatisfaction"], 0) || 0) >= 80
-				&& _.get(colony, ["spawning", "spawns"], 0) > 0;
-		});
-		if (!healthyOrigin) reasons.push("BLOCKED_BY_HOME_POPULATION");
-		let candidate = _.find(candidates, item => item.eligible === true);
-		if (!candidate) reasons.push("NO_ELIGIBLE_CANDIDATE");
+		let candidate = _.find(candidates, item => item.eligible === true) || _.head(candidates) || null;
+		let originName = _.get(candidate, "origin", null);
+		let origin = _.get(colonies, originName, null);
+		let minimumStorage = _.get(Memory, ["ai", "policy", "minimumOriginStorageEnergy"], 250000);
+		let minimumPopulation = _.get(Memory, ["ai", "policy", "minimumOriginPopulationSatisfaction"], 90);
+		let minimumCapacity = _.get(Memory, ["ai", "policy", "minimumOriginEnergyCapacity"], 800);
+		let populationSatisfaction = _.get(origin, ["population", "demandSatisfaction"], 0) || 0;
+		let storageEnergy = _.get(origin, ["energy", "storageEnergy"], 0);
+		let energyCapacity = _.get(origin, ["energy", "capacity"], 0);
+		let spawnCount = _.get(origin, ["spawning", "spawns"], 0);
+		let hostileCount = _.get(origin, ["defense", "hostileCreeps"], 0);
+		let activeColonizations = _.filter(_.values(_.get(Memory, ["ai", "colonizations"], {})), operation =>
+			!_.includes(["SUCCESS", "FAILED"], _.get(operation, "state")));
+		let maxConcurrent = _.get(Memory, ["ai", "policy", "maxConcurrentColonizations"], 1);
+		let lastColonization = _.get(Memory, ["ai", "majorOperations", "lastColonizationTick"]);
+		let cooldownTicks = _.get(Memory, ["ai", "policy", "colonizationCooldownTicks"], 50000);
+		let cooldownRemaining = _.isNumber(lastColonization) ? Math.max(0, cooldownTicks - (Game.time - lastColonization)) : 0;
+
+		if (globalSlots < 1) reasons.push("NO_GCL_CAPACITY");
+		if (protectionSlots < 1 && globalSlots > 0) reasons.push("BLOCKED_BY_PROTECTION");
+		if (!candidate) reasons.push("INSUFFICIENT_INTEL");
+		else if (candidate.eligible !== true) {
+			let disqualifiers = candidate.disqualifiers || [];
+			if (_.includes(disqualifiers, "retry_cooldown_after_failure")) reasons.push("COLONIZATION_COOLDOWN");
+			else if (_.some(disqualifiers, reason => _.includes(["stale_intel"], reason))) reasons.push("INSUFFICIENT_INTEL");
+			else if (_.includes(disqualifiers, "no_feasible_layout")) reasons.push("BLOCKED_BY_LAYOUT");
+			else if (_.some(disqualifiers, reason => _.includes(["no_route"], reason))) reasons.push("BLOCKED_BY_ROUTE");
+			else if (_.some(disqualifiers, reason => _.includes(["post_protection_only", "room_closed", "protection_accessibility_unknown"], reason))) reasons.push("BLOCKED_BY_PROTECTION");
+			else if (_.some(disqualifiers, reason => _.includes(["foreign_owned", "foreign_reserved"], reason))) reasons.push("BLOCKED_BY_THREAT");
+			else reasons.push("INSUFFICIENT_INTEL");
+		}
+		if (!origin) reasons.push("BLOCKED_BY_ROUTE");
+		else {
+			if (populationSatisfaction < minimumPopulation) reasons.push("BLOCKED_BY_POPULATION");
+			if (spawnCount < 1 || energyCapacity < minimumCapacity) reasons.push("BLOCKED_BY_SPAWN_CAPACITY");
+			if (storageEnergy < minimumStorage) reasons.push("BLOCKED_BY_ECONOMY");
+			if (hostileCount > 0) reasons.push("BLOCKED_BY_THREAT");
+		}
+		if (activeColonizations.length >= maxConcurrent) reasons.push("COLONIZATION_IN_PROGRESS");
+		if (cooldownRemaining > 0) reasons.push("COLONIZATION_COOLDOWN");
 		if (_.get(Memory, ["ai", "policy", "allowColonization"], false) !== true) reasons.push("AUTHORITY_DISABLED");
 		let blocking = _.filter(reasons, reason => reason !== "AUTHORITY_DISABLED");
-		let operationalLimitReason = !healthyOrigin ? "HOME_STAFFING_OR_BOOTSTRAP_CAPACITY"
-			: (!candidate ? "NO_ELIGIBLE_CANDIDATE" : (Math.min(globalSlots, protectionSlots) < 1 ? "NO_LEGAL_CLAIM_CAPACITY" : null));
+		let status = blocking.length === 0 ? "READY" : blocking[0];
+		let operationalLimitReason = blocking.length === 0 ? null : blocking.join(",");
 		return {
-			status: blocking.length === 0 ? "READY" : (_.includes(blocking, "NO_ELIGIBLE_CANDIDATE") ? "INSUFFICIENT_INTEL" : blocking[0]),
+			status: status,
 			reasons: reasons,
 			recommendedRoom: candidate ? candidate.room : null,
-			origin: healthyOrigin || null,
+			origin: originName,
+			layout: _.get(candidate, "layout", null),
+			candidateScore: _.get(candidate, "score", null),
+			currentOperationalRole: _.get(candidate, "currentOperationalRole", null),
+			bootstrap: _.get(candidate, "bootstrap", null),
+			economicConversion: _.get(candidate, "economicConversion", null),
 			claimSlots: Math.min(globalSlots, protectionSlots),
 			globalGclClaimSlots: globalSlots,
 			currentProtectionClaimSlots: protectionSlots,
-			recommendedSimultaneousColonizations: operationalLimitReason == null ? 1 : 0,
+			recommendedSimultaneousColonizations: blocking.length === 0 ? 1 : 0,
 			operationalLimitReason: operationalLimitReason,
-			spawnCapacity: healthyOrigin ? "ADEQUATE" : "CONSTRAINED"
+			spawnCapacity: spawnCount > 0 && energyCapacity >= minimumCapacity ? "ADEQUATE" : "CONSTRAINED",
+			components: {
+				legalCapacity: { global: globalSlots, protectedRegion: protectionSlots, available: Math.min(globalSlots, protectionSlots) },
+				population: { value: populationSatisfaction, minimum: minimumPopulation, pass: populationSatisfaction >= minimumPopulation },
+				spawnCapacity: { spawns: spawnCount, energyCapacity: energyCapacity, minimumEnergyCapacity: minimumCapacity, pass: spawnCount > 0 && energyCapacity >= minimumCapacity },
+				economy: { storageEnergy: storageEnergy, minimumStorageEnergy: minimumStorage, pass: storageEnergy >= minimumStorage },
+				threat: { hostileCreeps: hostileCount, pass: hostileCount === 0 },
+				concurrency: { active: activeColonizations.length, maximum: maxConcurrent, pass: activeColonizations.length < maxConcurrent },
+				cooldown: { remainingTicks: cooldownRemaining, pass: cooldownRemaining === 0 },
+				authority: { allowed: _.get(Memory, ["ai", "policy", "allowColonization"], false) === true, automatic: _.get(Memory, ["ai", "policy", "autoColonization"], false) === true }
+			}
 		};
+	},
+
+	_remoteDeliveryEconomics: function (roomName) {
+		let metrics = _.get(Memory, ["ai", "metrics", "remotes", roomName], {});
+		let total = _.get(metrics, "energyDeliveredTotal", 0);
+		let window = _.get(metrics, "deliveryRateWindow", null);
+		if (!window || total < _.get(window, "baselineTotal", 0)) {
+			window = { baselineTick: Game.time, baselineTotal: total, measuredDeliveryPer1000: null, measuredTick: null };
+		} else if (Game.time - _.get(window, "baselineTick", Game.time) >= 1000) {
+			let elapsed = Math.max(1, Game.time - window.baselineTick);
+			window.measuredDeliveryPer1000 = Math.round((total - window.baselineTotal) * 100000 / elapsed) / 100;
+			window.measuredTick = Game.time;
+			window.baselineTick = Game.time;
+			window.baselineTotal = total;
+		}
+		_.set(Memory, ["ai", "metrics", "remotes", roomName, "deliveryRateWindow"], window);
+		return {
+			measuredDeliveryPer1000: _.get(window, "measuredDeliveryPer1000", null),
+			cumulativeDelivered: total,
+			health: _.get(Memory, ["ai", "metrics", "remotes", roomName, "lastHealth"], null),
+			measuredTick: _.get(window, "measuredTick", null)
+		};
+	},
+
+	_bestExpansionOrigin: function (target, colonies) {
+		let assessments = [];
+		_.each(colonies || {}, (colony, room) => {
+			let distance = room === target ? 0 : (_.isFunction(_.get(Game, ["map", "getRoomLinearDistance"])) ? Game.map.getRoomLinearDistance(room, target) : 10);
+			let satisfaction = _.get(colony, ["population", "demandSatisfaction"], 0) || 0;
+			let storage = _.get(colony, ["energy", "storageEnergy"], 0);
+			let spawns = _.get(colony, ["spawning", "spawns"], 0);
+			let hostiles = _.get(colony, ["defense", "hostileCreeps"], 0);
+			let score = Math.round(Math.min(40, storage / 25000) + satisfaction / 5 + spawns * 12 - distance * 6 - hostiles * 30);
+			assessments.push({
+				room: room, distance: distance, score: score, storageEnergy: storage,
+				populationSatisfaction: satisfaction, spawns: spawns,
+				energyCapacity: _.get(colony, ["energy", "capacity"], 0), hostiles: hostiles
+			});
+		});
+		return _.head(_.sortBy(assessments, assessment => -assessment.score)) || null;
 	},
 
 	_protectionSummary: function (ownedNames, strategicRooms) {
@@ -1224,9 +1502,11 @@ global.AIObserver = {
 		let reservation = _.get(intel, ["controller", "reservationRelation"]);
 		if (owner === "ALLY") return "ALLY_OWNED";
 		if (owner === "HOSTILE") return "HOSTILE_OWNED";
+		if (_.get(intel, ["controller", "status"]) === "owned_other") return "FOREIGN_OWNED";
 		if (reservation === "SELF") return "SELF_RESERVED";
 		if (reservation === "ALLY") return "ALLY_RESERVED";
 		if (reservation === "HOSTILE") return "FOREIGN_RESERVED";
+		if (_.get(intel, ["controller", "reservation"]) != null) return "FOREIGN_RESERVED";
 		return "NEUTRAL_SCOUTED";
 	},
 

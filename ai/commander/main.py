@@ -459,6 +459,21 @@ def show_candidates(telemetry: Telemetry) -> None:
             f"role={candidate.currentOperationalRole}; set={candidate.availabilitySet}; factors={candidate.factors}; "
             f"layout={candidate.layout or 'none'}; blockers={candidate.disqualifiers or 'none'}"
         )
+        conversion = candidate.economicConversion
+        bootstrap = candidate.bootstrap
+        strategy = candidate.strategy
+        print(
+            f"  sources={candidate.sourceCount}; mineral={candidate.mineralType or 'unknown'}; "
+            f"swamp={candidate.terrainSwampPercent if candidate.terrainSwampPercent is not None else 'unknown'}%; "
+            f"route={candidate.route.get('status', 'unknown')}/{candidate.route.get('length', 'unknown')} rooms"
+        )
+        print(
+            f"  bootstrap={bootstrap.get('burden', 'unknown')} / {bootstrap.get('estimatedEnergy', 'unknown')} energy; "
+            f"remote-income displacement={conversion.get('temporaryIncomeLossPer1000', 0) or 0}/1k "
+            f"({conversion.get('provenance', 'UNKNOWN')}); adjacent remote potential="
+            f"{strategy.get('adjacentRemotePotential', 0)}; neighboring players="
+            f"{strategy.get('neighboringPlayers') or 'none'}"
+        )
     readiness = telemetry.expansionReadiness
     print(
         f"\nReadiness: {readiness.status}; recommended={readiness.recommendedRoom or 'none'}; "
@@ -468,6 +483,8 @@ def show_candidates(telemetry: Telemetry) -> None:
         f"operational limit={readiness.operationalLimitReason or 'none'}; "
         f"reasons={readiness.reasons or 'none'}"
     )
+    if readiness.components:
+        print(f"Components: {readiness.components}")
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
@@ -561,6 +578,24 @@ def main(argv: list[str] | None = None) -> int:
                      "layout": {"name": args.layout, "origin": {"x": args.x, "y": args.y}}},
                     reason=f"Human-authorized guarded colonization for {args.target}",
                 )
+                candidate = next(
+                    (item for item in (health.telemetry.claimCandidates if health.telemetry else []) if item.room == args.target),
+                    None,
+                )
+                if health.telemetry is not None and candidate is not None:
+                    history.create_operation(
+                        f"op-{order.id}", order.id, "explicit human authorization",
+                        args.target, "COLONIZE_ROOM",
+                        f"Human authorized colony plan from {args.origin} to {args.target}",
+                        None, health.telemetry.tick,
+                        {
+                            "candidate": candidate.model_dump(),
+                            "readiness": health.telemetry.expansionReadiness.model_dump(),
+                            "tick": health.telemetry.tick,
+                        },
+                        "The room should become owned, spawned, locally harvesting, and self-sustaining",
+                        health.telemetry.tick + 25000,
+                    )
             elif args.command in {
                 "reassess-remote", "ensure-remote-reservation",
                 "ensure-remote-infrastructure", "rebalance-remote-logistics",

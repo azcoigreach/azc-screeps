@@ -169,7 +169,10 @@ class TrendsJournalTests(unittest.TestCase):
 
         self.processor.process(json.dumps(telemetry_payload(1000)))
         entries = self.history.recent_journal(20)
-        self.assertEqual([entry["entry_type"] for entry in entries], ["telemetry_baseline"])
+        self.assertEqual(
+            [entry["entry_type"] for entry in entries],
+            ["telemetry_baseline", "phase6_baseline"],
+        )
 
 
 if __name__ == "__main__":

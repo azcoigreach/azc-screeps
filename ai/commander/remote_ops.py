@@ -241,6 +241,24 @@ def remote_snapshot(telemetry: Telemetry, room: str) -> dict[str, Any] | None:
 
 def evaluate_operation(operation: dict[str, Any], telemetry: Telemetry) -> tuple[str, dict[str, Any], str]:
     """Return outcome, result metrics, and a deterministic explanation."""
+    if operation["action"] == "COLONIZE_ROOM":
+        colonization = next(
+            (item for item in telemetry.operations.colonizations if item.target == operation["room"]),
+            None,
+        )
+        if colonization is None:
+            return "FAILED", {}, "The colonization operation disappeared without terminal evidence."
+        result = colonization.model_dump(by_alias=True)
+        if colonization.state == "SUCCESS":
+            return "SUCCESS", result, "The colony met deterministic ownership, spawn, local harvesting, and independent-spawn criteria."
+        if colonization.state == "FAILED":
+            outcome = colonization.outcome or "FAILED"
+            return outcome, result, colonization.failureReason or "Deterministic colonization failed."
+        if colonization.state in {"SPAWN_OPERATIONAL", "ECONOMY_BOOTSTRAPPING", "SELF_SUSTAINING"}:
+            return "PARTIAL_SUCCESS", result, "The room is owned with material bootstrap progress but is not yet self-sustaining."
+        if colonization.state in {"CLAIMED", "SPAWN_BUILDING"}:
+            return "PARTIAL_SUCCESS", result, "The controller is owned, but the permanent spawn/economy criteria remain incomplete."
+        return "INCONCLUSIVE", result, "The claimer lifecycle is active without enough evidence for an outcome."
     current = remote_snapshot(telemetry, operation["room"])
     if operation["action"] == "START_REMOTE_MINING":
         establishment = next(

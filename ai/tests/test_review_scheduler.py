@@ -116,6 +116,21 @@ class ReviewSchedulerTests(unittest.TestCase):
             self.scheduler.evaluate(self.process(attacked), self.now + 300).should_review
         )
 
+    def test_critical_colonization_failure_is_urgent(self) -> None:
+        payload = self.establish_reviewed_baseline()
+        failed = json.loads(json.dumps(payload))
+        failed["tick"] += 1
+        failed["operations"]["colonizations"] = [{
+            "id": "colonization:cmd-1", "orderId": "cmd-1", "from": "W1N1",
+            "origin": "W1N1", "target": "W1N2", "state": "FAILED",
+            "outcome": "FAILED", "createdTick": 1000, "updatedTick": 1001,
+            "failureReason": "claimer lost",
+        }]
+        decision = self.scheduler.evaluate(self.process(failed), self.now + 180)
+        self.assertTrue(decision.should_review)
+        self.assertEqual(decision.reason, "urgent strategic event")
+        self.assertTrue(any(event.key == "colonizations:W1N2:FAILED" for event in decision.events))
+
 
 if __name__ == "__main__":
     unittest.main()

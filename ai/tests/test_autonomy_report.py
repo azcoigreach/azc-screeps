@@ -179,6 +179,36 @@ class AutonomyReportTests(unittest.TestCase):
         report = build_report(self.history, telemetry, 24)
         self.assertIn("claim rule NORMAL_GCL", report)
 
+    def test_auto_colonization_selects_only_an_authoritatively_ready_plan(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"].update({"colonization": True, "autoColonization": True})
+        layout = {"name": "def_hor", "origin": {"x": 20, "y": 20}, "score": 90}
+        candidate = payload["expansionCandidates"][0]
+        candidate.update({
+            "eligible": True, "origin": "W1N1", "layout": layout,
+            "validLayouts": [layout], "economicConversion": {"isExistingRemote": True},
+            "bootstrap": {"estimatedEnergy": 46300}, "strategy": {"adjacentRemotePotential": 2},
+        })
+        payload["claimCandidates"] = [candidate]
+        payload["expansionReadiness"] = {
+            "status": "READY", "reasons": [], "recommendedRoom": "W1N2", "origin": "W1N1",
+            "layout": layout, "candidateScore": 80, "currentOperationalRole": "OUR_REMOTE",
+            "bootstrap": candidate["bootstrap"], "economicConversion": candidate["economicConversion"],
+            "claimSlots": 3, "globalGclClaimSlots": 3, "currentProtectionClaimSlots": 2,
+            "recommendedSimultaneousColonizations": 1, "operationalLimitReason": None,
+            "spawnCapacity": "ADEQUATE", "components": {},
+        }
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        order = AutonomyController(self.history, transport).run(telemetry)
+        self.assertIsNotNone(order)
+        self.assertEqual(order.action, "COLONIZE_ROOM")
+        self.assertEqual(order.parameters["target"], "W1N2")
+        self.assertEqual(order.parameters["layout"], layout)
+        operation = self.history.recent_operations(1)[0]
+        self.assertEqual(operation["action"], "COLONIZE_ROOM")
+
 
 if __name__ == "__main__":
     unittest.main()

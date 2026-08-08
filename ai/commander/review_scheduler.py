@@ -272,6 +272,7 @@ class ReviewScheduler:
                 "reservationBand": 0 if ticks <= 0 else 1 if ticks < 500 else 2 if ticks < 1500 else 3,
                 "hostilePresence": remote.get("security", {}).get("hostileCreeps", 0) > 0,
                 "stopLoss": remote.get("stopLoss", {}).get("state"),
+                "majorLossBand": int(remote.get("losses", {}).get("creepLossesTotal") or 0) // 5,
             }
 
         operations = data.get("operations", {})
@@ -312,6 +313,15 @@ class ReviewScheduler:
                 if item.get("claimCandidateStatus") == "ELIGIBLE"
             ),
             "alerts": sorted(data.get("alerts", [])),
+            "players": sorted(
+                (
+                    player.get("username"), player.get("currentRelationship"),
+                    tuple(sorted(player.get("ownedRooms", []))),
+                    tuple(sorted(player.get("reservations", []))),
+                    int(player.get("hostileActionsObserved") or 0) // 3,
+                )
+                for player in data.get("playerHistory", [])
+            ),
             "cpuState": "CRITICAL" if data.get("cpu", {}).get("bucket", 0) < 1000 else "LOW" if data.get("cpu", {}).get("bucket", 0) < 3000 else "NORMAL",
         }
         encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
@@ -389,12 +399,47 @@ class ReviewScheduler:
                 add(f"remote_membership:{room}:{after is not None}", MATERIAL, f"Remote portfolio changed for {room}")
                 continue
             if before.get("health") != after.get("health"):
-                add(f"remote_health:{room}:{before.get('health')}:{after.get('health')}", MATERIAL, f"{room} health changed from {before.get('health')} to {after.get('health')}")
+                priority = URGENT if after.get("health") in {"FAILING", "UNSAFE"} else MATERIAL
+                add(f"remote_health:{room}:{before.get('health')}:{after.get('health')}", priority, f"{room} health changed from {before.get('health')} to {after.get('health')}")
             old_relation = before.get("reservation", {}).get("relation")
             new_relation = after.get("reservation", {}).get("relation")
             if old_relation != new_relation:
                 priority = URGENT if new_relation not in {"SELF", "NONE", None} else MATERIAL
                 add(f"remote_reservation:{room}:{old_relation}:{new_relation}", priority, f"{room} reservation relation changed")
+            old_losses = int(before.get("losses", {}).get("creepLossesTotal") or 0)
+            new_losses = int(after.get("losses", {}).get("creepLossesTotal") or 0)
+            if new_losses - old_losses >= 5:
+                add(f"major_losses:{room}:{new_losses // 5}", MATERIAL, f"{room} recorded {new_losses - old_losses} major new creep losses")
+
+        for operation_name, target_key in (("colonizations", "target"), ("remoteEstablishments", "target")):
+            old_operations = {
+                item.get(target_key): item for item in old.get("operations", {}).get(operation_name, [])
+            }
+            new_operations = {
+                item.get(target_key): item for item in new.get("operations", {}).get(operation_name, [])
+            }
+            for target in sorted(set(old_operations) | set(new_operations), key=str):
+                before = old_operations.get(target, {})
+                after = new_operations.get(target, {})
+                if before.get("state") == after.get("state"):
+                    continue
+                state = after.get("state", "REMOVED")
+                priority = URGENT if state == "FAILED" else MATERIAL
+                add(
+                    f"{operation_name}:{target}:{state}", priority,
+                    f"{operation_name} operation for {target} entered {state}",
+                )
+
+        old_players = {item.get("username"): item for item in old.get("playerHistory", [])}
+        new_players = {item.get("username"): item for item in new.get("playerHistory", [])}
+        for username, player in new_players.items():
+            if username not in old_players:
+                add(f"player_discovered:{username}", MATERIAL, f"New player {username} entered territorial intelligence")
+            elif old_players[username].get("currentRelationship") != player.get("currentRelationship"):
+                add(
+                    f"player_relationship:{username}:{player.get('currentRelationship')}", MATERIAL,
+                    f"Relationship with {username} changed to {player.get('currentRelationship')}",
+                )
 
         old_readiness = old.get("expansionReadiness", {})
         new_readiness = new.get("expansionReadiness", {})

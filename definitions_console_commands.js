@@ -166,8 +166,16 @@
 		ai.colonization = function (allowed) {
 			if (!_.isBoolean(allowed)) return "[AI] Error: colonization policy must be true or false.";
 			_.set(Memory, ["ai", "policy", "allowColonization"], allowed);
-			if (!allowed) _.set(Memory, ["ai", "policy", "autoColonization"], false);
+			_.set(Memory, ["ai", "policy", "autoColonization"], false);
 			return `[AI] Colonization ${allowed ? "enabled" : "disabled"} by human operator.`;
+		};
+
+		help_ai.push('ai.autoColonization(true|false) - Allow one-at-a-time automatic permanent colonization');
+		ai.autoColonization = function (allowed) {
+			if (!_.isBoolean(allowed)) return "[AI] Error: automatic colonization policy must be true or false.";
+			_.set(Memory, ["ai", "policy", "allowColonization"], allowed);
+			_.set(Memory, ["ai", "policy", "autoColonization"], allowed);
+			return `[AI] Automatic permanent colonization ${allowed ? "enabled" : "disabled"} by human operator.`;
 		};
 
 		help_ai.push('ai.roomPolicy("W1N2", "PRIORITIZE"|"EXCLUDE"|"NO_REMOTE"|"NO_COLONY"|"NONE")');

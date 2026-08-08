@@ -195,6 +195,7 @@ global.AIRemoteStrategy = {
 		let reservation = _.get(intel, ["controller", "reservationRelation"], "NEUTRAL");
 		if (_.includes(context.existingRemotes || [], intel.room)) disqualifiers.push("already_configured");
 		if (_.get(intel, ["controller", "status"]) === "owned" || owner === "SELF") disqualifiers.push("already_owned");
+		if (_.get(intel, ["controller", "status"]) === "owned_other") disqualifiers.push("foreign_owned");
 		if (_.get(intel, "stale", false)) disqualifiers.push("stale_intel");
 		if (_.get(intel, "classification") !== "normal") disqualifiers.push("unsupported_room_classification");
 		if (_.get(intel, "sourceCount", 0) < 1) disqualifiers.push("no_sources");
@@ -255,10 +256,13 @@ global.AIRemoteStrategy = {
 		context = context || {};
 		let disqualifiers = [];
 		let owner = _.get(intel, ["controller", "ownerRelation"], "NEUTRAL");
+		let reservation = _.get(intel, ["controller", "reservationRelation"], "NEUTRAL");
 		if (_.get(intel, "stale", false)) disqualifiers.push("stale_intel");
 		if (_.get(intel, "classification") !== "normal") disqualifiers.push("not_claimable_normal_room");
 		if (_.get(intel, ["controller", "status"]) === "owned" || owner === "SELF") disqualifiers.push("already_owned");
+		if (_.get(intel, ["controller", "status"]) === "owned_other") disqualifiers.push("foreign_owned");
 		if (owner !== "NEUTRAL" && owner !== "SELF") disqualifiers.push("foreign_owned");
+		if (_.get(intel, ["controller", "reservation"]) != null && reservation !== "SELF") disqualifiers.push("foreign_reserved");
 		if (_.includes(context.excludedRooms || [], intel.room)) disqualifiers.push("human_policy_exclusion");
 		let accessibility = _.get(intel, ["protection", "accessibility"], "UNKNOWN");
 		if (_.includes(["REACHABLE_AFTER_PROTECTION", "BLOCKED_BY_PROTECTED_BOUNDARY"], accessibility))
@@ -267,6 +271,12 @@ global.AIRemoteStrategy = {
 		if (_.has(intel, "protection") && accessibility === "UNKNOWN") disqualifiers.push("protection_accessibility_unknown");
 		let distance = _.get(intel, "routeLength", _.get(intel, "distanceFromColony", 5));
 		let layouts = _.get(intel, "layoutAnalysis", { valid: [], best: null });
+		let existingRemote = _.get(context, "currentOperationalRole") === "OUR_REMOTE";
+		let measuredDelivery = _.get(context, ["remoteEconomics", "measuredDeliveryPer1000"], null);
+		let adjacentPotential = _.get(context, "adjacentRemotePotential", 0);
+		let routeLength = Math.max(1, distance || 1);
+		let bootstrapEnergy = 15000 + 1300 + (25000 + routeLength * 5000);
+		let candidateFailure = _.get(context, "candidateFailure", null);
 		let factors = {
 			sources: Math.min(30, _.get(intel, "sourceCount", 0) * 15),
 			terrain: Math.max(0, 15 - Math.round((_.get(intel, "terrainSwampPercent", 50) || 0) * 0.2)),
@@ -274,17 +284,60 @@ global.AIRemoteStrategy = {
 			mineralDiversity: _.get(intel, "mineralType") ? 8 : 0,
 			security: (_.get(intel, "hostileCreeps", 0) === 0 && _.get(intel, ["structures", "towers"], 0) === 0) ? 12 : 0,
 			layout: _.get(layouts, "best") ? 10 : 0,
-			remotePotential: Math.min(5, _.get(context, ["adjacentRemotePotential", intel.room], 0))
+			remotePotential: Math.min(10, adjacentPotential * 2),
+			defensibility: Math.max(0, 8 - Math.max(0, _.get(context, "exitCount", 4) - 2) * 2),
+			corridorValue: Math.min(6, _.get(context, "corridorValue", 0)),
+			knownInfrastructure: existingRemote ? 6 : 0,
+			economicConversion: existingRemote && _.isNumber(measuredDelivery)
+				? -Math.min(8, Math.round(measuredDelivery / 2000)) : 0,
+			priorFailure: candidateFailure ? -Math.min(10, _.get(candidateFailure, "count", 1) * 3) : 0
 		};
-		let score = _.sum(_.values(factors));
+		let rawScore = _.sum(_.values(factors));
+		let score = Math.max(0, Math.min(100, rawScore));
 		let minimum = _.get(context, "minimumScore", this.CLAIM_SCORE_MINIMUM);
 		if (_.get(layouts, "best") == null) disqualifiers.push("no_feasible_layout");
+		if (candidateFailure && _.get(candidateFailure, "retryAfterTick", 0) > _.get(Game, "time", 0))
+			disqualifiers.push("retry_cooldown_after_failure");
 		if (score < minimum) disqualifiers.push("score_below_minimum");
 		return {
-			room: intel.room, origin: _.get(intel, "nearestColony", null), score: score, factors: factors,
+			room: intel.room, origin: _.get(context, "origin", _.get(intel, "nearestColony", null)), score: score, rawScore: rawScore, factors: factors,
 			eligible: disqualifiers.length === 0,
 			disqualifiers: disqualifiers, layout: _.get(layouts, "best", null),
 			currentOperationalRole: _.get(context, "currentOperationalRole", "NEUTRAL_SCOUTED"),
+			validLayouts: _.get(layouts, "valid", []),
+			economicConversion: {
+				isExistingRemote: existingRemote,
+				measuredDeliveryPer1000: measuredDelivery,
+				cumulativeDelivered: _.get(context, ["remoteEconomics", "cumulativeDelivered"], null),
+				remoteHealth: _.get(context, ["remoteEconomics", "health"], null),
+				temporaryIncomeLossPer1000: existingRemote ? measuredDelivery : 0,
+				provenance: _.isNumber(measuredDelivery) ? "MEASURED" : "UNKNOWN"
+			},
+			bootstrap: {
+				estimatedEnergy: bootstrapEnergy,
+				spawnAssistRequired: true,
+				burden: routeLength <= 1 ? "MODERATE" : (routeLength <= 2 ? "HIGH" : "VERY_HIGH"),
+				routeLength: distance,
+				originAssessment: _.get(context, "originAssessment", null)
+			},
+			strategy: {
+				adjacentRemotePotential: adjacentPotential,
+				corridorValue: _.get(context, "corridorValue", 0),
+				neighboringPlayers: _.get(context, "neighboringPlayers", []),
+				exitCount: _.get(context, "exitCount", null)
+			},
+			sourceCount: _.get(intel, "sourceCount", 0),
+			mineralType: _.get(intel, "mineralType", null),
+			terrainSwampPercent: _.get(intel, "terrainSwampPercent", null),
+			route: {
+				status: _.get(intel, "routeStatus", "unknown"), length: distance,
+				rooms: _.get(intel, "routeRooms", [])
+			},
+			security: {
+				hostileCreeps: _.get(intel, "hostileCreeps", 0),
+				hostileStructures: _.get(intel, ["structures", "hostile"], 0),
+				lastHostileSightingTick: _.get(intel, "lastHostileSightingTick", null)
+			},
 			accessibility: accessibility,
 			availabilitySet: _.includes(["REACHABLE_AFTER_PROTECTION", "BLOCKED_BY_PROTECTED_BOUNDARY"], accessibility)
 				? "POST_PROTECTION" : (accessibility === "REACHABLE_NOW" ? "CURRENTLY_REACHABLE" : "UNAVAILABLE")
@@ -292,7 +345,7 @@ global.AIRemoteStrategy = {
 	},
 
 	analyzeLayouts: function (room) {
-		if (!room || !_.isFunction(_.get(room, "getTerrain"))) return { valid: [], best: null, analyzedTick: _.get(Game, "time", 0) };
+		if (!room || !_.isFunction(_.get(room, "getTerrain"))) return { version: 2, valid: [], best: null, analyzedTick: _.get(Game, "time", 0) };
 		let definitions = [
 			{ name: "def_hor", value: typeof Blueprint__Default_Horizontal === "undefined" ? null : Blueprint__Default_Horizontal },
 			{ name: "def_vert", value: typeof Blueprint__Default_Vertical === "undefined" ? null : Blueprint__Default_Vertical },
@@ -305,19 +358,34 @@ global.AIRemoteStrategy = {
 		_.each(definitions, definition => {
 			if (!definition.value) return;
 			let offsets = [];
-			_.each(definition.value, positions => { if (_.isArray(positions)) offsets = offsets.concat(positions); });
-			for (let x = 8; x <= 40; x += 4) for (let y = 8; y <= 40; y += 4) {
+			_.each(definition.value, (positions, structureType) => {
+				if (_.isArray(positions) && !_.includes(["road", "rampart", "constructedWall"], structureType))
+					offsets = offsets.concat(positions);
+			});
+			for (let x = 5; x <= 43; x += 2) for (let y = 5; y <= 43; y += 2) {
 				let blocked = 0, swamps = 0;
+				let occupied = {};
 				_.each(offsets, offset => {
 					let px = x + _.get(offset, "x", 0), py = y + _.get(offset, "y", 0);
-					if (px < 2 || px > 47 || py < 2 || py > 47 || terrain.get(px, py) === wall) blocked++;
+					let key = `${px}:${py}`;
+					if (occupied[key]) return;
+					occupied[key] = true;
+					if (px < 3 || px > 46 || py < 3 || py > 46 || terrain.get(px, py) === wall) blocked++;
 					else if (terrain.get(px, py) === 2) swamps++;
-					if (_.some(protectedObjects, object => Math.max(Math.abs(object.pos.x - px), Math.abs(object.pos.y - py)) <= 2)) blocked++;
+					if (_.some(protectedObjects, object => object.pos.x === px && object.pos.y === py)) blocked++;
 				});
-				if (blocked === 0) valid.push({ name: definition.name, origin: { x: x, y: y }, score: Math.max(0, 100 - swamps) });
+				if (blocked === 0) {
+					let controllerDistance = room.controller ? Math.max(Math.abs(room.controller.pos.x - x), Math.abs(room.controller.pos.y - y)) : 25;
+					let score = Math.max(0, 100 - swamps - Math.max(0, controllerDistance - 12));
+					valid.push({
+						name: definition.name, origin: { x: x, y: y }, score: score,
+						swampTiles: swamps, controllerRange: controllerDistance,
+						validation: "AZC_SUPPORTED_BLUEPRINT_TERRAIN_FOOTPRINT"
+					});
+				}
 			}
 		});
 		valid = _.sortBy(valid, option => -option.score).slice(0, 5);
-		return { valid: valid, best: _.head(valid) || null, analyzedTick: _.get(Game, "time", 0) };
+		return { version: 2, valid: valid, best: _.head(valid) || null, analyzedTick: _.get(Game, "time", 0) };
 	}
 };

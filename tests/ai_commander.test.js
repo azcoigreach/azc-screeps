@@ -568,6 +568,8 @@ test("human console functions remain available", function () {
 	assert.ok(ai.scouting(true).indexOf("enabled") >= 0);
 	assert.strictEqual(Memory.ai.policy.allowScouting, true);
 	assert.ok(ai.explain().indexOf("No explanation") >= 0);
+	assert.ok(ai.autoColonization(false).indexOf("disabled") >= 0);
+	assert.strictEqual(Memory.ai.policy.autoColonization, false);
 	assert.strictEqual(logs.length, 0, "console helpers should produce one Screeps return rendering");
 });
 
@@ -816,7 +818,7 @@ test("protected claim capacity is capped at three rooms independently of GCL", f
 	let snapshot = AIObserver.buildSnapshot();
 	assert.strictEqual(snapshot.empire.gcl.globalGclClaimSlots, 20);
 	assert.strictEqual(snapshot.empire.gcl.currentProtectionClaimSlots, 0);
-	assert.ok(snapshot.expansionReadiness.reasons.includes("BLOCKED_BY_PROTECTION_CLAIM_LIMIT"));
+	assert.ok(snapshot.expansionReadiness.reasons.includes("BLOCKED_BY_PROTECTION"));
 });
 
 test("respawn protection retains normal GCL claim capacity", function () {
@@ -838,7 +840,7 @@ test("respawn protection retains normal GCL claim capacity", function () {
 	assert.strictEqual(snapshot.empire.gcl.currentProtectionClaimSlots, 22);
 	assert.strictEqual(snapshot.expansionReadiness.currentProtectionClaimSlots, 22);
 	assert.strictEqual(snapshot.expansionReadiness.recommendedSimultaneousColonizations, 0);
-	assert.strictEqual(snapshot.expansionReadiness.operationalLimitReason, "HOME_STAFFING_OR_BOOTSTRAP_CAPACITY");
+	assert.ok(snapshot.expansionReadiness.operationalLimitReason.includes("BLOCKED_BY_POPULATION"));
 	assert.strictEqual(snapshot.colonies.W1N1.controller.safeMode, 1200);
 	assert.strictEqual(snapshot.colonies.W1N1.protection.status, "respawn");
 });
@@ -847,7 +849,7 @@ test("expansion readiness treats demand satisfaction as a percentage", function 
 	reset();
 	AIInterface.initMemory();
 	Memory.ai.protection.summary = { currentProtectionClaimSlots: 22 };
-	let candidate = { room: "W1N2", eligible: true };
+	let candidate = { room: "W1N2", origin: "W1N1", eligible: true };
 	let colonies = {
 		W1N1: {
 			energy: { storageEnergy: 500000 },
@@ -856,10 +858,11 @@ test("expansion readiness treats demand satisfaction as a percentage", function 
 		}
 	};
 	let constrained = AIObserver._expansionReadiness([candidate], colonies);
-	assert.ok(constrained.reasons.includes("BLOCKED_BY_HOME_POPULATION"));
+	assert.ok(constrained.reasons.includes("BLOCKED_BY_POPULATION"));
 	assert.strictEqual(constrained.recommendedSimultaneousColonizations, 0);
-	assert.strictEqual(constrained.operationalLimitReason, "HOME_STAFFING_OR_BOOTSTRAP_CAPACITY");
-	colonies.W1N1.population.demandSatisfaction = 80;
+	assert.ok(constrained.operationalLimitReason.includes("BLOCKED_BY_POPULATION"));
+	colonies.W1N1.population.demandSatisfaction = 90;
+	colonies.W1N1.energy.capacity = 800;
 	let recovered = AIObserver._expansionReadiness([candidate], colonies);
 	assert.ok(!recovered.reasons.includes("BLOCKED_BY_HOME_POPULATION"));
 	assert.strictEqual(recovered.recommendedSimultaneousColonizations, 1);
@@ -1073,6 +1076,7 @@ test("remote maintenance actions require authority and delegate only existing-re
 function configureStrategicCandidate(target) {
 	Game.rooms.W1N1 = {
 		name: "W1N1", controller: { my: true, level: 5 }, energyCapacityAvailable: 800,
+		storage: { store: { energy: 500000 } },
 		findSources: function () { return []; }, find: function () { return []; }
 	};
 	Memory.ai.metrics.population = { colonies: { W1N1: { expected: { worker: 2 }, actual: { worker: 2 } } } };
@@ -1172,6 +1176,143 @@ test("COLONIZE_ROOM rejects unavailable GCL and layouts outside deterministic fe
 	parameters = { origin: "W1N1", target: "W1N2", layout: { name: "def_hor", origin: { x: 21, y: 20 } } };
 	putInbox(order("colonize-invalid-layout", "COLONIZE_ROOM", { parameters: parameters }));
 	assert.ok(Memory.ai.orders.rejected[0].reason.includes("feasible option"));
+});
+
+test("claim candidates distinguish existing remotes, foreign ownership, and foreign reservations", function () {
+	reset();
+	let intel = strategicIntel("W1N2", Game.time);
+	intel.layoutAnalysis = { valid: [{ name: "def_hor", origin: { x: 20, y: 20 }, score: 90 }], best: { name: "def_hor", origin: { x: 20, y: 20 }, score: 90 } };
+	let remote = AIRemoteStrategy.claimCandidate(intel, {
+		currentOperationalRole: "OUR_REMOTE", adjacentRemotePotential: 3,
+		remoteEconomics: { measuredDeliveryPer1000: 3200, cumulativeDelivered: 90000, health: "HEALTHY" }
+	});
+	assert.strictEqual(remote.currentOperationalRole, "OUR_REMOTE");
+	assert.strictEqual(remote.economicConversion.isExistingRemote, true);
+	assert.strictEqual(remote.economicConversion.temporaryIncomeLossPer1000, 3200);
+	assert.ok(remote.bootstrap.estimatedEnergy > 15000);
+	assert.strictEqual(remote.strategy.adjacentRemotePotential, 3);
+
+	intel.controller.status = "owned_other";
+	intel.controller.owner = "NeutralNeighbor";
+	intel.controller.ownerRelation = "NEUTRAL";
+	assert.ok(AIRemoteStrategy.claimCandidate(intel, {}).disqualifiers.includes("foreign_owned"));
+	intel.controller.status = "reserved";
+	intel.controller.owner = null;
+	intel.controller.reservation = "NeutralNeighbor";
+	intel.controller.reservationRelation = "NEUTRAL";
+	assert.ok(AIRemoteStrategy.claimCandidate(intel, {}).disqualifiers.includes("foreign_reserved"));
+});
+
+test("colonization readiness reports authoritative legal, population, spawn, economy, layout, route, threat, and ready states", function () {
+	function base() {
+		reset();
+		AIInterface.initMemory();
+		Memory.ai.protection.summary = { currentProtectionClaimSlots: 3 };
+		let colonies = { W1N1: {
+			energy: { storageEnergy: 500000, capacity: 800 },
+			population: { demandSatisfaction: 95 },
+			spawning: { spawns: 1 }, defense: { hostileCreeps: 0 }
+		} };
+		let candidate = { room: "W1N2", origin: "W1N1", eligible: true, layout: { name: "def_hor", origin: { x: 20, y: 20 } }, disqualifiers: [] };
+		return { colonies: colonies, candidate: candidate };
+	}
+	let state = base();
+	assert.strictEqual(AIObserver._expansionReadiness([state.candidate], state.colonies).status, "READY");
+	Game.gcl.level = 1;
+	assert.strictEqual(AIObserver._expansionReadiness([state.candidate], state.colonies).status, "NO_GCL_CAPACITY");
+
+	state = base(); state.colonies.W1N1.population.demandSatisfaction = 50;
+	assert.strictEqual(AIObserver._expansionReadiness([state.candidate], state.colonies).status, "BLOCKED_BY_POPULATION");
+	state = base(); state.colonies.W1N1.spawning.spawns = 0;
+	assert.strictEqual(AIObserver._expansionReadiness([state.candidate], state.colonies).status, "BLOCKED_BY_SPAWN_CAPACITY");
+	state = base(); state.colonies.W1N1.energy.storageEnergy = 1000;
+	assert.strictEqual(AIObserver._expansionReadiness([state.candidate], state.colonies).status, "BLOCKED_BY_ECONOMY");
+	state = base(); state.colonies.W1N1.defense.hostileCreeps = 1;
+	assert.strictEqual(AIObserver._expansionReadiness([state.candidate], state.colonies).status, "BLOCKED_BY_THREAT");
+	state = base(); state.candidate.eligible = false; state.candidate.disqualifiers = ["no_feasible_layout"];
+	assert.strictEqual(AIObserver._expansionReadiness([state.candidate], state.colonies).status, "BLOCKED_BY_LAYOUT");
+	state = base(); state.candidate.eligible = false; state.candidate.disqualifiers = ["no_route"];
+	assert.strictEqual(AIObserver._expansionReadiness([state.candidate], state.colonies).status, "BLOCKED_BY_ROUTE");
+	state = base(); state.candidate.eligible = false; state.candidate.disqualifiers = ["post_protection_only"];
+	assert.strictEqual(AIObserver._expansionReadiness([state.candidate], state.colonies).status, "BLOCKED_BY_PROTECTION");
+});
+
+test("multi-colony origin selection prefers bootstrap health over hardcoded room names", function () {
+	reset();
+	let colonies = {
+		W1N1: { energy: { storageEnergy: 50000, capacity: 800 }, population: { demandSatisfaction: 50 }, spawning: { spawns: 1 }, defense: { hostileCreeps: 0 } },
+		W3N1: { energy: { storageEnergy: 600000, capacity: 1300 }, population: { demandSatisfaction: 100 }, spawning: { spawns: 2 }, defense: { hostileCreeps: 0 } }
+	};
+	let origin = AIObserver._bestExpansionOrigin("W2N1", colonies);
+	assert.strictEqual(origin.room, "W3N1");
+	assert.ok(origin.score > 0);
+});
+
+test("existing remote conversion tracks claim through self-sustaining success", function () {
+	reset(); configureExecution(); configureStrategicCandidate("W1N2");
+	Memory.ai.policy.allowColonization = true;
+	Memory.sites.mining.W1N2 = { colony: "W1N1", can_mine: true };
+	Memory.ai.strategy.claimCandidates[0].currentOperationalRole = "OUR_REMOTE";
+	Memory.ai.strategy.claimCandidates[0].bootstrap = { estimatedEnergy: 46300, burden: "MODERATE" };
+	Memory.ai.strategy.claimCandidates[0].economicConversion = { isExistingRemote: true, temporaryIncomeLossPer1000: 3000 };
+	Memory.ai.strategy.claimCandidates[0].strategy = { adjacentRemotePotential: 2 };
+	let parameters = { origin: "W1N1", target: "W1N2", layout: { name: "def_hor", origin: { x: 20, y: 20 } } };
+	putInbox(order("colonize-remote", "COLONIZE_ROOM", { parameters: parameters }));
+	assert.strictEqual(Memory.sites.mining.W1N2.ai_converting_to_colony, true);
+	assert.strictEqual(Memory.ai.colonizations.W1N2.currentOperationalRole, "OUR_REMOTE");
+
+	let spawnSites = [];
+	Game.rooms.W1N2 = {
+		name: "W1N2", controller: { my: true, level: 1 },
+		find: function (type) { return type === FIND_MY_CONSTRUCTION_SITES ? spawnSites : []; }
+	};
+	AIObserver._updateColonizations();
+	assert.strictEqual(Memory.ai.colonizations.W1N2.state, "CLAIMED");
+	assert.strictEqual(Memory.sites.mining.W1N2.colony, "W1N2");
+	spawnSites = [{ structureType: "spawn" }];
+	Game.time++;
+	AIObserver._updateColonizations();
+	assert.strictEqual(Memory.ai.colonizations.W1N2.state, "SPAWN_BUILDING");
+
+	Game.rooms.W1N2.controller.level = 3;
+	Game.creeps.localWorker = { name: "localWorker", memory: { room: "W1N2", colony: "W1N2", role: "worker" } };
+	Game.spawns.newSpawn = { room: { name: "W1N2" }, spawning: { name: "localWorker" } };
+	Memory.ai.metrics.population.colonies.W1N2 = { expected: { worker: 1 }, actual: { worker: 1 } };
+	Game.time++;
+	AIObserver._updateColonizations();
+	let operation = Memory.ai.colonizations.W1N2;
+	assert.strictEqual(operation.state, "SUCCESS");
+	assert.strictEqual(operation.outcome, "SUCCESS");
+	assert.ok(operation.claimTick != null);
+	assert.ok(operation.spawnOperationalTick != null);
+	assert.ok(operation.firstHarvestTick != null);
+	assert.ok(operation.firstIndependentSpawnTick != null);
+});
+
+test("colonization failure stops reinvestment and prevents immediate retry", function () {
+	reset(); configureExecution(); configureStrategicCandidate("W1N2");
+	Memory.ai.policy.allowColonization = true;
+	let parameters = { origin: "W1N1", target: "W1N2", layout: { name: "def_hor", origin: { x: 20, y: 20 } } };
+	putInbox(order("colonize-timeout", "COLONIZE_ROOM", { parameters: parameters }));
+	Game.time += 15001;
+	AIObserver._updateColonizations();
+	assert.strictEqual(Memory.ai.colonizations.W1N2.state, "FAILED");
+	assert.strictEqual(Memory.ai.colonizations.W1N2.outcome, "FAILED");
+	assert.strictEqual(Memory.sites.colonization.W1N2, undefined);
+	configureStrategicCandidate("W1N2");
+	putInbox(order("colonize-retry-too-soon", "COLONIZE_ROOM", { parameters: parameters }));
+	assert.ok(_.last(Memory.ai.orders.rejected).reason.includes("retry cooldown"));
+	delete Memory.ai.majorOperations.lastColonizationTick;
+	let readiness = AIObserver._expansionReadiness([{
+		room: "W1N2", origin: "W1N1", eligible: false,
+		disqualifiers: ["retry_cooldown_after_failure"]
+	}], {
+		W1N1: {
+			population: { demandSatisfaction: 100 }, energy: { storageEnergy: 1000000, capacity: 2300 },
+			spawning: { spawns: 1 }, defense: { hostileCreeps: 0 }
+		}
+	});
+	assert.strictEqual(readiness.status, "COLONIZATION_COOLDOWN");
 });
 
 test("scout terminal failure and expiry do not report successful observation", function () {

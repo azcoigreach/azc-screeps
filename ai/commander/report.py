@@ -27,6 +27,13 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
         f"({military.spawnThroughput.idle} idle), {len(military.availableCombatResources)} stored resource types; "
         f"nukers {'operational' if military.nukersOperational else 'unavailable'}; offensive authority off.",
         f"CPU {telemetry.cpu.used:.2f}/{telemetry.cpu.limit:.0f}; bucket {telemetry.cpu.bucket}.", "",
+        "Current authority",
+        f"Mode {telemetry.authority.mode.upper()}; scouting "
+        f"{'AUTO' if telemetry.authority.execution.autoScouting else 'MANUAL' if telemetry.authority.execution.scouting else 'OFF'}; "
+        f"remote maintenance {'AUTO' if telemetry.authority.execution.autoRemoteMaintenance else 'MANUAL' if telemetry.authority.execution.remoteMaintenance else 'OFF'}; "
+        f"new remotes {'AUTO' if telemetry.authority.execution.autoNewRemotes else 'MANUAL' if telemetry.authority.execution.newRemotes else 'OFF'}; "
+        f"colonization {'AUTO' if telemetry.authority.execution.autoColonization else 'MANUAL' if telemetry.authority.execution.colonization else 'OFF'}; "
+        "remote abandonment OFF; offensive combat OFF.", "",
         "Population and energy",
     ]
     for room, colony in telemetry.colonies.items():
@@ -67,6 +74,22 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
     if eligible:
         top = eligible[0]
         lines.append(f"Best new remote: {top.room}, score {top.score}, predicted {top.predictedEconomics.quality}.")
+    lines.append("Territory graph:")
+    for colony, graph in telemetry.intelligence.territoryGraph.items():
+        lines.append(
+            f"- {colony}: remotes {', '.join(graph.get('remotes', [])) or 'none'}; "
+            f"claim candidates {', '.join(graph.get('nearbyCandidates', [])) or 'none'}; "
+            f"neighboring players {', '.join(graph.get('neighboringPlayers', [])) or 'none'}; "
+            f"boundary-deferred {', '.join(graph.get('protectedBoundaryRooms', [])) or 'none'}."
+        )
+    if telemetry.playerHistory:
+        lines.append("Known players:")
+        for player in telemetry.playerHistory:
+            lines.append(
+                f"- {player.username}: {player.currentRelationship}; owned {len(player.ownedRooms)}, "
+                f"reserved {len(player.reservations)}, proximity {player.territorialProximity}, "
+                f"hostile actions {player.hostileActionsObserved}."
+            )
     readiness = telemetry.expansionReadiness
     lines.extend(["", "Expansion planning"])
     lines.append(
@@ -76,6 +99,29 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
         f"{readiness.recommendedSimultaneousColonizations}; operational limit "
         f"{readiness.operationalLimitReason or 'none'}; reasons {', '.join(readiness.reasons) or 'none'}."
     )
+    candidate = next(
+        (item for item in telemetry.claimCandidates if item.room == readiness.recommendedRoom),
+        None,
+    )
+    if candidate:
+        layout = candidate.layout or {}
+        origin = layout.get("origin", {})
+        lines.append(
+            f"Preferred plan: {candidate.room} from {candidate.origin}; score {candidate.score}; role "
+            f"{candidate.currentOperationalRole}; {candidate.sourceCount} sources; route "
+            f"{candidate.route.get('length', 'unknown')}; layout {layout.get('name', 'none')} at "
+            f"{origin.get('x', '?')},{origin.get('y', '?')}; bootstrap "
+            f"{candidate.bootstrap.get('burden', 'unknown')} / "
+            f"{candidate.bootstrap.get('estimatedEnergy', 'unknown')} energy; displaced remote income "
+            f"{candidate.economicConversion.get('temporaryIncomeLossPer1000', 0) or 0}/1k; adjacent "
+            f"remote potential {candidate.strategy.get('adjacentRemotePotential', 0)}."
+        )
+    if readiness.components:
+        failed_components = [
+            name for name, component in readiness.components.items()
+            if isinstance(component, dict) and component.get("pass") is False
+        ]
+        lines.append(f"Failed readiness components: {', '.join(failed_components) or 'none'}.")
     lines.extend(["", "AI operations"])
     if not operations:
         lines.append("No strategic operations began in this period.")
@@ -90,6 +136,22 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
             f"{establishment.actualDelivered:,}; predicted "
             f"{establishment.prediction.get('quality', 'UNKNOWN')}; "
             f"failure={establishment.failureReason or 'none'}."
+        )
+    for colonization in telemetry.operations.colonizations:
+        lines.append(
+            f"- Colonization {colonization.target}: {colonization.state}; outcome "
+            f"{colonization.outcome or 'pending'}; claim {colonization.claimTick or 'pending'}; "
+            f"spawn {colonization.spawnOperationalTick or 'pending'}; independent spawn "
+            f"{colonization.firstIndependentSpawnTick or 'pending'}; failure "
+            f"{colonization.failureReason or 'none'}."
+        )
+    lines.extend(["", "Scouting"])
+    if not telemetry.operations.scouting:
+        lines.append("No scout missions are recorded.")
+    for scout in telemetry.operations.scouting[-10:]:
+        lines.append(
+            f"- {scout.room or 'unknown'} from {scout.origin}: {scout.status}; "
+            f"observed {scout.observedTick or 'pending'}; failure {scout.failureReason or 'none'}."
         )
     lines.extend(["", "Hostile activity"])
     lines.append("No hostile territorial events recorded." if not hostile_events else
@@ -106,6 +168,12 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
         f"{int(cost['reviews_triggered'] or 0)}/{int(cost['reviews_suppressed'] or 0)}/"
         f"{int(cost['events_coalesced'] or 0)}."
     )
+    if cost.get("estimated_daily_cost") is not None:
+        lines.append(
+            f"Estimated daily cost at the observed 24-hour cadence: "
+            f"${float(cost['estimated_daily_cost']):.6f}; average advisory "
+            f"${float(cost['average'] or 0):.6f}."
+        )
     try:
         database_bytes = history.path.stat().st_size
     except OSError:
@@ -121,5 +189,9 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
     lines.extend(f"- {item}" for item in concerns[:8])
     if not concerns:
         lines.append("- No deterministic remote alerts are active.")
+    if readiness.status == "READY":
+        lines.append(f"- Colony plan {readiness.recommendedRoom} is ready but remains human-gated unless AUTO authority is explicitly enabled.")
+    else:
+        lines.append(f"- Permanent colonization remains blocked by: {readiness.operationalLimitReason or readiness.status}.")
     lines.append("- Continue reservation/staffing continuity, map missing radius intelligence, and evaluate one major expansion at a time.")
     return "\n".join(lines)

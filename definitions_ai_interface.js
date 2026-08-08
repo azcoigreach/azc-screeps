@@ -78,6 +78,12 @@ global.AIInterface = {
 		this._default(["ai", "policy", "minimumClaimScore"], 70, value => this._isInteger(value) && value >= 0 && value <= 100);
 		this._default(["ai", "policy", "remoteExpansionCooldownTicks"], 10000, value => this._isInteger(value) && value >= 1000);
 		this._default(["ai", "policy", "colonizationCooldownTicks"], 50000, value => this._isInteger(value) && value >= 5000);
+		this._default(["ai", "policy", "maxConcurrentColonizations"], 1, value => this._isInteger(value) && value >= 1 && value <= 3);
+		this._default(["ai", "policy", "minimumOriginStorageEnergy"], 250000, value => this._isInteger(value) && value >= 0);
+		this._default(["ai", "policy", "minimumOriginPopulationSatisfaction"], 90, value => _.isNumber(value) && value >= 0 && value <= 100);
+		this._default(["ai", "policy", "minimumOriginEnergyCapacity"], 800, value => this._isInteger(value) && value >= 300);
+		this._default(["ai", "policy", "minimumStableColonyRcl"], 3, value => this._isInteger(value) && value >= 2 && value <= 6);
+		this._default(["ai", "policy", "minimumStableColonyPopulationSatisfaction"], 75, value => _.isNumber(value) && value >= 0 && value <= 100);
 		this._default(["ai", "policy", "protectionThresholdHours"], [168, 72, 24, 6, 0], value => _.isArray(value));
 		if (!_.isObject(_.get(Memory, ["ai", "policy", "roomOverrides"]))) _.set(Memory, ["ai", "policy", "roomOverrides"], {});
 		if (!_.isObject(_.get(Memory, ["ai", "protection"])) || _.isArray(_.get(Memory, ["ai", "protection"])))
@@ -132,6 +138,7 @@ global.AIInterface = {
 			_.set(Memory, ["ai", "scoutHistory"], []);
 		if (!_.isObject(_.get(Memory, ["ai", "establishments"]))) _.set(Memory, ["ai", "establishments"], {});
 		if (!_.isObject(_.get(Memory, ["ai", "majorOperations"]))) _.set(Memory, ["ai", "majorOperations"], {});
+		if (!_.isObject(_.get(Memory, ["ai", "colonizations"]))) _.set(Memory, ["ai", "colonizations"], {});
 	},
 
 	_default: function (path, value, validator) {
@@ -275,6 +282,10 @@ global.AIInterface = {
 			let origin = _.get(Game, ["rooms", order.parameters.origin]);
 			if (!origin || _.get(origin, ["controller", "my"], false) !== true)
 				return `${order.action} origin is not an owned visible colony`;
+			let authorityEnabled = order.action === "START_REMOTE_MINING"
+				? _.get(Memory, ["ai", "policy", "allowNewRemotes"], false)
+				: _.get(Memory, ["ai", "policy", "allowColonization"], false);
+			if (!authorityEnabled) return null;
 			let eligibility = this._strategicEligibility(order.action, order.parameters);
 			if (!eligibility.valid) return eligibility.reason;
 		}
@@ -283,8 +294,11 @@ global.AIInterface = {
 
 	_strategicEligibility: function (action, parameters) {
 		let target = parameters.target;
-		if (_.has(Memory, ["sites", "mining", target]))
-			return action === "START_REMOTE_MINING" ? { valid: true, duplicate: true } : { valid: false, reason: "COLONIZE_ROOM target is already an operational mining room" };
+		let miningSite = _.get(Memory, ["sites", "mining", target]);
+		if (miningSite && action === "START_REMOTE_MINING")
+			return { valid: true, duplicate: true };
+		if (miningSite && action === "COLONIZE_ROOM" && _.get(miningSite, "colony") === target)
+			return { valid: false, reason: "COLONIZE_ROOM target is already a colony mining room" };
 		if (_.has(Memory, ["sites", "colonization", target]))
 			return { valid: false, reason: `${action} target already has a colonization operation` };
 		let intel = _.get(Memory, ["ai", "intelligence", "rooms", target]);
@@ -332,13 +346,28 @@ global.AIInterface = {
 				&& _.get(parameters.layout, ["origin", "y"]) === _.get(option, ["origin", "y"]));
 			if (!selectedLayout)
 				return { valid: false, reason: "COLONIZE_ROOM layout does not match a deterministic feasible option" };
+			let previous = _.get(Memory, ["ai", "colonizations", target]);
+			if (previous && _.get(previous, "state") === "FAILED" && _.get(previous, "retryAfterTick", 0) > Game.time)
+				return { valid: false, reason: "COLONIZE_ROOM retry cooldown is active after a deterministic failure" };
 		}
 		let colony = _.get(Game, ["rooms", parameters.origin]);
 		let pop = _.get(Memory, ["ai", "metrics", "population", "colonies", parameters.origin]);
 		let actual = _.sum(_.values(_.get(pop, "actual", {})));
 		let expected = _.sum(_.values(_.get(pop, "expected", {})));
-		if (_.get(colony, "energyCapacityAvailable", 0) < 550 || (expected > 0 && actual / expected < 0.6))
+		let minimumPopulation = action === "COLONIZE_ROOM"
+			? _.get(Memory, ["ai", "policy", "minimumOriginPopulationSatisfaction"], 90) / 100 : 0.6;
+		let minimumCapacity = action === "COLONIZE_ROOM"
+			? _.get(Memory, ["ai", "policy", "minimumOriginEnergyCapacity"], 800) : 550;
+		if (_.get(colony, "energyCapacityAvailable", 0) < minimumCapacity || (expected > 0 && actual / expected < minimumPopulation))
 			return { valid: false, reason: `${action} origin spawn capacity or population is insufficient` };
+		if (action === "COLONIZE_ROOM") {
+			let storageEnergy = _.get(colony, ["storage", "store", "energy"], _.get(colony, ["storage", "energy"], 0));
+			if (storageEnergy < _.get(Memory, ["ai", "policy", "minimumOriginStorageEnergy"], 250000))
+				return { valid: false, reason: "COLONIZE_ROOM origin energy reserve is insufficient" };
+			if (_.size(_.filter(_.values(_.get(Memory, ["ai", "colonizations"], {})), operation => !_.includes(["SUCCESS", "FAILED"], _.get(operation, "state"))))
+				>= _.get(Memory, ["ai", "policy", "maxConcurrentColonizations"], 1))
+				return { valid: false, reason: "Maximum concurrent colonizations reached" };
+		}
 		return { valid: true, candidate: candidate };
 	},
 
@@ -559,7 +588,8 @@ global.AIInterface = {
 	_colonizeRoom: function (order) {
 		let eligibility = this._strategicEligibility(order.action, order.parameters);
 		if (!eligibility.valid) throw new Error(eligibility.reason);
-		if (_.size(_.get(Memory, ["sites", "colonization"], {})) >= 1)
+		if (_.size(_.filter(_.values(_.get(Memory, ["ai", "colonizations"], {})), operation => !_.includes(["SUCCESS", "FAILED"], _.get(operation, "state"))))
+			>= _.get(Memory, ["ai", "policy", "maxConcurrentColonizations"], 1))
 			throw new Error("Maximum concurrent colonizations reached");
 		let last = _.get(Memory, ["ai", "majorOperations", "lastColonizationTick"]);
 		if (_.isNumber(last) && Game.time - last < _.get(Memory, ["ai", "policy", "colonizationCooldownTicks"], 50000))
@@ -574,6 +604,26 @@ global.AIInterface = {
 		_.set(Memory, ["sites", "colonization", target], {
 			from: origin, target: target, layout: order.parameters.layout, focus_defense: true,
 			list_route: _.uniq(route), ai_managed: true, ai_order_id: order.id
+		});
+		let miningSite = _.get(Memory, ["sites", "mining", target]);
+		if (miningSite && _.get(miningSite, "colony") !== target)
+			miningSite.ai_converting_to_colony = true;
+		_.set(Memory, ["ai", "colonizations", target], {
+			id: `colonization:${order.id}`, orderId: order.id, from: origin, origin: origin,
+			target: target, layout: _.cloneDeep(order.parameters.layout), state: "AUTHORIZED",
+			outcome: null, createdTick: Game.time, updatedTick: Game.time,
+			claimTick: null, spawnSitePlacedTick: null, spawnOperationalTick: null,
+			firstHarvestTick: null, firstIndependentSpawnTick: null, rclMilestones: {},
+			bootstrapEnergyDelivered: 0, bootstrapSupport: { required: true, activeSupportCreeps: 0 },
+			candidateScore: eligibility.candidate.score,
+			currentOperationalRole: eligibility.candidate.currentOperationalRole,
+			candidatePlan: {
+				factors: eligibility.candidate.factors,
+				bootstrap: eligibility.candidate.bootstrap,
+				economicConversion: eligibility.candidate.economicConversion,
+				strategy: eligibility.candidate.strategy
+			},
+			failureReason: null, stateHistory: [{ state: "AUTHORIZED", tick: Game.time }]
 		});
 		_.set(Memory, ["ai", "majorOperations", "lastColonizationTick"], Game.time);
 		return `COLONIZE_ROOM delegated ${target} to AZC's existing colonization system`;

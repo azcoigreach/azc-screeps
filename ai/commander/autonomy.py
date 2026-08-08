@@ -52,9 +52,63 @@ class AutonomyController:
             order = self._scout(telemetry)
             if order:
                 return order
+        if authority.execution.autoColonization:
+            order = self._colonization(telemetry)
+            if order:
+                return order
         if authority.execution.autoNewRemotes:
             return self._new_remote(telemetry)
         return None
+
+    def _colonization(self, telemetry: Telemetry) -> StrategicOrder | None:
+        readiness = telemetry.expansionReadiness
+        if (
+            readiness.status != "READY"
+            or readiness.recommendedRoom is None
+            or readiness.origin is None
+            or readiness.layout is None
+        ):
+            return None
+        active = [
+            operation for operation in telemetry.operations.colonizations
+            if operation.state not in {"SUCCESS", "FAILED"}
+        ]
+        if active or not self._cooled_down(
+            "COLONIZE_ROOM", readiness.recommendedRoom, telemetry.tick, 50000
+        ):
+            return None
+        candidate = next(
+            (item for item in telemetry.claimCandidates if item.room == readiness.recommendedRoom),
+            None,
+        )
+        if candidate is None or not candidate.eligible:
+            return None
+        order = self.transport.send_safe_command(
+            "COLONIZE_ROOM",
+            {
+                "origin": readiness.origin,
+                "target": readiness.recommendedRoom,
+                "layout": readiness.layout,
+            },
+            reason=(
+                f"Highest ready permanent-colony candidate: {candidate.room} score "
+                f"{candidate.score}, role {candidate.currentOperationalRole}"
+            ),
+        )
+        self.history.create_operation(
+            f"op-{order.id}", order.id, "permanent colonization readiness reached",
+            candidate.room, "COLONIZE_ROOM",
+            f"Selected {candidate.room} from {readiness.origin} at score {candidate.score}",
+            None, telemetry.tick,
+            {
+                "candidate": candidate.model_dump(),
+                "readiness": readiness.model_dump(),
+                "tick": telemetry.tick,
+            },
+            "The target should become an owned, spawned, locally harvesting, self-sustaining colony",
+            telemetry.tick + 25000,
+        )
+        return order
 
     def _remote_maintenance(self, telemetry: Telemetry) -> StrategicOrder | None:
         severity = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}

@@ -749,6 +749,8 @@
 				let can_mine = _.get(Memory, ["sites", "mining", rmHarvest, "can_mine"]);
 				let reservationObjective = _.get(Memory, ["ai", "remoteObjectives", rmHarvest, "reservation"]);
 				let logisticsObjective = _.get(Memory, ["ai", "remoteObjectives", rmHarvest, "logistics"]);
+				let convertingToColony = _.get(Memory, ["sites", "mining", rmHarvest, "ai_converting_to_colony"], false) === true
+					|| _.get(Game, ["rooms", rmHarvest, "controller", "my"], false) === true;
 
 				// If the colony is not safe (under siege?) pause spawning remote mining; frees colony spawns to make soldiers
 				if (rmColony != rmHarvest && !is_safe_colony)
@@ -947,7 +949,8 @@
 					if (reservationObjective && _.get(reservationObjective, "expiresTick", 0) >= Game.time)
 						reservationObjective.appliedTick = Game.time;
 					let replacementReserver = reservePlan && reservePlan.continuityAtRisk && reservePlan.spawning < 1;
-					if ((_.get(popActual, "reserver", 0) < _.get(popTarget, ["reserver", "amount"], 0) || replacementReserver)
+					if (!convertingToColony
+						&& (_.get(popActual, "reserver", 0) < _.get(popTarget, ["reserver", "amount"], 0) || replacementReserver)
 						&& Game.rooms[rmHarvest] != null && Game.rooms[rmHarvest].controller != null
 						&& (Game.rooms[rmHarvest].controller.reservation == null
 							|| Game.rooms[rmHarvest].controller.reservation.ticksToEnd < reserveWarning)
