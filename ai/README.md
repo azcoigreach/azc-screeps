@@ -12,8 +12,8 @@ From the repository root, create a virtual environment and install the pinned
 dependency ranges:
 
 ```bash
-python3.12 -m venv .venv
-.venv/bin/pip install -r ai/requirements.txt
+python3.12 -m venv ai/.venv
+ai/.venv/bin/pip install -r ai/requirements.txt
 ```
 
 The commander automatically loads the repository-root `.env`. Start from
@@ -38,14 +38,17 @@ database location, and cost rates are configurable using `ai/.env.example`.
 Run commands from the repository root:
 
 ```bash
-PYTHONPATH=ai .venv/bin/python -m commander.main status
-PYTHONPATH=ai .venv/bin/python -m commander.main watch
-PYTHONPATH=ai .venv/bin/python -m commander.main advise
-PYTHONPATH=ai .venv/bin/python -m commander.main advise --no-writeback
-PYTHONPATH=ai .venv/bin/python -m commander.main request-status
-PYTHONPATH=ai .venv/bin/python -m commander.main noop
-PYTHONPATH=ai .venv/bin/python -m commander.main explain "Testing external commander communication"
-PYTHONPATH=ai .venv/bin/python -m commander.main history
+PYTHONPATH=ai ai/.venv/bin/python -m commander.main status
+PYTHONPATH=ai ai/.venv/bin/python -m commander.main watch
+PYTHONPATH=ai ai/.venv/bin/python -m commander.main advise
+PYTHONPATH=ai ai/.venv/bin/python -m commander.main advise --no-writeback
+PYTHONPATH=ai ai/.venv/bin/python -m commander.main request-status
+PYTHONPATH=ai ai/.venv/bin/python -m commander.main noop
+PYTHONPATH=ai ai/.venv/bin/python -m commander.main scout W38N10 W37N11
+PYTHONPATH=ai ai/.venv/bin/python -m commander.main explain "Testing external commander communication"
+PYTHONPATH=ai ai/.venv/bin/python -m commander.main history
+PYTHONPATH=ai ai/.venv/bin/python -m commander.main journal --last 20
+PYTHONPATH=ai ai/.venv/bin/python -m commander.main cost
 ```
 
 Alternatively, from `ai/`, omit `PYTHONPATH=ai` and run the selected module with
@@ -72,11 +75,10 @@ and persists SQLite data in `ai/data/`.
 ## Tests
 
 ```bash
-PYTHONPATH=ai .venv/bin/python -m unittest discover -s ai/tests -v
+PYTHONPATH=ai ai/.venv/bin/python -m unittest discover -s ai/tests -v
 node tests/ai_commander.test.js
 ```
 
 All network interactions are mocked in the Python suite. See
 [`docs/ai-commander.md`](../docs/ai-commander.md) for deployment, live test, and
 rollback procedures.
-

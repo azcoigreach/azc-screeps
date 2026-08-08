@@ -1,344 +1,306 @@
 # AI Commander
 
-## Purpose and architecture
+## Purpose and authority
 
-The AI commander interface is a fail-safe strategic boundary around the existing AZC Screeps execution engine. The external commander may submit only explicitly whitelisted strategic orders. It cannot submit JavaScript, creep tasks, movement instructions, combat targeting, or other executable code.
+The AI commander is a fail-safe strategic layer around the existing deterministic
+AZC Screeps engine. AZC remains responsible for creep behavior, spawning,
+harvesting, defense, remote mining, construction, industry, and combat
+feasibility. The external Python service observes the empire, keeps long-term
+history, requests structured OpenAI analysis, and writes a readable explanation
+back through the narrow Memory Segment interface.
+
+Phase 3 adds one real action: `SCOUT_ROOM`. It creates a one-shot mission in the
+existing AZC scout system. It cannot claim, reserve, harvest, attack, dismantle,
+or create a remote mine. Colonization, remote-mining changes, market actions,
+production changes, and offensive combat remain unsupported.
 
 ```text
-External commander
-    |  Screeps API / Memory Segments
-    v
-AIInterface (transport, validation, lifecycle)
-    |
-    v
-Explicit action handlers
-    |
-    v
-Existing deterministic AZC systems
+Screeps current state + cumulative counters (Segment 90)
+                         |
+                         v
+Python validation -> SQLite observations -> deterministic trend calculations
+                         |
+                         v
+OpenAI structured interpretation -> journal + optional explanation writeback
+                         |
+                         v
+SCOUT_ROOM only when human policy, execute mode, and every safety gate allow it
 ```
 
-The in-game Phase 1 boundary does not authorize expansion, remote mining, markets, production, colonization, or combat. The external Python service now uses that boundary for transport and OpenAI advice, but the model remains observe/advisor only. Existing harvesting, spawning, defense, industry, and operations continue independently when the interface is disabled, paused, stale, malformed, unavailable, or when the Python process stops.
+These data sources must remain distinct:
 
-The implementation is split between:
+- Current state and cumulative counters are measured by Screeps.
+- Historical deltas and rates are calculated by Python from SQLite snapshots.
+- Strategic interpretation, prose, and recommendations are AI output.
 
-- `definitions_ai_interface.js`: Memory initialization, segment transport, validation, order lifecycle, status acknowledgements, and console-facing diagnostics.
-- `definitions_ai_observer.js`: Compact, JSON-safe strategic telemetry. It never publishes raw Screeps objects or per-creep instructions.
+Gross measured remote delivery is not the same as net colony storage change.
+The former counts successful remote-assigned creep transfers into the home room;
+the latter includes all colony income and spending.
 
-Each shard has its own `Memory.ai` and segment contents. Telemetry includes the current shard name so a future commander can keep shard state separate. Order IDs should be globally unique across shard and time.
+## Memory and segment boundaries
 
-## Memory schema
-
-`Memory.ai` is initialized without replacing valid existing values:
+`Memory.ai` preserves valid existing values and defaults to disabled, unpaused,
+and observe mode. Important Phase 3 defaults are:
 
 ```javascript
-Memory.ai = {
-    version: 1,
-    enabled: false,
-    paused: false,
-    mode: "observe",
-    policy: {
-        posture: "expansionist",
-        allowExpansion: false,
-        allowCombat: false,
-        allowMarket: false,
-        allowProduction: false
-    },
-    commander: {
-        online: false,
-        lastSeenTick: null,
-        lastOrderTick: null
-    },
-    orders: {
-        pending: [],
-        active: [],
-        completed: [],
-        rejected: [],
-        seen: {}
-    },
-    status: {
-        lastObservationTick: null,
-        lastDecision: null,
-        lastExplanation: null
-    },
-    transport: {
-        lastInboxHash: null,
-        lastError: null
-    }
+Memory.ai.policy = {
+    posture: "expansionist",
+    allowExpansion: false,
+    allowCombat: false,
+    allowMarket: false,
+    allowProduction: false,
+    allowScouting: false,
+    intelligenceRadius: 2,
+    intelStaleTicks: 10000
 };
 ```
 
-Order histories and the duplicate-ID index are capped. Large game-state snapshots remain in segments rather than normal Memory.
-
-## Memory Segments
-
-Segment allocation is centralized in `AI_COMMANDER_SEGMENTS`:
+It also contains capped order histories, observer metrics, cumulative remote
+counters, expected population snapshots, and compact room intelligence. Room
+intelligence is capped at 150 rooms and hostile events at 50. Long-term history
+lives in SQLite rather than Screeps Memory.
 
 | Segment | Direction | Contents |
 |---|---|---|
-| 90 | Bot to commander | Strategic telemetry snapshot |
-| 91 | Commander to bot | Heartbeat and order inbox |
-| 92 | Bot to commander | Interface status, acknowledgements, and recent results |
+| 90 | Bot to commander | Strategic telemetry schema v2 |
+| 91 | Commander to bot | Heartbeat and order inbox schema v1 |
+| 92 | Bot to commander | Status, acknowledgements, and recent results schema v1 |
 
-`AIInterface.activateSegments()` requests all three every tick because Screeps segment activation applies on the following tick. Reads and writes are skipped safely when a requested segment is not available. The interface does not clear segment 91; instead it hashes the raw payload and processes a specific payload only once. The external process should replace segment 91 with a new heartbeat envelope when it has new activity.
+The commander is stale after 500 ticks without a valid heartbeat. Missing
+segments, malformed JSON, duplicate IDs, expired orders, invalid parameters,
+and stale heartbeats fail closed without interrupting deterministic AZC code.
+No command data reaches `eval`, `Function`, arbitrary Memory writes, or a general
+dispatcher.
 
-## Inbox and heartbeat protocol
+## Actions and safety modes
 
-The preferred segment 91 payload is:
+| Action | Parameters | Mode/policy | Effect |
+|---|---|---|---|
+| `NOOP` | `{}` | observe or execute | Completes without changing game state. |
+| `REQUEST_STATUS` | `{}` | observe or execute | Requests the normal Segment 92 status. |
+| `SET_EXPLANATION` | `{ "explanation": "..." }` | observe or execute | Stores up to 2,000 characters of user-visible reasoning. |
+| `SCOUT_ROOM` | `{ "room": "W38N10", "origin": "W37N11" }` | execute and `allowScouting` | Queues one non-respawning AZC scout mission. |
 
-```json
-{
-  "schemaVersion": 1,
-  "tick": 12345678,
-  "orders": [
-    {
-      "schemaVersion": 1,
-      "id": "shard1-ai-12345678-001",
-      "createdTick": 12345678,
-      "expiresTick": 12346678,
-      "action": "NOOP",
-      "parameters": {},
-      "reason": "Transport verification"
-    }
-  ]
-}
+The original live NOOP rejection was caused by the observe-mode action gate:
+`NOOP` was present in the global whitelist but absent from the observe-safe
+whitelist. It now completes in observe mode because it changes no game state.
+
+`SCOUT_ROOM` requires all of the following:
+
+- interface enabled;
+- interface not paused;
+- fresh external heartbeat;
+- `mode == "execute"`;
+- `Memory.ai.policy.allowScouting == true`;
+- valid Screeps room names;
+- an owned, visible origin colony;
+- unexpired order and unseen command ID;
+- no existing active AI-managed mission for the same origin and destination.
+
+The handler reuses `Memory.rooms[origin].scout_requests`,
+`Control.runScoutRequests`, the central spawn queue, and `Creep_Roles.Scout`.
+The mission has `count: 1`, `respawn: false`, station patrol behavior, and a
+deterministically derived route. `AI_AUTO_SCOUT` is prepared in external config
+but defaults to false and does not automatically dispatch missions in Phase 3.
+
+## Strategic telemetry schema v2
+
+Segment 90 publishes compact summaries rather than raw game objects.
+
+For every owned colony it reports:
+
+- controller level/progress/percentage, downgrade state, and safe mode;
+- available/capacity, storage, applicable terminal, dropped, and container energy;
+- actual and `CONTROLLER_STRUCTURES`-allowed counts for spawns, extensions,
+  towers, storage, terminal, links, labs, factory, extractor, observer, nuker,
+  and power spawn;
+- explicit storage/terminal/lab/factory/link/extractor capability flags;
+- busy/idle spawns, queue depth, and queued roles;
+- construction count/types and outstanding energy;
+- tower energy and compact rampart/wall hit statistics;
+- current hostile counts and recent hostile history;
+- role-level expected, alive, spawning, queued, and dying-soon population plus
+  aggregate demand satisfaction.
+
+Unavailable structure resources are represented semantically. For example, an
+RCL5 colony reports terminal `allowed: 0`, `canUseTerminal: false`, and
+`terminalEnergy: null`; it does not misleadingly report an empty operating
+terminal.
+
+Each configured remote reports home colony, active/visible state, source-keeper
+status, source count, route, reservation, population demand/health, visible
+source state, containers and hit summary, waiting energy, security, cumulative
+delivered energy, creep losses, and hostile interruptions. Delivery counters are
+incremented only after a successful energy transfer by a creep assigned to a
+remote into its home colony.
+
+Empire state includes exact GCL level/progress/total, owned-controller count,
+available claim slots, creep count, credits, CPU, and bucket. The observer
+publishes its measured CPU cost and exact UTF-8 serialized payload size.
+
+## Room intelligence and expansion candidates
+
+The observer refreshes compact intelligence for every visible room and retains:
+
+- last seen tick and calculated age;
+- normal/highway/source-keeper/sector-center classification;
+- sources, mineral, and cached swamp percentage;
+- controller ownership, reservation, RCL, and safe mode;
+- strategically relevant structures and compact fortification hits;
+- current/recent hostile facts and player names;
+- nearest colony, linear distance, route length, and route status.
+
+A configurable breadth-first map scan identifies nearby known, stale, and
+unknown rooms. Candidate scores expose their component values for sources,
+distance, terrain, mineral, and security. Ownership, unclaimable room type, stale
+intel, and low source counts remain visible as explicit disqualifiers rather than
+being hidden in one opaque score. Candidate ranking is factual preparation; the
+AI makes the strategic interpretation.
+
+## Expansion readiness and advisor narrative
+
+The structured advisory uses one of:
+
+```text
+READY
+NOT_READY
+INSUFFICIENT_INTEL
+BLOCKED_BY_GCL
+BLOCKED_BY_ECONOMY
+BLOCKED_BY_THREAT
 ```
 
-The envelope `tick` is the commander heartbeat. A valid single order object is also accepted for simple testing, with its `createdTick` serving as the heartbeat. The commander is considered stale after 500 ticks without a newer valid heartbeat. A future-dated heartbeat or order is not treated as current.
+Readiness answers whether expansion is strategically desirable. The separate
+`expansion_execution_allowed` field remains false in Phase 3. Therefore the AI
+may correctly report `READY` while also reporting no claim authorization.
 
-An order must have:
+The OpenAI prompt identifies current telemetry, calculated trends, execution
+authority, AZC capabilities, and gross-versus-net measurement semantics. The
+strict result contains rich empire, colony, remote, and territory prose;
+priorities and reasons; concerns and questions; scout recommendations; confidence;
+and a narrative journal entry. It requests user-visible reasoning, never hidden
+chain-of-thought.
 
-- `schemaVersion` equal to `1`.
-- A non-empty, restricted-character `id` no longer than 128 characters.
-- A whitelisted `action`.
-- An object-valued `parameters` field matching the action schema exactly.
-- Integer `createdTick` and `expiresTick` values, with a valid, unexpired time range.
-- An optional string `reason` no longer than 1,000 characters.
-- An ID not previously seen in the capped duplicate index.
-- A current commander heartbeat (no more than 500 ticks old).
-- An enabled, unpaused interface in `execute` mode.
+## SQLite trends and colony journal
 
-Malformed JSON and malformed envelopes are ignored and reported in segment 92. Invalid orders are recorded in `Memory.ai.orders.rejected` with a concise reason. No command data is passed to `eval()`, `Function`, or a general dispatch mechanism.
+`HistoryStore` migrates existing databases in place and keeps bounded tables for
+observations, commands, recommendations, operational events, and journal entries.
+`TrendAnalyzer` compares current telemetry with stored Phase 3 baselines for:
 
-## Phase 1 actions
+- the last 1,000, 5,000, and 20,000 ticks;
+- the period since the previous advisory;
+- colony storage and controller progress;
+- GCL progress, creep population, average CPU, and bucket movement;
+- measured remote deliveries, losses, interruptions, and staffing.
 
-Only the following actions are recognized:
+Unavailable historical windows are labeled unavailable rather than fabricated.
 
-| Action | Parameters | Effect |
-|---|---|---|
-| `NOOP` | `{}` | Completes without changing game state. |
-| `REQUEST_STATUS` | `{}` | Requests the normal segment 92 status response. |
-| `SET_EXPLANATION` | `{ "explanation": "..." }` | Stores a concise, user-visible strategic summary (maximum 2,000 characters). |
+The human journal combines meaningful deterministic milestones—such as a Phase
+3 baseline, RCL/GCL changes, major storage-band crossings, new room intelligence,
+and remote interruption/recovery—with AI-written strategic chapters. It avoids
+per-creep action spam.
 
-`SET_EXPLANATION` is for a short decision rationale, not hidden model chain-of-thought.
+## Console and external CLI
 
-Actions such as `COLONIZE_ROOM`, `ATTACK_ROOM`, `REMOTE_MINE`, market operations, production operations, spawning, dismantling, and suicide are unsupported and rejected.
+Use `help("ai")` for the in-game list. Important commands are:
 
-## Modes and authority
+- `ai.status()`, `ai.orders()`, and `ai.explain()`;
+- `ai.enable()` / `ai.disable()`;
+- `ai.pause()` / `ai.resume()`;
+- `ai.mode("observe")` / `ai.mode("execute")`;
+- `ai.scouting(true)` / `ai.scouting(false)`.
 
-- `observe` is the default. Telemetry and status output work. `REQUEST_STATUS` and `SET_EXPLANATION` may update control-plane metadata, while `NOOP` and all future strategic actions are prevented from executing.
-- `execute` allows only the three Phase 1 safe actions after all other validation checks pass.
-- `paused` prevents order execution without disabling telemetry.
-- `disabled` prevents order execution without making any existing bot system dependent on the interface.
+From `ai/`, use the local virtual environment:
 
-Human console changes take effect directly in Memory and remain available regardless of commander state. This preserves the intended authority order: human operator, AI strategist, validator, deterministic executor. Future game-changing handlers should also consult policy flags and explicit human overrides before touching existing operation Memory.
-
-## Telemetry protocol
-
-Segment 90 contains a periodic schema-versioned snapshot:
-
-```json
-{
-  "schemaVersion": 1,
-  "tick": 12345678,
-  "shard": "shard1",
-  "cpu": { "limit": 100, "used": 25, "bucket": 9000 },
-  "empire": { "gcl": 5, "ownedRooms": 4, "creeps": 80, "credits": 120000 },
-  "colonies": {
-    "E29S14": {
-      "rcl": 6,
-      "energyAvailable": 1800,
-      "energyCapacity": 2300,
-      "storageEnergy": 240000,
-      "terminalEnergy": 40000,
-      "spawns": 2,
-      "hostiles": 0
-    }
-  },
-  "operations": {
-    "colonizations": [],
-    "remoteMining": [],
-    "combat": []
-  },
-  "alerts": []
-}
+```bash
+.venv/bin/python -m commander.main status
+.venv/bin/python -m commander.main watch
+.venv/bin/python -m commander.main advise
+.venv/bin/python -m commander.main advise --no-writeback
+.venv/bin/python -m commander.main noop
+.venv/bin/python -m commander.main request-status
+.venv/bin/python -m commander.main scout W38N10 W37N11
+.venv/bin/python -m commander.main history --limit 20
+.venv/bin/python -m commander.main journal --last 20
+.venv/bin/python -m commander.main journal --since-tick 76800000
+.venv/bin/python -m commander.main cost
 ```
 
-Telemetry is attempted on the existing mid pulse. On initialization, it is retried until segment 90 is available. Hostile counts reuse the colony defense survey in Memory instead of performing another full hostile scan.
+`history` is the engineering/audit view. `journal` is the readable story of the
+empire. `cost` shows today's, seven-day, lifetime, count, and average estimated
+OpenAI cost. The default model and cost rates are configurable in `.env` using
+the exact credential names `SCREEPS_API_TOKEN` and `OPENAI_API_TOKEN`.
 
-Segment 92 includes the current interface and commander state, queue counts, up to ten recent results, the latest decision and explanation, and the most recent transport error.
+## Local verification
 
-## Console commands
-
-Use `help("ai")` for the in-game list.
-
-- `ai.status()` shows enabled, paused, mode, commander freshness, order counts, the last decision, and policy gates.
-- `ai.pause()` and `ai.resume()` provide an immediate human execution override.
-- `ai.enable()` and `ai.disable()` control order acceptance.
-- `ai.mode("observe")` and `ai.mode("execute")` select the safety mode.
-- `ai.orders()` displays the current capped order histories.
-- `ai.explain()` displays the latest user-visible explanation.
-
-Enabling does not change the default `observe` mode. Entering `execute` mode still exposes only the Phase 1 safe action whitelist.
-
-## Safety and failover
-
-The main loop never waits for the external commander. Segment activation occurs before the existing CPU-bucket early return, while actual AI processing is isolated after deterministic colony execution. All interface processing catches transport and serialization errors. Missing segments, empty segments, malformed JSON, stale heartbeats, duplicate IDs, expired orders, invalid parameters, and unsupported actions therefore leave existing AZC systems unchanged.
-
-Event logging is limited to state transitions, incoming command lifecycle events, malformed payload changes, and errors. An unchanged inbox payload is not reprocessed or logged each tick.
-
-## Testing and live verification
-
-Run both local suites before an upload:
+From the repository root:
 
 ```bash
 node tests/ai_commander.test.js
-PYTHONPATH=ai .venv/bin/python -m unittest discover -s ai/tests -v
+PYTHONPATH=ai ai/.venv/bin/python -m unittest discover -s ai/tests -v
+PYTHONPATH=ai ai/.venv/bin/python -m compileall -q ai/commander ai/tests
+ai/.venv/bin/python tools/screeps_deploy.py --branch ai-test --dry-run
+git diff --check
 ```
 
-The Python tests mock all network calls and do not require credentials. Validate
-every deployable JavaScript module without uploading anything with:
+All Python network interactions are mocked. The dry run validates every
+deployable top-level JavaScript module without uploading.
 
-```bash
-python tools/screeps_deploy.py --branch ai-test --dry-run
-```
+## Git, deployment, live test, and rollback
 
-## Git branches and Screeps code branches
+Git branches and Screeps code branches are separate namespaces.
 
-A Git branch and a Screeps code branch are unrelated namespaces:
-
-| Kind | Current development name | Purpose |
+| Kind | Phase 3 name | Purpose |
 |---|---|---|
-| Local Git branch | `feature/ai-commander-transport` | Source history and rollback checkpoints |
-| Screeps code branch | `ai-test` | Inactive upload target for live integration testing |
-| Screeps code branch | `default` | Untouched known-working production code |
+| Git branch | `feature/ai-strategic-intelligence` | Source history and commits |
+| Screeps branch | `ai-test` | Live integration target |
+| Screeps branch | `default` | Untouched known-good rollback |
 
-Committing or switching a Git branch never changes the live Screeps World.
-Uploading a Screeps branch also does not make it live unless activation is
-explicitly requested.
-
-## Safe deployment and rollback
-
-The repository-native uploader reads `SCREEPS_API_TOKEN` from the root `.env`,
-validates every top-level JavaScript module with `node --check`, and uploads only
-those modules using their filename stem as the Screeps module name. It excludes
-the AI service, credentials, Git data, documentation, tests, and other assets.
-If the requested non-production Screeps branch does not exist yet, the uploader
-creates it through Screeps' branch-clone endpoint with the validated modules.
-
-List Screeps branches and identify the live branch:
+List branches and confirm both the active branch and rollback target:
 
 ```bash
-python tools/screeps_branch.py list
+ai/.venv/bin/python tools/screeps_branch.py list
 ```
 
-Upload to the inactive test branch without activating it:
+Upload only to `ai-test`:
 
 ```bash
-python tools/screeps_deploy.py --branch ai-test
+ai/.venv/bin/python tools/screeps_deploy.py --branch ai-test
 ```
 
-After reviewing the report, intentionally switch the live World to the test
-branch:
+If necessary, activate it explicitly:
 
 ```bash
-python tools/screeps_branch.py activate ai-test
+ai/.venv/bin/python tools/screeps_branch.py activate ai-test
 ```
 
-The command prints the old and new live branches and requires confirmation.
-Uploading to or overwriting `default` requires an explicit production option;
-ordinary development commands cannot silently replace it.
-
-> **Immediate rollback:** select the untouched production branch. No upload is
-> involved.
+Immediate rollback does not upload anything:
 
 ```bash
-python tools/screeps_branch.py activate default
+ai/.venv/bin/python tools/screeps_branch.py activate default
 ```
 
-Type `default` at the production confirmation prompt. Re-run the branch list to
-verify the result. The non-interactive form for an already-authorized operator is
-`python tools/screeps_branch.py activate default --production`.
+Type `default` at the production confirmation prompt. The already-authorized
+non-interactive form is `ai/.venv/bin/python tools/screeps_branch.py activate default --production`.
 
-## External Python commander
+For a Phase 3 live test:
 
-The Python 3.12 service under `ai/` has four boundaries:
+1. Confirm local suites pass, `default` exists, and the rollback command is known.
+2. Upload to `ai-test`, activate only if it is not already active, and list again.
+3. Verify W37N11, W38N11, W36N11, and W37N12 plus CPU/bucket before commands.
+4. Run `ai.enable()` and `ai.mode("observe")`; send `noop` and confirm completion.
+5. Collect multiple observations, run `advise`, then inspect `journal` and `cost`.
+6. Select one nearby stale/unknown room. In the game console run
+   `ai.mode("execute")` and `ai.scouting(true)`, then issue exactly one CLI
+   `scout ROOM W37N11` order.
+7. Confirm acknowledgement, one AZC spawn request/mission, room visibility,
+   refreshed `lastSeenTick`, and no other strategic state change.
+8. Disable scouting with `ai.scouting(false)` and return to
+   `ai.mode("observe")` immediately after the mission is accepted.
+9. Re-run the advisory and verify it incorporates the returned intelligence.
+10. Roll back to `default` if colony behavior, remote operation, CPU, or payload
+    size is unexpected.
 
-1. `ScreepsAPIClient` owns token authentication, timeouts, bounded retry and
-   rate-limit handling, branch operations, and segment I/O.
-2. `CommanderTransport` validates Segments 90 and 92, correlates acknowledgements,
-   and protects Segment 91 from overwriting an unacknowledged command.
-3. `HistoryStore` records compact observations, command lifecycle, advisories,
-   and operational events in `ai/data/commander.db` using SQLite WAL mode and
-   bounded retention.
-4. `AdvisorService` sends only compact validated telemetry to OpenAI, persists a
-   strict structured result, and may write only a concise `SET_EXPLANATION` back
-   to Screeps.
-
-The commander uses the exact root `.env` names `SCREEPS_API_TOKEN` and
-`OPENAI_API_TOKEN`. Setup and Docker instructions are in [`ai/README.md`](../ai/README.md).
-
-Useful commands from the repository root are:
-
-```bash
-PYTHONPATH=ai .venv/bin/python -m commander.main status
-PYTHONPATH=ai .venv/bin/python -m commander.main watch
-PYTHONPATH=ai .venv/bin/python -m commander.main advise
-PYTHONPATH=ai .venv/bin/python -m commander.main history
-```
-
-`status` reports API reachability, telemetry validity and tick, interface mode,
-acknowledgement counts, and a compact empire/CPU summary. `watch` separates the
-30-second telemetry polling loop from the default five-minute strategic review
-interval. `advise` requests an immediate assessment; add `--no-writeback` to
-prevent even the safe explanation update.
-
-The default model is configurable as `OPENAI_MODEL=gpt-5.4-nano`. The OpenAI
-Responses API result is parsed into a strict schema containing health status,
-summary, strategic assessment, priorities and reasons, concerns, questions,
-expansion readiness, review timing, and optional confidence. The service stores
-user-visible justification only, reports token usage and estimated cost, and
-does not silently choose a fallback model if the configured model is unavailable.
-
-## Live `ai-test` procedure
-
-Only perform these steps after the upload report confirms that `default` remains
-active:
-
-1. Activate `ai-test` with the explicit branch command above.
-2. In the Screeps console run `ai.enable()`, `ai.mode("observe")`, and
-   `ai.status()`.
-3. Start `python -m commander.main watch` from `ai/`.
-4. Confirm Segment 90 telemetry and Segment 92 status become valid.
-5. Run `python -m commander.main noop` and confirm observe mode rejects execution
-   without affecting normal colony behavior.
-6. Run `python -m commander.main request-status` and then
-   `python -m commander.main explain "Testing external commander communication"`.
-7. Confirm acknowledgements in Segment 92 and inspect `ai.explain()` in the game
-   console.
-8. Run `python -m commander.main advise` for a real structured assessment and
-   confirm its concise explanation is visible through `ai.explain()`.
-9. Monitor the owned colony, its existing remote-mining rooms, CPU usage/bucket,
-   spawn behavior, harvesting, and defense. Do not change remote configuration or
-   enable execute mode.
-10. Stop the commander with `Ctrl-C`; confirm normal deterministic automation
-    continues and then use the rollback command if any unexpected behavior appears.
-
-An empty Segment 90 before activation is expected because the production branch
-does not contain the AI interface. A missing heartbeat makes the commander appear
-offline but never pauses the existing bot. During a longer failover test, stop
-heartbeat updates for more than 500 ticks and confirm the commander transitions
-offline once without console spam.
-
-## Future extension points
-
-Add future strategic capabilities one action at a time by extending the whitelist, defining an exact parameter validator, adding a deterministic handler, applying the relevant policy and human-override gates, and adding rejection/execution tests. Game-changing actions should create or update the existing high-level operation structures; they must not introduce per-tick creep micromanagement into this interface.
+Stopping the external commander never stops deterministic AZC automation. The
+uploader refuses to overwrite `default` unless explicit production flags and
+confirmation are supplied.

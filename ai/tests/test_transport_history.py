@@ -99,6 +99,23 @@ class TransportHistoryTests(unittest.TestCase):
         with self.assertRaises(TransportError):
             transport.send_safe_command("SET_EXPLANATION", {"explanation": ""}, reason="invalid")
 
+    def test_scouting_command_serialization_and_validation(self) -> None:
+        fake = FakeScreepsClient(json.dumps(telemetry_payload()), json.dumps(status_payload()))
+        transport = CommanderTransport(fake, self.history, self.config)
+        transport.poll()
+        scout = transport.send_safe_command(
+            "SCOUT_ROOM", {"room": "W1N2", "origin": "W1N1"}, reason="refresh intelligence"
+        )
+        envelope = json.loads(fake.writes[-1][1])
+        self.assertEqual(scout.action, "SCOUT_ROOM")
+        self.assertEqual(envelope["orders"][0]["parameters"], {"room": "W1N2", "origin": "W1N1"})
+
+        self.history.update_command(scout.id, "completed")
+        with self.assertRaisesRegex(TransportError, "valid room and origin"):
+            transport.send_safe_command(
+                "SCOUT_ROOM", {"room": "invalid", "origin": "W1N1"}, reason="invalid"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

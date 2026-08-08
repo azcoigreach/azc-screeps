@@ -16,8 +16,21 @@ from helpers import config, telemetry_payload
 def advisory() -> Advisory:
     return Advisory.model_validate({
         "status": "healthy",
+        "phase": "RCL6 consolidation",
         "summary": "The colony is stable and supports three remote rooms.",
         "strategic_assessment": "The economy appears stable, but expansion intelligence is incomplete.",
+        "narrative": "W1N1 is steadily consolidating RCL6 while its remote network supplies energy.",
+        "colony_assessments": [{
+            "room": "W1N1",
+            "status": "healthy",
+            "narrative": "Energy, population, and defenses are stable.",
+        }],
+        "remote_assessments": [{
+            "room": "W1N2",
+            "status": "operating",
+            "narrative": "The remote is safe and delivering measured energy.",
+        }],
+        "territory_assessment": "Nearby intelligence is incomplete; W1N2 is the strongest known candidate.",
         "priorities": [{
             "priority": 1,
             "category": "intelligence",
@@ -26,9 +39,18 @@ def advisory() -> Advisory:
         }],
         "concerns": [],
         "questions": ["Which adjacent neutral rooms have two sources?"],
-        "ready_for_expansion": False,
+        "expansion_readiness": "INSUFFICIENT_INTEL",
+        "expansion_execution_allowed": False,
+        "execution_authorization": "ADVISOR_ONLY",
+        "recommended_scouting": [{
+            "room": "W0N1",
+            "origin": "W1N1",
+            "priority": 1,
+            "reason": "This adjacent room has no current intelligence.",
+        }],
         "recommended_review_ticks": 500,
         "confidence": 0.8,
+        "journal_entry": "The empire held a stable RCL6 position and identified nearby intelligence as its next strategic need.",
     })
 
 
@@ -104,8 +126,12 @@ class OpenAIAdvisorTests(unittest.TestCase):
             self.assertEqual(run.explanation_command_id, "writeback-1")
             self.assertEqual(transport.calls[0][0], "SET_EXPLANATION")
             self.assertEqual(len(history.recent_recommendations()), 1)
+            self.assertEqual(history.recent_journal()[0]["entry_type"], "ai_review")
             output = format_advisory(run, telemetry.tick)
             self.assertIn("AI COMMANDER ADVISORY", output)
+            self.assertIn(advisory().narrative, output)
+            self.assertIn("INSUFFICIENT_INTEL", output)
+            self.assertIn("ADVISOR_ONLY", output)
             self.assertIn("$0.000450", output)
             history.close()
 
