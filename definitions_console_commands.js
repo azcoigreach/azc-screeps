@@ -5,6 +5,7 @@
  global.Console = {
 	Init: function () {
 		let help_main = new Array();
+		let help_ai = new Array();
 		let help_allies = new Array();
 		let help_blueprint = new Array();
 		let help_empire = new Array();
@@ -26,6 +27,7 @@
 		/* Main help() list */
 		help_main.push("List of help() arguments, e.g. help(blueprint):");
 		help_main.push(`- "allies" \t Manage ally list`);
+		help_main.push(`- "ai" \t AI commander controls and diagnostics`);
 		help_main.push(`- "blueprint" \t Settings for automatic base building`);
 		help_main.push(`- "empire" \t Miscellaneous empire and colony management`);
 		help_main.push(`- "factories" \t Management of factory commodity production`);
@@ -46,6 +48,62 @@
 		help_profiler.push("profiler.run(cycles)");
 		help_profiler.push("profiler.stop()");
 		help_profiler.push("profiler.analyze()");
+
+
+
+		global.ai = new Object();
+
+		help_ai.push("ai.status() - Show AI commander state, order counts, and policy");
+		ai.status = function () {
+			return AIInterface.consoleStatus();
+		};
+
+		help_ai.push("ai.pause() - Pause acceptance and execution of AI orders");
+		ai.pause = function () {
+			AIInterface.initMemory();
+			_.set(Memory, ["ai", "paused"], true);
+			return `[AI] Commander paused by human operator.`;
+		};
+
+		help_ai.push("ai.resume() - Resume AI order handling");
+		ai.resume = function () {
+			AIInterface.initMemory();
+			_.set(Memory, ["ai", "paused"], false);
+			return `[AI] Commander resumed by human operator.`;
+		};
+
+		help_ai.push("ai.enable() - Enable the AI commander interface");
+		ai.enable = function () {
+			AIInterface.initMemory();
+			_.set(Memory, ["ai", "enabled"], true);
+			return `[AI] Commander enabled in ${_.get(Memory, ["ai", "mode"])} mode.`;
+		};
+
+		help_ai.push("ai.disable() - Disable AI order acceptance");
+		ai.disable = function () {
+			AIInterface.initMemory();
+			_.set(Memory, ["ai", "enabled"], false);
+			return `[AI] Commander disabled by human operator.`;
+		};
+
+		help_ai.push('ai.mode("observe"|"execute") - Set safe observation or execution mode');
+		ai.mode = function (mode) {
+			AIInterface.initMemory();
+			if (mode !== "observe" && mode !== "execute")
+				return `[AI] Error: mode must be "observe" or "execute".`;
+			_.set(Memory, ["ai", "mode"], mode);
+			return `[AI] Commander mode set to ${mode}.`;
+		};
+
+		help_ai.push("ai.orders() - Show pending, active, completed, and rejected orders");
+		ai.orders = function () {
+			return AIInterface.consoleOrders();
+		};
+
+		help_ai.push("ai.explain() - Show the latest user-visible strategic explanation");
+		ai.explain = function () {
+			return AIInterface.consoleExplain();
+		};
 
 
 
@@ -3657,6 +3715,7 @@
 				menu = help_main;
 			else {
 				switch (submenu.toString().toLowerCase()) {
+					case "ai": menu = help_ai; break;
 					case "allies": menu = help_allies; break;
 					case "blueprint": menu = help_blueprint; break;
 					case "empire": menu = help_empire; break;

@@ -33,6 +33,9 @@
  * : [sec13a] Shard Coordinator
  * : [sec14a] Global Creeps (Cross-Shard)
  *
+ * : [sec15a] AI Commander Observer
+ * : [sec15b] AI Commander Interface
+ *
  * *********************************************************** */
 
 require("overloads_general");
@@ -62,6 +65,8 @@ require("definitions_intershard_memory");
 require("definitions_portals");
 require("definitions_shard_coordinator");
 require("definitions_global_creeps");
+require("definitions_ai_observer");
+require("definitions_ai_interface");
 
 /* ***********************************************************
  *	MAIN LOOP
@@ -71,6 +76,7 @@ require("definitions_global_creeps");
 module.exports.loop = function () {
 
 	Stats_CPU.Init();
+	AIInterface.activateSegments();
 
 	if (Control.refillBucket()) {
 		return;
@@ -141,7 +147,9 @@ module.exports.loop = function () {
 	// Pixel generation logic
 	Control.generatePixels();
 
+	// Optional strategic transport runs after deterministic colony execution
+	// and fails closed when segments or the commander are absent.
+	AIInterface.run();
+
 	Stats_CPU.Finish();
 };
-
-
