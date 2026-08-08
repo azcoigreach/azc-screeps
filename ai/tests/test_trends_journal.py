@@ -115,6 +115,32 @@ class TrendsJournalTests(unittest.TestCase):
             show_cost(self.history)
         self.assertIn("$0.000675", output.getvalue())
 
+    def test_protection_expiration_creates_a_major_journal_chapter(self) -> None:
+        baseline = telemetry_payload(1000)
+        current = telemetry_payload(2000)
+        event = {
+            "id": "protection:PROTECTION_EXPIRED:2000",
+            "type": "PROTECTION_EXPIRED",
+            "tick": 2000,
+            "timestamp": 1770000000000,
+            "message": "Protected-area boundary expired; routes and strategy require full recomputation",
+            "details": {"previousStatus": "novice"},
+        }
+        current["empire"]["protection"].update({
+            "active": False, "status": "normal", "expirationTimestamp": None,
+            "remainingProtectionMs": None, "currentRegionKey": None,
+            "protectedOwnedRooms": 0, "currentProtectionClaimSlots": 3,
+            "claimLimit": None, "threshold": "INACTIVE", "advisoryRequired": True,
+            "lastTransitionTick": 2000, "events": [event],
+        })
+        current["empire"]["gcl"]["currentProtectionClaimSlots"] = 3
+        self.processor.process(json.dumps(baseline))
+        self.processor.process(json.dumps(current))
+        entries = self.history.recent_journal(20)
+        expiration = next(entry for entry in entries if entry["entry_type"] == "protection_expired")
+        self.assertIn("new strategic era", expiration["title"])
+        self.assertIn("reconsider deferred scouts", expiration["narrative"])
+
     def test_first_phase3_snapshot_after_legacy_history_creates_only_a_baseline(self) -> None:
         legacy = telemetry_payload(900)
         legacy["schemaVersion"] = 1

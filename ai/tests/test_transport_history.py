@@ -78,6 +78,22 @@ class TransportHistoryTests(unittest.TestCase):
         self.assertTrue(update.material_change)
         self.assertEqual(update.telemetry.operations.scouting[0].status, "SPAWNING")
 
+    def test_protection_countdown_only_becomes_material_at_thresholds(self) -> None:
+        baseline = telemetry_payload(12345)
+        current = json.loads(json.dumps(baseline))
+        current["tick"] = 12346
+        current["empire"]["protection"]["remainingProtectionMs"] -= 1000
+        self.processor = ObservationProcessor(self.history)
+        self.processor.process(json.dumps(baseline))
+        update = self.processor.process(json.dumps(current))
+        self.assertTrue(update.is_new)
+        self.assertFalse(update.material_change)
+
+        current["tick"] += 1
+        current["empire"]["protection"]["threshold"] = "AT_OR_BELOW_72_HOURS"
+        threshold = self.processor.process(json.dumps(current))
+        self.assertTrue(threshold.material_change)
+
     def test_unique_command_serialization_and_acknowledgement(self) -> None:
         fake = FakeScreepsClient(
             json.dumps(telemetry_payload()), json.dumps(status_payload())

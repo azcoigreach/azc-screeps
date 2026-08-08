@@ -103,6 +103,8 @@ def display_status(transport: CommanderTransport) -> str:
         ])
     if health.telemetry:
         telemetry = health.telemetry
+        protection = telemetry.empire.protection
+        military = telemetry.empire.militaryPreparation
         hostile_count = sum(colony.defense.hostileCreeps for colony in telemetry.colonies.values())
         execution = telemetry.authority.execution
         lines.extend([
@@ -124,7 +126,12 @@ def display_status(transport: CommanderTransport) -> str:
             f"Player: {telemetry.empire.player or 'UNKNOWN'}",
             f"Owned rooms: {telemetry.empire.gcl.ownedRooms}",
             f"Creeps: {telemetry.empire.creeps}",
-            f"GCL: {telemetry.empire.gcl.level} ({telemetry.empire.gcl.availableClaimSlots} claim slots available)",
+            f"GCL: {telemetry.empire.gcl.level} ({protection.globalGclClaimSlots or telemetry.empire.gcl.availableClaimSlots} global claim slots available)",
+            f"Protection: {protection.status.upper()} ({_duration(protection.remainingProtectionMs)} remaining)",
+            f"Current protection claim slots: {protection.currentProtectionClaimSlots}",
+            f"Military preparation: {military.spawnThroughput.spawns} spawns, "
+            f"{military.spawnThroughput.idle} idle, {len(military.availableCombatResources)} stored resource types; "
+            f"nukers {'available' if military.nukersOperational else 'unavailable'}",
             f"Credits: {telemetry.empire.credits:,.0f}",
             f"Remote mining rooms: {len(telemetry.operations.remoteMining)}",
             f"Hostiles: {hostile_count}",
@@ -141,6 +148,13 @@ def display_status(transport: CommanderTransport) -> str:
     if health.last_error:
         lines.extend(["", f"Last error: {health.last_error}"])
     return "\n".join(lines)
+
+
+def _duration(milliseconds: int | None) -> str:
+    if milliseconds is None:
+        return "unknown"
+    hours = max(0, milliseconds) / 3_600_000
+    return f"{hours / 24:.1f} days" if hours >= 48 else f"{hours:.1f} hours"
 
 
 def run_advice(
@@ -313,17 +327,32 @@ def show_intel(telemetry: Telemetry) -> None:
     print(f"Known rooms: {len(telemetry.intelligence.knownRooms)}")
     print("Unknown: " + (", ".join(telemetry.intelligence.unknownRooms) or "none"))
     print("Stale: " + (", ".join(telemetry.intelligence.staleRooms) or "none"))
+    protection = telemetry.empire.protection
+    military = telemetry.empire.militaryPreparation
+    print(
+        f"Protection: {protection.status.upper()}, {_duration(protection.remainingProtectionMs)} remaining; "
+        f"claim slots global/current-region={protection.globalGclClaimSlots}/"
+        f"{protection.currentProtectionClaimSlots}"
+    )
+    print(
+        f"Military preparation: spawns={military.spawnThroughput.spawns}, "
+        f"idle={military.spawnThroughput.idle}, queue={military.spawnThroughput.queueDepth}, "
+        f"combat resources={military.availableCombatResources or 'none'}, "
+        f"nukers={'available' if military.nukersOperational else 'unavailable'}"
+    )
     for room in telemetry.intelligence.knownRooms:
         print(
             f"- {room.room}: {room.controller.status}; owner "
             f"{room.controller.ownerRelation}; reservation {room.controller.reservationRelation}; "
-            f"intel age {room.intelAgeTicks}"
+            f"intel age {room.intelAgeTicks}; accessibility {room.protection.accessibility}"
         )
     print("Scout missions:")
     if not telemetry.operations.scouting:
         print("- none")
     for mission in telemetry.operations.scouting:
         detail = f"; failure={mission.failureReason}" if mission.failureReason else ""
+        if mission.status == "DEFERRED":
+            detail += f"; reconsider-after={mission.deferredUntilTimestamp or 'status transition'}"
         print(
             f"- {mission.room or 'unknown'} from {mission.origin}: {mission.status}; "
             f"scout={mission.scoutCreep or 'unassigned'}; requested={mission.requestedTick}; "
@@ -339,20 +368,22 @@ def show_candidates(telemetry: Telemetry) -> None:
         print(
             f"- {candidate.room} from {candidate.origin or 'n/a'}: {candidate.score} "
             f"{'ELIGIBLE' if candidate.eligible else 'BLOCKED'}; "
-            f"predicted {candidate.predictedEconomics.quality}; "
+            f"predicted {candidate.predictedEconomics.quality}; set={candidate.availabilitySet}; "
             f"factors={candidate.factors}; blockers={candidate.disqualifiers or 'none'}"
         )
     print("\n=== PERMANENT COLONY CANDIDATES ===")
     for candidate in telemetry.claimCandidates:
         print(
             f"- {candidate.room}: {candidate.score} {candidate.claimCandidateStatus}; "
-            f"role={candidate.currentOperationalRole}; factors={candidate.factors}; "
+            f"role={candidate.currentOperationalRole}; set={candidate.availabilitySet}; factors={candidate.factors}; "
             f"layout={candidate.layout or 'none'}; blockers={candidate.disqualifiers or 'none'}"
         )
     readiness = telemetry.expansionReadiness
     print(
         f"\nReadiness: {readiness.status}; recommended={readiness.recommendedRoom or 'none'}; "
-        f"origin={readiness.origin or 'none'}; reasons={readiness.reasons or 'none'}"
+        f"origin={readiness.origin or 'none'}; global/current-protection slots="
+        f"{readiness.globalGclClaimSlots}/{readiness.currentProtectionClaimSlots}; "
+        f"reasons={readiness.reasons or 'none'}"
     )
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)

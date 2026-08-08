@@ -91,11 +91,16 @@ class AutonomyController:
     def _scout(self, telemetry: Telemetry) -> StrategicOrder | None:
         active = [
             mission for mission in telemetry.operations.scouting
-            if mission.status not in {"OBSERVED", "COMPLETED", "FAILED", "EXPIRED"}
+            if mission.status not in {"DEFERRED", "OBSERVED", "COMPLETED", "FAILED", "EXPIRED"}
         ]
         if active:
             return None
         targets = list(telemetry.intelligence.unknownRooms) + list(telemetry.intelligence.staleRooms)
+        targets = [
+            room for room in targets
+            if telemetry.intelligence.protectionByRoom.get(room) is None
+            or telemetry.intelligence.protectionByRoom[room].accessibility == "REACHABLE_NOW"
+        ]
         if not targets or not telemetry.colonies:
             return None
         target = targets[0]

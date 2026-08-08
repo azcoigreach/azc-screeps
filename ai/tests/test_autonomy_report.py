@@ -102,6 +102,41 @@ class AutonomyReportTests(unittest.TestCase):
         finally:
             observed_history.close()
 
+    def test_autonomous_scouting_skips_post_protection_targets_and_reconsiders_when_reachable(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"]["autoScouting"] = True
+        payload["intelligence"]["unknownRooms"] = ["W0N1", "W0N2"]
+        blocked = payload["intelligence"]["protectionByRoom"]["W0N1"]
+        blocked["status"] = "normal"
+        blocked["protected"] = False
+        blocked["regionKey"] = None
+        blocked["sharesCurrentProtectedRegion"] = False
+        blocked["accessibility"] = "BLOCKED_BY_NOVICE_BOUNDARY"
+        blocked["reachableNow"] = False
+        blocked["reachableAfterTimestamp"] = 1770000000000
+        payload["intelligence"]["protectionByRoom"]["W0N2"] = {
+            **blocked, "accessibility": "REACHABLE_NOW", "reachableNow": True,
+            "reachableAfterTimestamp": None,
+        }
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        order = AutonomyController(self.history, transport).run(telemetry)
+        self.assertEqual(order.parameters["room"], "W0N2")
+
+        reopened_history = HistoryStore(Path(self.temp.name) / "reopened.db")
+        try:
+            payload["intelligence"]["unknownRooms"] = ["W0N1"]
+            payload["intelligence"]["protectionByRoom"]["W0N1"]["accessibility"] = "REACHABLE_NOW"
+            payload["intelligence"]["protectionByRoom"]["W0N1"]["reachableNow"] = True
+            reopened = Telemetry.model_validate(payload)
+            follow_up = AutonomyController(
+                reopened_history, FakeTransport(reopened_history, reopened.tick)
+            ).run(reopened)
+            self.assertEqual(follow_up.parameters["room"], "W0N1")
+        finally:
+            reopened_history.close()
+
     def test_periodic_report_includes_operations_economics_intel_and_cost(self) -> None:
         telemetry = Telemetry.model_validate(telemetry_payload())
         report = build_report(self.history, telemetry, 24)
@@ -109,6 +144,9 @@ class AutonomyReportTests(unittest.TestCase):
         self.assertIn("Remote performance", report)
         self.assertIn("Territorial intelligence", report)
         self.assertIn("Expansion planning", report)
+        self.assertIn("Protection NOVICE", report)
+        self.assertIn("Military preparation", report)
+        self.assertIn("Candidate sets", report)
         self.assertIn("API cost", report)
 
 

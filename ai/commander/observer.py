@@ -46,6 +46,19 @@ class ObservationProcessor:
 
     @staticmethod
     def material_hash(telemetry: Telemetry) -> str:
+        def protection_state(value):
+            return {
+                "status": value.status,
+                "expirationTimestamp": value.expirationTimestamp,
+                "protected": value.protected,
+                "regionKey": value.regionKey,
+                "sharesCurrentProtectedRegion": value.sharesCurrentProtectedRegion,
+                "accessibility": value.accessibility,
+                "reachableNow": value.reachableNow,
+                "reachableAfterTimestamp": value.reachableAfterTimestamp,
+                "blockedExits": value.blockedExits,
+            }
+
         colonies = {}
         for name, colony in sorted(telemetry.colonies.items()):
             colonies[name] = {
@@ -80,6 +93,25 @@ class ObservationProcessor:
                 "gclLevel": telemetry.empire.gcl.level,
                 "claimSlots": telemetry.empire.gcl.availableClaimSlots,
                 "creepBand": telemetry.empire.creeps // 5,
+                "protection": {
+                    "status": telemetry.empire.protection.status,
+                    "expirationTimestamp": telemetry.empire.protection.expirationTimestamp,
+                    "threshold": telemetry.empire.protection.threshold,
+                    "globalGclClaimSlots": telemetry.empire.protection.globalGclClaimSlots,
+                    "currentProtectionClaimSlots": telemetry.empire.protection.currentProtectionClaimSlots,
+                    "advisoryRequired": telemetry.empire.protection.advisoryRequired,
+                    "lastTransitionTick": telemetry.empire.protection.lastTransitionTick,
+                    "eventIds": [event.id for event in telemetry.empire.protection.events],
+                    "constraints": telemetry.empire.protection.constraints.model_dump(),
+                },
+                "militaryPreparation": {
+                    "spawnThroughput": telemetry.empire.militaryPreparation.spawnThroughput.model_dump(),
+                    "resourceBands": {
+                        resource: amount // (25000 if resource == "energy" else 1000)
+                        for resource, amount in telemetry.empire.militaryPreparation.availableCombatResources.items()
+                    },
+                    "nukersOperational": telemetry.empire.militaryPreparation.nukersOperational,
+                },
             },
             "colonies": colonies,
             "remotes": remotes,
@@ -95,6 +127,11 @@ class ObservationProcessor:
                 for room in telemetry.intelligence.knownRooms
             },
             "unknownRooms": telemetry.intelligence.unknownRooms,
+            "protectionByRoom": {
+                room: protection_state(value)
+                for room, value in sorted(telemetry.intelligence.protectionByRoom.items())
+            },
+            "candidateSets": telemetry.intelligence.candidateSets,
             "candidateScores": {candidate.room: candidate.score for candidate in telemetry.expansionCandidates},
             "remoteCandidateScores": {candidate.room: candidate.score for candidate in telemetry.remoteCandidates},
             "expansionReadiness": telemetry.expansionReadiness.model_dump(),

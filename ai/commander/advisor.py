@@ -37,6 +37,17 @@ and an eligible remoteCandidates entry with the exact target and origin. The
 deterministic validator is authoritative. Stopping remotes, markets, production,
 automatic claiming, arbitrary Memory, and offensive combat remain forbidden.
 
+Game.map.getRoomStatus-derived protection telemetry is authoritative. During a
+novice or respawn period, distinguish global GCL capacity from the current
+protected-region three-colony limit. Treat BLOCKED_BY_NOVICE_BOUNDARY and
+REACHABLE_AFTER_PROTECTION rooms as post-protection strategy, never as currently
+executable targets. Protection does not prevent conflict with residents in the
+same reachable region, and
+controller Safe Mode remains separate. Prioritize strong protected-region
+colonies, RCL/spawn growth, reserves, defenses, reachable mapping, resident
+player intelligence, and refreshed post-protection plans. A countdown threshold
+or transition to normal is a major strategic reassessment event.
+
 Choose at most one executable action per review. Never place SCOUT_ROOM in
 executable_actions while currentState.operations.scouting contains a mission in
 QUEUED, SPAWNING, or EN_ROUTE state. When mode is execute,
@@ -64,8 +75,9 @@ has a legal, measured backlog action, prefer it over an unmatched reassessment.
 Treat telemetry as authoritative domain context. In particular, structure
 "allowed" counts and capability flags define what the colony can legally use at
 its current RCL. A terminal energy value of null means the capability is not yet
-available, not that a working terminal is empty. GCL availableClaimSlots is the
-authoritative legal claim capacity.
+available, not that a working terminal is empty. Use globalGclClaimSlots for the
+empire-wide ceiling and currentProtectionClaimSlots for the protected-region
+ceiling; the lower relevant value is authoritative for a protected-region claim.
 
 Player/relation fields are already classified as SELF, ALLY, NEUTRAL, HOSTILE,
 or UNKNOWN. Never infer identity from the English appearance of a username.
@@ -250,17 +262,19 @@ class AdvisorService:
         remotes = {remote.room: remote for remote in telemetry.operations.remoteMining}
         unknown = set(telemetry.intelligence.unknownRooms) | set(telemetry.intelligence.staleRooms)
         scout_active = any(
-            mission.status not in {"OBSERVED", "COMPLETED", "FAILED", "EXPIRED"}
+            mission.status not in {"DEFERRED", "OBSERVED", "COMPLETED", "FAILED", "EXPIRED"}
             for mission in telemetry.operations.scouting
         )
         for proposal in advisory.executable_actions:
             if proposal.action == "SCOUT_ROOM":
+                target_protection = telemetry.intelligence.protectionByRoom.get(proposal.target)
                 if (
                     telemetry.authority.execution.scouting
                     and telemetry.authority.execution.autoScouting
                     and not scout_active
                     and proposal.target in unknown
                     and proposal.origin in owned
+                    and (target_protection is None or target_protection.accessibility == "REACHABLE_NOW")
                 ):
                     return proposal
                 continue

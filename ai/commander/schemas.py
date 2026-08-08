@@ -17,17 +17,86 @@ class CPUState(StrictModel):
     bucket: int
 
 
+class RoomProtection(StrictModel):
+    status: Literal["normal", "closed", "novice", "respawn", "unknown"] = "unknown"
+    expirationTimestamp: int | None = None
+    remainingProtectionMs: int | None = None
+    protected: bool = False
+    regionKey: str | None = None
+    sharesCurrentProtectedRegion: bool = False
+    accessibility: Literal[
+        "REACHABLE_NOW", "BLOCKED_BY_NOVICE_BOUNDARY", "REACHABLE_AFTER_PROTECTION", "CLOSED", "UNKNOWN"
+    ] = "UNKNOWN"
+    reachableNow: bool = False
+    reachableAfterTimestamp: int | None = None
+    blockedExits: list[dict[str, str]] = Field(default_factory=list)
+
+
+class ProtectionEvent(StrictModel):
+    id: str
+    type: Literal["PROTECTION_DETECTED", "COUNTDOWN_THRESHOLD", "PROTECTION_EXPIRED"]
+    tick: int
+    timestamp: int
+    message: str
+    details: dict[str, Any]
+
+
+class ProtectionConstraints(StrictModel):
+    reservationsUnlimited: bool = True
+    nukersAvailable: bool = True
+    outsidePlayersExcluded: bool = False
+    residentConflictPossible: bool = False
+    safeModeSeparate: bool = True
+
+
+class EmpireProtection(StrictModel):
+    active: bool = False
+    status: Literal["normal", "closed", "novice", "respawn", "unknown"] = "unknown"
+    expirationTimestamp: int | None = None
+    remainingProtectionMs: int | None = None
+    currentRegionKey: str | None = None
+    protectedOwnedRooms: int = 0
+    globalGclClaimSlots: int = 0
+    currentProtectionClaimSlots: int = 0
+    claimLimit: int | None = None
+    threshold: str = "INACTIVE"
+    advisoryRequired: bool = False
+    lastTransitionTick: int | None = None
+    events: list[ProtectionEvent] = Field(default_factory=list)
+    constraints: ProtectionConstraints = Field(default_factory=ProtectionConstraints)
+
+
 class GCLState(StrictModel):
     level: int
     progress: float
     progressTotal: float
     ownedRooms: int
     availableClaimSlots: int
+    globalGclClaimSlots: int = 0
+    currentProtectionClaimSlots: int = 0
+
+
+class SpawnThroughput(StrictModel):
+    spawns: int = 0
+    busy: int = 0
+    idle: int = 0
+    queueDepth: int = 0
+    theoreticalBodyPartsPer1000Ticks: int = 0
+
+
+class MilitaryPreparation(StrictModel):
+    spawnThroughput: SpawnThroughput = Field(default_factory=SpawnThroughput)
+    availableCombatResources: dict[str, int] = Field(default_factory=dict)
+    nukerStructures: int = 0
+    nukersOperational: bool = False
+    offensiveCombatAuthorized: bool = False
 
 
 class EmpireState(StrictModel):
     player: str | None
     gcl: GCLState
+    protection: EmpireProtection = Field(default_factory=EmpireProtection)
+    militaryPreparation: MilitaryPreparation = Field(default_factory=MilitaryPreparation)
     creeps: int
     credits: float
 
@@ -155,6 +224,7 @@ class PopulationState(StrictModel):
 
 
 class ColonyState(StrictModel):
+    protection: RoomProtection = Field(default_factory=RoomProtection)
     controller: ControllerState
     energy: ColonyEnergyState
     structures: ColonyStructures
@@ -274,7 +344,7 @@ class ScoutingOperation(StrictModel):
     orderId: str | None
     origin: str
     room: str | None
-    status: Literal["QUEUED", "SPAWNING", "EN_ROUTE", "OBSERVED", "COMPLETED", "FAILED", "EXPIRED"]
+    status: Literal["DEFERRED", "QUEUED", "SPAWNING", "EN_ROUTE", "OBSERVED", "COMPLETED", "FAILED", "EXPIRED"]
     createdTick: int | None
     requestedTick: int | None
     observedTick: int | None
@@ -283,6 +353,10 @@ class ScoutingOperation(StrictModel):
     scoutCreep: str | None
     activeScouts: int
     failureReason: str | None
+    accessibility: Literal[
+        "REACHABLE_NOW", "BLOCKED_BY_NOVICE_BOUNDARY", "REACHABLE_AFTER_PROTECTION", "CLOSED", "UNKNOWN"
+    ] | None = None
+    deferredUntilTimestamp: int | None = None
 
 
 class RemoteEstablishment(StrictModel):
@@ -324,6 +398,7 @@ class IntelController(StrictModel):
 class IntelStructures(StrictModel):
     spawns: int
     towers: int
+    towerEnergy: int = 0
     storage: int
     terminal: int
     hostile: int
@@ -332,6 +407,7 @@ class IntelStructures(StrictModel):
 
 class RoomIntel(StrictModel):
     room: str
+    protection: RoomProtection = Field(default_factory=RoomProtection)
     lastSeenTick: int
     classification: Literal["normal", "highway", "source_keeper", "sector_center", "unknown"]
     sourceCount: int
@@ -352,7 +428,7 @@ class RoomIntel(StrictModel):
     distanceFromColony: int | None
     routeLength: int | None
     routeRooms: list[str] = Field(default_factory=list)
-    routeStatus: Literal["available", "no_path", "unknown", "unavailable"]
+    routeStatus: Literal["available", "no_path", "protected_boundary", "unknown", "unavailable"]
     intelAgeTicks: int
     stale: bool
 
@@ -370,6 +446,8 @@ class IntelligenceState(StrictModel):
     knownRooms: list[RoomIntel]
     unknownRooms: list[str]
     staleRooms: list[str]
+    protectionByRoom: dict[str, RoomProtection] = Field(default_factory=dict)
+    candidateSets: dict[str, dict[str, list[str]]] = Field(default_factory=dict)
     hostileEvents: list[HostileEvent]
 
 
@@ -389,6 +467,10 @@ class ClaimCandidate(StrictModel):
         "ALLY_OWNED", "SOURCE_KEEPER", "HIGHWAY", "OTHER"
     ]
     claimCandidateStatus: Literal["ELIGIBLE", "NEEDS_FRESH_INTEL", "DISQUALIFIED"]
+    accessibility: Literal[
+        "REACHABLE_NOW", "BLOCKED_BY_NOVICE_BOUNDARY", "REACHABLE_AFTER_PROTECTION", "CLOSED", "UNKNOWN"
+    ] = "UNKNOWN"
+    availabilitySet: Literal["CURRENTLY_REACHABLE", "POST_PROTECTION", "UNAVAILABLE"] = "UNAVAILABLE"
 
 
 class ProvenanceValue(StrictModel):
@@ -414,17 +496,24 @@ class RemoteCandidate(StrictModel):
     disqualifiers: list[str]
     predictedEconomics: PredictedRemoteEconomics
     confidence: float
+    accessibility: Literal[
+        "REACHABLE_NOW", "BLOCKED_BY_NOVICE_BOUNDARY", "REACHABLE_AFTER_PROTECTION", "CLOSED", "UNKNOWN"
+    ] = "UNKNOWN"
+    availabilitySet: Literal["CURRENTLY_REACHABLE", "POST_PROTECTION", "UNAVAILABLE"] = "UNAVAILABLE"
 
 
 class ExpansionReadiness(StrictModel):
     status: Literal[
         "READY", "NOT_READY", "INSUFFICIENT_INTEL", "BLOCKED_BY_GCL",
-        "BLOCKED_BY_ECONOMY", "BLOCKED_BY_THREAT", "BLOCKED_BY_HOME_POPULATION"
+        "BLOCKED_BY_ECONOMY", "BLOCKED_BY_THREAT", "BLOCKED_BY_HOME_POPULATION",
+        "BLOCKED_BY_PROTECTION_CLAIM_LIMIT"
     ]
     reasons: list[str]
     recommendedRoom: str | None
     origin: str | None
     claimSlots: int
+    globalGclClaimSlots: int = 0
+    currentProtectionClaimSlots: int = 0
     spawnCapacity: Literal["ADEQUATE", "CONSTRAINED"]
 
 
@@ -641,7 +730,8 @@ class Advisory(StrictModel):
     questions: list[str] = Field(max_length=16)
     expansion_readiness: Literal[
         "READY", "NOT_READY", "INSUFFICIENT_INTEL", "BLOCKED_BY_GCL",
-        "BLOCKED_BY_ECONOMY", "BLOCKED_BY_THREAT", "BLOCKED_BY_HOME_POPULATION"
+        "BLOCKED_BY_ECONOMY", "BLOCKED_BY_THREAT", "BLOCKED_BY_HOME_POPULATION",
+        "BLOCKED_BY_PROTECTION_CLAIM_LIMIT"
     ]
     expansion_execution_allowed: bool
     execution_authorization: Literal[

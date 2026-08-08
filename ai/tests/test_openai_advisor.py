@@ -221,6 +221,11 @@ class OpenAIAdvisorTests(unittest.TestCase):
         telemetry = Telemetry.model_validate(payload)
         self.assertIsNotNone(AdvisorService._authorized_automatic_action(candidate, telemetry))
 
+        payload["intelligence"]["protectionByRoom"]["W0N1"]["accessibility"] = "BLOCKED_BY_NOVICE_BOUNDARY"
+        payload["intelligence"]["protectionByRoom"]["W0N1"]["reachableNow"] = False
+        telemetry = Telemetry.model_validate(payload)
+        self.assertIsNone(AdvisorService._authorized_automatic_action(candidate, telemetry))
+
 
 if __name__ == "__main__":
     unittest.main()

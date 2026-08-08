@@ -13,11 +13,19 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
     operations = [item for item in history.recent_operations(100) if item["created_tick"] >= since_tick]
     journal = history.recent_journal(100, since_tick)
     hostile_events = [item for item in telemetry.intelligence.hostileEvents if item.tick >= since_tick]
+    protection = telemetry.empire.protection
+    military = telemetry.empire.militaryPreparation
     lines = [
         f"=== COMMANDER OPERATIONS BRIEFING — LAST {hours:g} HOURS ===", "",
         "Empire summary",
         f"{telemetry.empire.gcl.ownedRooms} colonies, GCL {telemetry.empire.gcl.level}, "
         f"{telemetry.empire.gcl.availableClaimSlots} claim slots, {telemetry.empire.creeps} creeps.",
+        f"Protection {protection.status.upper()}; global/current-region claim slots "
+        f"{protection.globalGclClaimSlots}/{protection.currentProtectionClaimSlots}; "
+        f"countdown threshold {protection.threshold}.",
+        f"Military preparation: {military.spawnThroughput.spawns} spawns "
+        f"({military.spawnThroughput.idle} idle), {len(military.availableCombatResources)} stored resource types; "
+        f"nukers {'operational' if military.nukersOperational else 'unavailable'}; offensive authority off.",
         f"CPU {telemetry.cpu.used:.2f}/{telemetry.cpu.limit:.0f}; bucket {telemetry.cpu.bucket}.", "",
         "Population and energy",
     ]
@@ -48,6 +56,12 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
         f"Known {len(telemetry.intelligence.knownRooms)}; unknown "
         f"{', '.join(telemetry.intelligence.unknownRooms) or 'none'}; stale "
         f"{', '.join(telemetry.intelligence.staleRooms) or 'none'}."
+    )
+    current_set = telemetry.intelligence.candidateSets.get("CURRENTLY_REACHABLE", {})
+    post_set = telemetry.intelligence.candidateSets.get("POST_PROTECTION", {})
+    lines.append(
+        f"Candidate sets: currently reachable remotes {', '.join(current_set.get('remoteRooms', [])) or 'none'}; "
+        f"post-protection remotes {', '.join(post_set.get('remoteRooms', [])) or 'none'}."
     )
     eligible = [item for item in telemetry.remoteCandidates if item.eligible]
     if eligible:

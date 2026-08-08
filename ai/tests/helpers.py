@@ -124,12 +124,43 @@ def telemetry_payload(tick: int = 12345) -> dict:
                 "progressTotal": 500000.0,
                 "ownedRooms": 1,
                 "availableClaimSlots": 3,
+                "globalGclClaimSlots": 3,
+                "currentProtectionClaimSlots": 2,
+            },
+            "protection": {
+                "active": True, "status": "novice", "expirationTimestamp": 1770000000000,
+                "remainingProtectionMs": 604800000, "currentRegionKey": "novice:1770000000000",
+                "protectedOwnedRooms": 1, "globalGclClaimSlots": 3,
+                "currentProtectionClaimSlots": 2, "claimLimit": 3,
+                "threshold": "AT_OR_BELOW_168_HOURS", "advisoryRequired": False,
+                "lastTransitionTick": None, "events": [],
+                "constraints": {
+                    "reservationsUnlimited": True, "nukersAvailable": False,
+                    "outsidePlayersExcluded": True, "residentConflictPossible": True,
+                    "safeModeSeparate": True,
+                },
+            },
+            "militaryPreparation": {
+                "spawnThroughput": {
+                    "spawns": 2, "busy": 0, "idle": 2, "queueDepth": 0,
+                    "theoreticalBodyPartsPer1000Ticks": 666,
+                },
+                "availableCombatResources": {"energy": 280000, "XGHO2": 1200},
+                "nukerStructures": 0, "nukersOperational": False,
+                "offensiveCombatAuthorized": False,
             },
             "creeps": 30,
             "credits": 12345.0,
         },
         "colonies": {
             "W1N1": {
+                "protection": {
+                    "status": "novice", "expirationTimestamp": 1770000000000,
+                    "remainingProtectionMs": 604800000, "protected": True,
+                    "regionKey": "novice:1770000000000", "sharesCurrentProtectedRegion": True,
+                    "accessibility": "REACHABLE_NOW", "reachableNow": True,
+                    "reachableAfterTimestamp": None, "blockedExits": [],
+                },
                 "controller": {
                     "rcl": 6,
                     "progress": 100000,
@@ -201,6 +232,13 @@ def telemetry_payload(tick: int = 12345) -> dict:
             "staleAfterTicks": 10000,
             "knownRooms": [{
                 "room": "W1N2",
+                "protection": {
+                    "status": "novice", "expirationTimestamp": 1770000000000,
+                    "remainingProtectionMs": 604800000, "protected": True,
+                    "regionKey": "novice:1770000000000", "sharesCurrentProtectedRegion": True,
+                    "accessibility": "REACHABLE_NOW", "reachableNow": True,
+                    "reachableAfterTimestamp": None, "blockedExits": [],
+                },
                 "lastSeenTick": tick,
                 "classification": "normal",
                 "sourceCount": 2,
@@ -238,6 +276,19 @@ def telemetry_payload(tick: int = 12345) -> dict:
             }],
             "unknownRooms": ["W0N1"],
             "staleRooms": [],
+            "protectionByRoom": {
+                "W0N1": {
+                    "status": "novice", "expirationTimestamp": 1770000000000,
+                    "remainingProtectionMs": 604800000, "protected": True,
+                    "regionKey": "novice:1770000000000", "sharesCurrentProtectedRegion": True,
+                    "accessibility": "REACHABLE_NOW", "reachableNow": True,
+                    "reachableAfterTimestamp": None, "blockedExits": [],
+                },
+            },
+            "candidateSets": {
+                "CURRENTLY_REACHABLE": {"remoteRooms": ["W1N2"], "claimRooms": ["W1N2"]},
+                "POST_PROTECTION": {"remoteRooms": [], "claimRooms": []},
+            },
             "hostileEvents": [],
         },
         "expansionCandidates": [{

@@ -585,6 +585,28 @@ class HistoryStore:
                 new_gcl, dedupe_key=f"gcl:{new_gcl['level']}",
             )
 
+        old_protection = old.get("empire", {}).get("protection", {})
+        seen_protection_events = {item.get("id") for item in old_protection.get("events", [])}
+        for event in current["empire"].get("protection", {}).get("events", []):
+            if event.get("id") in seen_protection_events:
+                continue
+            expired = event.get("type") == "PROTECTION_EXPIRED"
+            self.append_journal(
+                telemetry.tick,
+                "protection_expired" if expired else "protection_reassessment",
+                "Novice protection ended — a new strategic era began" if expired else event["message"],
+                (
+                    "The protected-area boundary transitioned to normal. Cached boundary blocks were invalidated; "
+                    "the commander will recompute routes, reconsider deferred scouts and post-protection candidates, "
+                    "refresh external threats, and request a full strategic advisory."
+                    if expired else
+                    f"{event['message']}. The commander is reassessing boundary intelligence, defenses, spawn "
+                    "availability, nearby players, and protected/post-protection expansion priorities."
+                ),
+                {"event": event, "protection": current["empire"].get("protection", {})},
+                dedupe_key=event["id"],
+            )
+
         old_remotes = {item.get("room"): item for item in old.get("operations", {}).get("remoteMining", [])}
         for remote in current["operations"]["remoteMining"]:
             prior = old_remotes.get(remote["room"])
