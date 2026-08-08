@@ -26,6 +26,7 @@ global.AIInterface = {
 		NOOP: true,
 		REQUEST_STATUS: true,
 		SET_EXPLANATION: true,
+		SET_OPERATIONAL_AUTHORITY: true,
 		SCOUT_ROOM: true,
 		REASSESS_REMOTE: true,
 		ENSURE_REMOTE_RESERVATION: true,
@@ -35,7 +36,8 @@ global.AIInterface = {
 	OBSERVE_ACTIONS: {
 		NOOP: true,
 		REQUEST_STATUS: true,
-		SET_EXPLANATION: true
+		SET_EXPLANATION: true,
+		SET_OPERATIONAL_AUTHORITY: true
 	},
 
 	initMemory: function () {
@@ -191,6 +193,14 @@ global.AIInterface = {
 				return "SET_EXPLANATION requires only parameters.explanation";
 			if (!_.isString(order.parameters.explanation) || order.parameters.explanation.length < 1 || order.parameters.explanation.length > 2000)
 				return "explanation must be a non-empty string of at most 2000 characters";
+		}
+		if (order.action === "SET_OPERATIONAL_AUTHORITY") {
+			if (keys.length !== 2 || !_.has(order.parameters, "scouting") || !_.has(order.parameters, "remoteMaintenance"))
+				return "SET_OPERATIONAL_AUTHORITY requires scouting and remoteMaintenance";
+			if (!_.includes(["OFF", "MANUAL", "AUTO"], order.parameters.scouting))
+				return "scouting authority must be OFF, MANUAL, or AUTO";
+			if (!_.includes(["OFF", "MANUAL", "AUTO"], order.parameters.remoteMaintenance))
+				return "remoteMaintenance authority must be OFF, MANUAL, or AUTO";
 		}
 		if (order.action === "SCOUT_ROOM") {
 			if (keys.length !== 2 || !_.has(order.parameters, "room") || !_.has(order.parameters, "origin"))
@@ -365,6 +375,15 @@ global.AIInterface = {
 			return "Status published to segment 92";
 		if (order.action === "SET_EXPLANATION")
 			return "Explanation updated";
+		if (order.action === "SET_OPERATIONAL_AUTHORITY") {
+			let scouting = order.parameters.scouting;
+			let remotes = order.parameters.remoteMaintenance;
+			_.set(Memory, ["ai", "policy", "allowScouting"], scouting !== "OFF");
+			_.set(Memory, ["ai", "policy", "autoScouting"], scouting === "AUTO");
+			_.set(Memory, ["ai", "policy", "allowRemoteMaintenance"], remotes !== "OFF");
+			_.set(Memory, ["ai", "policy", "autoRemoteMaintenance"], remotes === "AUTO");
+			return `Operational authority set: scouting=${scouting}, remoteMaintenance=${remotes}`;
+		}
 		if (order.action === "SCOUT_ROOM")
 			return this._queueScoutMission(order);
 		if (_.includes([

@@ -185,6 +185,26 @@ test("observe mode permits explanation metadata without strategic execution", fu
 	assert.strictEqual(Memory.ai.orders.completed.length, 1);
 });
 
+test("narrow operational authority changes are validated and work in observe mode", function () {
+	reset();
+	AIInterface.initMemory();
+	Memory.ai.enabled = true;
+	putInbox(order("authority-1", "SET_OPERATIONAL_AUTHORITY", {
+		parameters: { scouting: "AUTO", remoteMaintenance: "MANUAL" }
+	}));
+	assert.strictEqual(Memory.ai.policy.allowScouting, true);
+	assert.strictEqual(Memory.ai.policy.autoScouting, true);
+	assert.strictEqual(Memory.ai.policy.allowRemoteMaintenance, true);
+	assert.strictEqual(Memory.ai.policy.autoRemoteMaintenance, false);
+	assert.strictEqual(Memory.ai.orders.completed[0].action, "SET_OPERATIONAL_AUTHORITY");
+
+	RawMemory.segments[91] = "";
+	putInbox(order("authority-invalid-1", "SET_OPERATIONAL_AUTHORITY", {
+		parameters: { scouting: "EVERYTHING", remoteMaintenance: "OFF" }
+	}));
+	assert.strictEqual(Memory.ai.orders.rejected[0].reason, "scouting authority must be OFF, MANUAL, or AUTO");
+});
+
 test("SCOUT_ROOM requires execute mode and explicit scouting policy", function () {
 	reset();
 	AIInterface.initMemory();

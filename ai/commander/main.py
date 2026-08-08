@@ -37,6 +37,9 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("operations", help="show active and evaluated AI operations")
     commands.add_parser("remotes", help="show deterministic remote health and economics")
     commands.add_parser("intel", help="show known, stale, and unknown territorial intelligence")
+    authority = commands.add_parser("set-authority", help="set narrow operational authority")
+    authority.add_argument("--scouting", choices=("OFF", "MANUAL", "AUTO"), required=True)
+    authority.add_argument("--remotes", choices=("OFF", "MANUAL", "AUTO"), required=True)
     scout = commands.add_parser("scout", help="queue the guarded SCOUT_ROOM action")
     scout.add_argument("room", help="room to observe, for example W38N10")
     scout.add_argument("origin", help="owned origin colony, for example W37N11")
@@ -326,6 +329,12 @@ def main(argv: list[str] | None = None) -> int:
             elif args.command == "explain":
                 order = transport.send_safe_command(
                     "SET_EXPLANATION", {"explanation": args.text}, reason="Manual CLI explanation"
+                )
+            elif args.command == "set-authority":
+                order = transport.send_safe_command(
+                    "SET_OPERATIONAL_AUTHORITY",
+                    {"scouting": args.scouting, "remoteMaintenance": args.remotes},
+                    reason="Human operator set narrow Phase 4 authority through the CLI",
                 )
             elif args.command == "scout":
                 order = transport.send_safe_command(

@@ -71,7 +71,7 @@ global.AIObserver = {
 			authority: {
 				mode: _.get(Memory, ["ai", "mode"], "observe"),
 				allowedActions: [
-					"NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SCOUT_ROOM",
+					"NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SET_OPERATIONAL_AUTHORITY", "SCOUT_ROOM",
 					"REASSESS_REMOTE", "ENSURE_REMOTE_RESERVATION",
 					"ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS"
 				],
@@ -87,6 +87,7 @@ global.AIObserver = {
 					offensiveCombat: false
 				},
 				matrix: {
+					SET_OPERATIONAL_AUTHORITY: { allowed: true, automatic: false },
 					SCOUT_ROOM: { allowed: _.get(Memory, ["ai", "policy", "allowScouting"], false) === true, automatic: _.get(Memory, ["ai", "policy", "autoScouting"], false) === true },
 					REASSESS_REMOTE: { allowed: _.get(Memory, ["ai", "policy", "allowRemoteMaintenance"], false) === true, automatic: _.get(Memory, ["ai", "policy", "autoRemoteMaintenance"], false) === true },
 					ENSURE_REMOTE_RESERVATION: { allowed: _.get(Memory, ["ai", "policy", "allowRemoteMaintenance"], false) === true, automatic: _.get(Memory, ["ai", "policy", "autoRemoteMaintenance"], false) === true },

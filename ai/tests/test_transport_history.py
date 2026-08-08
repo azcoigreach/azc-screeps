@@ -116,6 +116,24 @@ class TransportHistoryTests(unittest.TestCase):
                 "SCOUT_ROOM", {"room": "invalid", "origin": "W1N1"}, reason="invalid"
             )
 
+    def test_operational_authority_command_is_narrow_and_enum_validated(self) -> None:
+        fake = FakeScreepsClient(json.dumps(telemetry_payload()), json.dumps(status_payload()))
+        transport = CommanderTransport(fake, self.history, self.config)
+        transport.poll()
+        command = transport.send_safe_command(
+            "SET_OPERATIONAL_AUTHORITY",
+            {"scouting": "AUTO", "remoteMaintenance": "OFF"},
+            reason="human policy change",
+        )
+        self.assertEqual(command.parameters["scouting"], "AUTO")
+        self.history.update_command(command.id, "completed")
+        with self.assertRaisesRegex(TransportError, "OFF, MANUAL, or AUTO"):
+            transport.send_safe_command(
+                "SET_OPERATIONAL_AUTHORITY",
+                {"scouting": "ALL", "remoteMaintenance": "OFF"},
+                reason="invalid",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

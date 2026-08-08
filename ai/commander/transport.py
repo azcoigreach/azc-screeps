@@ -112,6 +112,13 @@ class CommanderTransport:
             explanation = params.get("explanation")
             if set(params) != {"explanation"} or not isinstance(explanation, str) or not 1 <= len(explanation) <= 2000:
                 raise TransportError("SET_EXPLANATION requires a 1-2000 character explanation")
+        if action == "SET_OPERATIONAL_AUTHORITY":
+            if set(params) != {"scouting", "remoteMaintenance"}:
+                raise TransportError("SET_OPERATIONAL_AUTHORITY requires scouting and remoteMaintenance")
+            if params["scouting"] not in {"OFF", "MANUAL", "AUTO"}:
+                raise TransportError("scouting authority must be OFF, MANUAL, or AUTO")
+            if params["remoteMaintenance"] not in {"OFF", "MANUAL", "AUTO"}:
+                raise TransportError("remoteMaintenance authority must be OFF, MANUAL, or AUTO")
         if action == "SCOUT_ROOM":
             room = params.get("room")
             origin = params.get("origin")

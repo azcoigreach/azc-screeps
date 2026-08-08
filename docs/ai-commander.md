@@ -56,6 +56,7 @@ is also true.
 | `NOOP` | `{}` | observe or execute | No game-state operation. |
 | `REQUEST_STATUS` | `{}` | observe or execute | Publishes normal status. |
 | `SET_EXPLANATION` | explanation only | observe or execute | Stores user-visible prose. |
+| `SET_OPERATIONAL_AUTHORITY` | two `OFF`/`MANUAL`/`AUTO` values | observe or execute | Applies only the scouting and existing-remote policy switches. |
 | `SCOUT_ROOM` | room + owned origin | execute + scouting | Queues one bounded AZC scout. |
 | `REASSESS_REMOTE` | existing remote | execute + remote maintenance | Forces the normal remote survey path. |
 | `ENSURE_REMOTE_RESERVATION` | existing remote | execute + remote maintenance | Gives the normal reserver controller a bounded objective. |
@@ -256,6 +257,7 @@ From `ai/`:
 .venv/bin/python -m commander.main advise
 .venv/bin/python -m commander.main journal --last 20
 .venv/bin/python -m commander.main cost
+.venv/bin/python -m commander.main set-authority --scouting AUTO --remotes OFF
 .venv/bin/python -m commander.main scout W38N10 W37N11
 .venv/bin/python -m commander.main reassess-remote W37N12
 .venv/bin/python -m commander.main ensure-remote-reservation W37N12
