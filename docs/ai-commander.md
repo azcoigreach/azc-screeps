@@ -226,6 +226,22 @@ rooms/parameters, non-owned origins, non-remote targets, disabled authority, and
 concurrent duplicates fail closed. Segment 91 is never overwritten while a local
 command awaits acknowledgement.
 
+The 30-second read poll is independent from Segment 91's write cadence. Heartbeats
+default to 120 seconds and are displaced by successful command writes. Python
+persists the memory-segment write quota, last confirmed payload hash, last contact
+time, and queued commands in SQLite so a CLI process and the Docker watcher share
+one budget. It retains the endpoint-specific `X-RateLimit-Limit`,
+`X-RateLimit-Remaining`, and `X-RateLimit-Reset` values instead of allowing later
+GET headers to replace the POST budget.
+
+At more than 20 writes remaining, normal command, heartbeat, and changed
+explanation traffic is allowed. At 20 or fewer, optional explanations are
+suppressed. Commands and required heartbeats continue while tokens remain. A 429
+sets the write budget to zero until the advertised reset plus a safety margin;
+reads and acknowledgement correlation continue, and a queued command is retried
+with its original ID. Transient network and 5xx failures use bounded exponential
+backoff and do not normally terminate `watch`.
+
 ## Player identity and relationships
 
 The observer derives `empire.player` first from an owned controller and then from

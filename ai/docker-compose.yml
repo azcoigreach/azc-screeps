@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: ai/Dockerfile
-    restart: unless-stopped
+    restart: "on-failure:5"
     env_file:
       - ../.env
     volumes:

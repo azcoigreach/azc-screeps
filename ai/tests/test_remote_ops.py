@@ -12,6 +12,20 @@ from helpers import telemetry_payload
 
 
 class RemoteOperationTests(unittest.TestCase):
+    def test_queued_operation_is_not_evaluated_before_command_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            history = HistoryStore(Path(directory) / "db.sqlite")
+            history.create_operation(
+                "op-queued", "cmd-queued", "RESERVER_SHORTAGE", "W1N2",
+                "ENSURE_REMOTE_RESERVATION", "wait for quota", None,
+                1000, {}, "reservation improves", 1500,
+            )
+            self.assertEqual(history.due_operations(2000), [])
+            history.mark_operation_executed("cmd-queued", 2001)
+            self.assertEqual(history.due_operations(2500), [])
+            self.assertEqual(history.due_operations(2501)[0]["operation_id"], "op-queued")
+            history.close()
+
     def test_economics_labels_measured_derived_estimated_and_unknown_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             history = HistoryStore(Path(directory) / "db.sqlite")

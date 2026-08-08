@@ -19,6 +19,7 @@ def config(database_path: Path, **overrides) -> CommanderConfig:
         "http_timeout_seconds": 10.0,
         "openai_timeout_seconds": 120.0,
         "command_expiry_ticks": 1000,
+        "rate_limit_safety_seconds": 2.0,
         "write_explanation": True,
         "auto_scout": False,
         "openai_input_cost_per_million": 0.20,

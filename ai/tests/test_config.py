@@ -28,6 +28,8 @@ class ConfigTests(unittest.TestCase):
                 self.assertEqual(config.openai_token, "openai-value")
                 self.assertEqual(config.openai_model, "gpt-5.4-nano")
                 self.assertEqual(config.openai_timeout_seconds, 120.0)
+                self.assertEqual(config.heartbeat_interval_seconds, 120.0)
+                self.assertEqual(config.rate_limit_safety_seconds, 2.0)
                 self.assertNotIn("OPENAI_API_KEY", os.environ)
 
     def test_environment_overrides_env_file(self) -> None:
@@ -41,6 +43,11 @@ class ConfigTests(unittest.TestCase):
     def test_rejects_rate_limit_unsafe_poll_interval(self) -> None:
         with patch.dict(os.environ, {"AI_POLL_INTERVAL_SECONDS": "5"}, clear=True):
             with self.assertRaisesRegex(ValueError, "at least 10"):
+                CommanderConfig.from_env(Path("/nonexistent"))
+
+    def test_rejects_negative_rate_limit_safety_margin(self) -> None:
+        with patch.dict(os.environ, {"SCREEPS_RATE_LIMIT_SAFETY_SECONDS": "-1"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "cannot be negative"):
                 CommanderConfig.from_env(Path("/nonexistent"))
 
 

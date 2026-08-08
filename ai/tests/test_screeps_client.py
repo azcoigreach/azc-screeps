@@ -89,6 +89,29 @@ class ScreepsClientTests(unittest.TestCase):
         self.assertEqual(client.world_status(), "normal")
         self.assertEqual(sleeps, [2.0])
 
+    def test_segment_write_429_is_deferred_without_repeated_posts(self) -> None:
+        headers = Message()
+        headers["X-RateLimit-Limit"] = "60"
+        headers["X-RateLimit-Remaining"] = "0"
+        headers["X-RateLimit-Reset"] = "2000000100"
+        opener = SequenceOpener([http_error(429, headers=headers)])
+        sleeps = []
+        client = ScreepsAPIClient(
+            "secret", opener=opener, sleeper=sleeps.append,
+            max_retries=3, clock=lambda: 2_000_000_000,
+        )
+
+        with self.assertRaises(ScreepsAPIError) as context:
+            client.write_segment(91, "queued-command")
+
+        self.assertEqual(context.exception.status, 429)
+        self.assertEqual(context.exception.retry_after, 100)
+        self.assertEqual(len(opener.requests), 1)
+        self.assertEqual(sleeps, [])
+        self.assertEqual(client.memory_segment_write_rate_limit.limit, 60)
+        self.assertEqual(client.memory_segment_write_rate_limit.remaining, 0)
+        self.assertEqual(client.memory_segment_write_rate_limit.reset_epoch, 2_000_000_100)
+
     def test_retries_timeout_with_bounded_backoff(self) -> None:
         opener = SequenceOpener([socket.timeout(), FakeResponse({"ok": 1, "status": "normal"})])
         sleeps = []
@@ -97,6 +120,19 @@ class ScreepsClientTests(unittest.TestCase):
         )
         self.assertEqual(client.world_status(), "normal")
         self.assertEqual(sleeps, [0.5])
+
+    def test_retries_5xx_with_bounded_exponential_backoff(self) -> None:
+        opener = SequenceOpener([
+            http_error(503), http_error(503), FakeResponse({"ok": 1, "status": "normal"}),
+        ])
+        sleeps = []
+        client = ScreepsAPIClient(
+            "secret", opener=opener, sleeper=sleeps.append,
+            random_source=lambda: 0, max_retries=2,
+        )
+
+        self.assertEqual(client.world_status(), "normal")
+        self.assertEqual(sleeps, [0.5, 1.0])
 
     def test_does_not_retry_permanent_client_error(self) -> None:
         opener = SequenceOpener([http_error(400)])
@@ -116,6 +152,26 @@ class ScreepsClientTests(unittest.TestCase):
         )
         client.read_segment(90)
         self.assertEqual(client.last_rate_limit.remaining, 359)
+
+    def test_read_quota_does_not_replace_memory_segment_write_quota(self) -> None:
+        read_headers = Message()
+        read_headers["X-RateLimit-Limit"] = "360"
+        read_headers["X-RateLimit-Remaining"] = "359"
+        write_headers = Message()
+        write_headers["X-RateLimit-Limit"] = "60"
+        write_headers["X-RateLimit-Remaining"] = "58"
+        opener = SequenceOpener([
+            FakeResponse({"ok": 1}, headers=write_headers),
+            FakeResponse({"ok": 1, "data": None}, headers=read_headers),
+        ])
+        client = ScreepsAPIClient("secret", opener=opener)
+
+        client.write_segment(91, "payload")
+        client.read_segment(90)
+
+        self.assertEqual(client.last_rate_limit.limit, 360)
+        self.assertEqual(client.memory_segment_write_rate_limit.limit, 60)
+        self.assertEqual(client.memory_segment_write_rate_limit.remaining, 58)
 
     def test_segment_size_and_id_are_validated_before_network(self) -> None:
         client = ScreepsAPIClient("secret", opener=SequenceOpener([]))

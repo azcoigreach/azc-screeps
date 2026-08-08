@@ -8,6 +8,7 @@ from pathlib import Path
 from commander.history import HistoryStore
 from commander.observer import ObservationProcessor, TelemetryError
 from commander.schemas import Telemetry
+from commander.screeps_client import RateLimit, ScreepsAPIError
 from commander.transport import CommanderTransport, TransportError
 
 from helpers import config, status_payload, telemetry_payload
@@ -18,11 +19,19 @@ class FakeScreepsClient:
         self.telemetry = telemetry
         self.status = status
         self.writes = []
+        self.write_attempts = []
+        self.write_effects = []
+        self.memory_segment_write_rate_limit = RateLimit(None, None, None)
 
     def read_segment(self, segment: int):
         return self.telemetry if segment == 90 else self.status
 
     def write_segment(self, segment: int, data: str):
+        self.write_attempts.append((segment, data))
+        if self.write_effects:
+            effect = self.write_effects.pop(0)
+            if isinstance(effect, BaseException):
+                raise effect
         self.writes.append((segment, data))
 
 
@@ -129,10 +138,11 @@ class TransportHistoryTests(unittest.TestCase):
         self.assertFalse(transport.heartbeat())
         self.assertEqual(len(fake.writes), write_count)
 
-    def test_active_order_acknowledgement_releases_heartbeat(self) -> None:
+    def test_active_order_releases_heartbeat_after_contact_cadence(self) -> None:
         payload = telemetry_payload()
+        now = [1_000.0]
         fake = FakeScreepsClient(json.dumps(payload), json.dumps(status_payload()))
-        transport = CommanderTransport(fake, self.history, self.config)
+        transport = CommanderTransport(fake, self.history, self.config, clock=lambda: now[0])
         transport.poll()
         order = transport.send_safe_command(
             "SCOUT_ROOM", {"room": "W0N1", "origin": "W1N1"}, reason="test scout"
@@ -145,7 +155,97 @@ class TransportHistoryTests(unittest.TestCase):
         fake.status = json.dumps(status)
         transport.poll()
         self.assertEqual(self.history.recent_commands(1)[0]["state"], "active")
+        self.assertFalse(transport.heartbeat())
+        now[0] += 121
         self.assertTrue(transport.heartbeat())
+
+    def test_heartbeat_cadence_and_payload_deduplication_survive_restart(self) -> None:
+        now = [1_000.0]
+        fake = FakeScreepsClient(json.dumps(telemetry_payload()), json.dumps(status_payload()))
+        first = CommanderTransport(fake, self.history, self.config, clock=lambda: now[0])
+        first.poll()
+        self.assertTrue(first.heartbeat())
+        self.assertEqual(len(fake.writes), 1)
+
+        restarted = CommanderTransport(fake, self.history, self.config, clock=lambda: now[0])
+        restarted.poll()
+        now[0] += 60
+        self.assertFalse(restarted.heartbeat())
+        self.assertEqual(len(fake.writes), 1)
+
+        now[0] += 61
+        self.assertFalse(restarted.heartbeat())
+        self.assertEqual(len(fake.writes), 1)
+
+    def test_unchanged_explanation_is_not_rewritten(self) -> None:
+        fake = FakeScreepsClient(json.dumps(telemetry_payload()), json.dumps(status_payload()))
+        transport = CommanderTransport(fake, self.history, self.config)
+        transport.poll()
+        first = transport.send_safe_command(
+            "SET_EXPLANATION", {"explanation": "Same explanation"}, reason="first"
+        )
+        self.assertIsNotNone(first)
+        self.history.update_command(first.id, "completed")
+        write_count = len(fake.writes)
+
+        duplicate = transport.send_safe_command(
+            "SET_EXPLANATION", {"explanation": "Same explanation"}, reason="duplicate"
+        )
+
+        self.assertIsNone(duplicate)
+        self.assertEqual(len(fake.writes), write_count)
+
+    def test_429_keeps_command_queued_and_recovers_after_reset(self) -> None:
+        now = [1_000.0]
+        fake = FakeScreepsClient(json.dumps(telemetry_payload()), json.dumps(status_payload()))
+        fake.memory_segment_write_rate_limit = RateLimit(60, 0, 1_100)
+        fake.write_effects = [
+            ScreepsAPIError(
+                "rate limited", status=429, transient=True, retry_after=100,
+            ),
+            None,
+        ]
+        transport = CommanderTransport(fake, self.history, self.config, clock=lambda: now[0])
+        transport.poll()
+
+        order = transport.send_safe_command("NOOP", reason="survive rate limit")
+
+        self.assertIsNotNone(order)
+        self.assertEqual(self.history.recent_commands(1)[0]["state"], "queued")
+        self.assertEqual(len(fake.write_attempts), 1)
+        self.assertIsNone(transport.flush_queued_command())
+        self.assertEqual(len(fake.write_attempts), 1)
+
+        now[0] = 1_103.0
+        sent = transport.flush_queued_command()
+        self.assertEqual(sent.id, order.id)
+        self.assertEqual(self.history.recent_commands(1)[0]["state"], "sent")
+        self.assertEqual(len(fake.write_attempts), 2)
+        first_payload = json.loads(fake.write_attempts[0][1])
+        second_payload = json.loads(fake.write_attempts[1][1])
+        self.assertEqual(first_payload["orders"][0]["id"], second_payload["orders"][0]["id"])
+
+    def test_low_write_budget_suppresses_explanation_but_preserves_commands(self) -> None:
+        now = 1_000.0
+        fake = FakeScreepsClient(json.dumps(telemetry_payload()), json.dumps(status_payload()))
+        transport = CommanderTransport(fake, self.history, self.config, clock=lambda: now)
+        transport.poll()
+        self.history.update_segment_write_budget(
+            transport._state_key("segment_write_budget"),
+            limit=60, remaining=20, reset_epoch=2_000,
+        )
+
+        explanation = transport.send_safe_command(
+            "SET_EXPLANATION", {"explanation": "Optional"}, reason="low budget"
+        )
+        command = transport.send_safe_command("NOOP", reason="critical command")
+
+        self.assertIsNone(explanation)
+        self.assertIsNotNone(command)
+        self.assertEqual(len(fake.writes), 1)
+        states = {item["action"]: item["state"] for item in self.history.recent_commands(2)}
+        self.assertEqual(states["SET_EXPLANATION"], "suppressed")
+        self.assertEqual(states["NOOP"], "sent")
 
     def test_safe_action_and_parameter_whitelists(self) -> None:
         fake = FakeScreepsClient(json.dumps(telemetry_payload()), json.dumps(status_payload()))

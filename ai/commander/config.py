@@ -66,6 +66,7 @@ class CommanderConfig:
     http_timeout_seconds: float
     openai_timeout_seconds: float
     command_expiry_ticks: int
+    rate_limit_safety_seconds: float
     write_explanation: bool
     auto_scout: bool
     openai_input_cost_per_million: float
@@ -91,6 +92,7 @@ class CommanderConfig:
             http_timeout_seconds=_float("SCREEPS_HTTP_TIMEOUT", 10.0),
             openai_timeout_seconds=_float("OPENAI_TIMEOUT_SECONDS", 120.0),
             command_expiry_ticks=_int("AI_COMMAND_EXPIRY_TICKS", 1000),
+            rate_limit_safety_seconds=_float("SCREEPS_RATE_LIMIT_SAFETY_SECONDS", 2.0),
             write_explanation=_bool("AI_WRITE_EXPLANATION", True),
             auto_scout=_bool("AI_AUTO_SCOUT", False),
             openai_input_cost_per_million=_float("OPENAI_INPUT_COST_PER_MILLION", 0.20),
@@ -104,6 +106,8 @@ class CommanderConfig:
             raise ValueError("AI_REVIEW_INTERVAL_SECONDS must be at least 60")
         if config.openai_timeout_seconds <= 0:
             raise ValueError("OPENAI_TIMEOUT_SECONDS must be positive")
+        if config.rate_limit_safety_seconds < 0:
+            raise ValueError("SCREEPS_RATE_LIMIT_SAFETY_SECONDS cannot be negative")
         return config
 
     def require_screeps(self) -> None:

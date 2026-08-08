@@ -128,6 +128,12 @@ class HistoryStore:
                 updated_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_operations_state ON operations(outcome, evaluation_tick);
+
+            CREATE TABLE IF NOT EXISTS transport_state (
+                key TEXT PRIMARY KEY,
+                value_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """
         )
         self._ensure_column("recommendations", "expansion_readiness", "TEXT")
@@ -251,6 +257,131 @@ class HistoryStore:
             "SELECT * FROM commands ORDER BY created_tick DESC, created_at DESC LIMIT ?", (limit,)
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def queued_commands(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT * FROM commands WHERE state = 'queued' ORDER BY created_at"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def latest_command(self, action: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM commands WHERE action = ? ORDER BY created_at DESC LIMIT 1", (action,)
+        ).fetchone()
+        return None if row is None else dict(row)
+
+    def transport_state(self, key: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT value_json FROM transport_state WHERE key = ?", (key,)
+        ).fetchone()
+        return None if row is None else json.loads(row["value_json"])
+
+    def set_transport_state(self, key: str, value: dict[str, Any]) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO transport_state (key, value_json, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value_json = excluded.value_json,
+                updated_at = excluded.updated_at
+            """,
+            (key, json.dumps(value, separators=(",", ":")), utc_now()),
+        )
+        self.connection.commit()
+
+    def reserve_segment_write(
+        self,
+        key: str,
+        now_epoch: float,
+        *,
+        optional: bool,
+        default_limit: int = 60,
+        optional_reserve: int = 20,
+    ) -> tuple[bool, dict[str, Any]]:
+        """Atomically reserve one shared memory-segment write token."""
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.connection.execute(
+                "SELECT value_json FROM transport_state WHERE key = ?", (key,)
+            ).fetchone()
+            state = {} if row is None else json.loads(row["value_json"])
+            limit = max(1, int(state.get("limit") or default_limit))
+            reset_epoch = float(state.get("reset_epoch") or 0)
+            if reset_epoch <= now_epoch:
+                state = {
+                    "limit": limit,
+                    "remaining": limit,
+                    "reset_epoch": now_epoch + 3600,
+                    "blocked_until": 0,
+                }
+            remaining = max(0, int(state.get("remaining", limit)))
+            blocked_until = float(state.get("blocked_until") or 0)
+            allowed = blocked_until <= now_epoch and remaining > (optional_reserve if optional else 0)
+            if allowed:
+                state["remaining"] = remaining - 1
+            self.connection.execute(
+                """
+                INSERT INTO transport_state (key, value_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value_json = excluded.value_json,
+                    updated_at = excluded.updated_at
+                """,
+                (key, json.dumps(state, separators=(",", ":")), utc_now()),
+            )
+            self.connection.commit()
+            return allowed, state
+        except Exception:
+            self.connection.rollback()
+            raise
+
+    def update_segment_write_budget(
+        self,
+        key: str,
+        *,
+        limit: int | None,
+        remaining: int | None,
+        reset_epoch: int | None,
+        blocked_until: float | None = None,
+    ) -> dict[str, Any]:
+        """Merge authoritative server quota fields without increasing stale state."""
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.connection.execute(
+                "SELECT value_json FROM transport_state WHERE key = ?", (key,)
+            ).fetchone()
+            state = {} if row is None else json.loads(row["value_json"])
+            if limit is not None:
+                state["limit"] = max(1, limit)
+            if reset_epoch is not None:
+                prior_reset = state.get("reset_epoch")
+                if prior_reset != reset_epoch:
+                    if remaining is not None:
+                        state["remaining"] = remaining
+                elif remaining is not None:
+                    prior_remaining = state.get("remaining")
+                    state["remaining"] = remaining if prior_remaining is None else min(prior_remaining, remaining)
+                state["reset_epoch"] = reset_epoch
+            elif remaining is not None:
+                prior_remaining = state.get("remaining")
+                state["remaining"] = remaining if prior_remaining is None else min(prior_remaining, remaining)
+            if blocked_until is not None:
+                state["blocked_until"] = max(float(state.get("blocked_until") or 0), blocked_until)
+            self.connection.execute(
+                """
+                INSERT INTO transport_state (key, value_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value_json = excluded.value_json,
+                    updated_at = excluded.updated_at
+                """,
+                (key, json.dumps(state, separators=(",", ":")), utc_now()),
+            )
+            self.connection.commit()
+            return state
+        except Exception:
+            self.connection.rollback()
+            raise
 
     def save_recommendation(
         self,
@@ -436,8 +567,17 @@ class HistoryStore:
 
     def mark_operation_executed(self, command_id: str, tick: int) -> None:
         self.connection.execute(
-            "UPDATE operations SET executed_tick = COALESCE(executed_tick, ?), updated_at = ? WHERE command_id = ?",
-            (tick, utc_now(), command_id),
+            """
+            UPDATE operations SET
+                evaluation_tick = CASE
+                    WHEN executed_tick IS NULL THEN ? + (evaluation_tick - created_tick)
+                    ELSE evaluation_tick
+                END,
+                executed_tick = COALESCE(executed_tick, ?),
+                updated_at = ?
+            WHERE command_id = ?
+            """,
+            (tick, tick, utc_now(), command_id),
         )
         self.connection.commit()
 
@@ -464,7 +604,11 @@ class HistoryStore:
 
     def due_operations(self, tick: int) -> list[dict[str, Any]]:
         rows = self.connection.execute(
-            "SELECT * FROM operations WHERE outcome IS NULL AND evaluation_tick <= ? ORDER BY evaluation_tick",
+            """
+            SELECT * FROM operations
+            WHERE outcome IS NULL AND executed_tick IS NOT NULL AND evaluation_tick <= ?
+            ORDER BY evaluation_tick
+            """,
             (tick,),
         ).fetchall()
         result = []

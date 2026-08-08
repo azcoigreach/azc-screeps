@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from datetime import UTC, datetime
 
 from .advisor import AdvisorService, format_advisory
 from .config import CommanderConfig
@@ -95,6 +96,18 @@ def display_status(transport: CommanderTransport) -> str:
         f"Telemetry tick: {health.telemetry_tick if health.telemetry_tick is not None else 'n/a'}",
         f"Status tick: {health.status_tick if health.status_tick is not None else 'n/a'}",
     ]
+    budget = transport.segment_write_budget()
+    if budget:
+        reset_epoch = budget.get("reset_epoch")
+        reset_text = (
+            datetime.fromtimestamp(float(reset_epoch), UTC).isoformat(timespec="seconds")
+            if reset_epoch is not None else "unknown"
+        )
+        blocked = float(budget.get("blocked_until") or 0) > time.time()
+        lines.append(
+            f"Segment writes: {budget.get('remaining', 'unknown')}/{budget.get('limit', 'unknown')} remaining; "
+            f"reset {reset_text}; {'BLOCKED' if blocked else 'available'}"
+        )
     if health.status:
         lines.extend([
             f"Interface: {'enabled' if health.status.interface.enabled else 'disabled'} / {health.status.interface.mode}",
@@ -190,38 +203,50 @@ def watch(config: CommanderConfig, history: HistoryStore, transport: CommanderTr
     print(f"Watching {config.screeps_shard}; poll={config.poll_interval_seconds:.0f}s, review={config.review_interval_seconds:.0f}s")
     try:
         while True:
-            health = transport.poll()
-            now = time.monotonic()
-            automatic_order = None
-            if health.telemetry is not None:
-                try:
-                    automatic_order = autonomy.run(health.telemetry)
-                    if automatic_order:
-                        print(f"Deterministic autonomy queued {automatic_order.action}: {automatic_order.id}")
-                except TransportError as exc:
-                    history.record_event("autonomy_deferred", str(exc), {})
-            if automatic_order is None and health.current_tick is not None and now - last_heartbeat >= config.heartbeat_interval_seconds:
-                if transport.heartbeat():
-                    last_heartbeat = now
-            update = transport.last_observation
-            should_review = (
-                update is not None
-                and update.telemetry is not None
-                and (
-                    last_review == 0.0
-                    or (update.is_new and update.material_change)
-                    or now - last_review >= config.review_interval_seconds
+            try:
+                health = transport.poll()
+                now = time.monotonic()
+                queued_order = transport.flush_queued_command()
+                if queued_order is not None:
+                    print(f"Deferred command sent: {queued_order.action}: {queued_order.id}")
+                automatic_order = None
+                if health.telemetry is not None:
+                    try:
+                        automatic_order = autonomy.run(health.telemetry)
+                        if automatic_order:
+                            print(f"Deterministic autonomy queued {automatic_order.action}: {automatic_order.id}")
+                    except TransportError as exc:
+                        history.record_event("autonomy_deferred", str(exc), {})
+                if automatic_order is None and health.current_tick is not None and now - last_heartbeat >= config.heartbeat_interval_seconds:
+                    if transport.heartbeat():
+                        last_heartbeat = now
+                update = transport.last_observation
+                should_review = (
+                    update is not None
+                    and update.telemetry is not None
+                    and (
+                        last_review == 0.0
+                        or (update.is_new and update.material_change)
+                        or now - last_review >= config.review_interval_seconds
+                    )
                 )
-            )
-            if should_review and config.openai_token:
-                try:
-                    run_advice(config, history, transport, update.telemetry, writeback=True)
-                    last_review = now
-                except OpenAIAdvisorError as exc:
-                    print(f"Advisor error: {exc}", file=sys.stderr)
-                    last_review = now
-            elif update is not None and update.is_new:
-                print(display_status(transport))
+                if should_review and config.openai_token:
+                    try:
+                        run_advice(config, history, transport, update.telemetry, writeback=True)
+                        last_review = now
+                    except OpenAIAdvisorError as exc:
+                        print(f"Advisor error: {exc}", file=sys.stderr)
+                        last_review = now
+                elif update is not None and update.is_new:
+                    print(display_status(transport))
+            except ScreepsAPIError as exc:
+                if not exc.transient:
+                    raise
+                history.record_event(
+                    "watch_api_deferred", str(exc),
+                    {"status": exc.status, "retryAfter": exc.retry_after},
+                )
+                print(f"Screeps API deferred: {exc}; watcher remains active", file=sys.stderr)
             time.sleep(config.poll_interval_seconds)
     except KeyboardInterrupt:
         history.record_event("commander_shutdown", "Commander watch loop stopped", {})
@@ -500,7 +525,10 @@ def main(argv: list[str] | None = None) -> int:
                     )
             else:
                 raise TransportError(f"Unsupported command {args.command}")
-            print(f"Queued {order.action}: {order.id}")
+            if order is None:
+                print("No optional segment write queued; it was unchanged or reserved write budget is low.")
+            else:
+                print(f"Queued {order.action}: {order.id}")
             return 0
         finally:
             history.close()

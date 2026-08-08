@@ -75,6 +75,15 @@ minutes, and reviews on startup, material change, or after five minutes. It does
 not call OpenAI on every poll. `Ctrl-C` stops only the external commander; the
 existing deterministic Screeps bot continues independently.
 
+Memory-segment writes use a persistent quota budget shared through the SQLite
+database. Server `X-RateLimit-*` headers override the conservative local
+60-write/hour model. Optional explanation writebacks stop when 20 writes remain;
+commands and heartbeats retain the reserve. HTTP 429 leaves critical commands
+queued under their original IDs and blocks further writes until the server reset
+deadline plus `SCREEPS_RATE_LIMIT_SAFETY_SECONDS` (default 2), while telemetry
+polling continues. Identical Segment 91 payloads and unchanged explanations are
+not posted again. Any successful command also satisfies the heartbeat cadence.
+
 ## Docker Compose
 
 From `ai/`:
@@ -85,8 +94,9 @@ docker compose logs -f commander
 docker compose down
 ```
 
-Compose exposes no ports, uses `restart: unless-stopped`, reads the root `.env`,
-and persists SQLite data in `ai/data/`.
+Compose exposes no ports, retries fatal exits at most five times, reads the root
+`.env`, and persists SQLite data in `ai/data/`. Transient Screeps API failures
+are handled inside `watch` and therefore do not consume those restart attempts.
 
 ## Tests
 

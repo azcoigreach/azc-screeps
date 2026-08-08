@@ -230,6 +230,8 @@ class AdvisorService:
                         parameters,
                         reason=proposal.reason,
                     )
+                    if order is None:
+                        raise TransportError(f"{proposal.action} write was suppressed as unchanged")
                     action_command_id = order.id
                     if proposal.action in REMOTE_ACTIONS:
                         baseline = remote_snapshot(telemetry, proposal.target)
@@ -264,7 +266,7 @@ class AdvisorService:
                     {"explanation": explanation},
                     reason=f"User-visible summary from advisory {recommendation_id}",
                 )
-                explanation_command_id = order.id
+                explanation_command_id = None if order is None else order.id
             except TransportError as exc:
                 self.history.record_event(
                     "explanation_writeback_deferred",

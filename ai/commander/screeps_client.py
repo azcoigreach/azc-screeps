@@ -62,6 +62,7 @@ class ScreepsAPIClient:
         opener: Callable[..., Any] | None = None,
         sleeper: Callable[[float], None] = time.sleep,
         random_source: Callable[[], float] = random.random,
+        clock: Callable[[], float] = time.time,
     ) -> None:
         if not token:
             raise ValueError("SCREEPS_API_TOKEN is required")
@@ -79,7 +80,9 @@ class ScreepsAPIClient:
         self._open = opener or urlopen
         self._sleep = sleeper
         self._random = random_source
+        self._clock = clock
         self.last_rate_limit = RateLimit(None, None, None)
+        self._rate_limits: dict[tuple[str, str], RateLimit] = {}
 
     def _request(
         self,
@@ -108,7 +111,7 @@ class ScreepsAPIClient:
             try:
                 with self._open(request, timeout=self.timeout) as response:
                     response_headers = getattr(response, "headers", Message())
-                    self._capture_rate_limit(response_headers)
+                    self._capture_rate_limit(response_headers, method, path)
                     raw = response.read()
                     data = json.loads(raw.decode("utf-8")) if raw else {}
                     if not isinstance(data, dict):
@@ -120,7 +123,7 @@ class ScreepsAPIClient:
                         )
                     return data
             except HTTPError as exc:
-                self._capture_rate_limit(exc.headers)
+                self._capture_rate_limit(exc.headers, method, path)
                 retry_after = self._retry_after(exc.headers, exc)
                 transient = exc.code in TRANSIENT_STATUSES
                 last_error = ScreepsAPIError(
@@ -138,20 +141,47 @@ class ScreepsAPIClient:
             except json.JSONDecodeError:
                 raise ScreepsAPIError(f"Screeps API {method} {path} returned invalid JSON") from None
 
+            # Repeating a write while the endpoint bucket is empty only extends
+            # a restart/rate-limit storm. The transport persists the reset
+            # deadline and retries the same command ID after that deadline.
+            if (
+                last_error.status == 429
+                and method.upper() == "POST"
+                and path == "/api/user/memory-segment"
+            ):
+                raise last_error
             if not last_error.transient or attempt >= self.max_retries:
                 raise last_error
             self._sleep(self._backoff(attempt, last_error.retry_after))
 
         raise last_error or ScreepsAPIError("Screeps request failed")
 
-    def _capture_rate_limit(self, headers: Mapping[str, str] | Message | None) -> None:
+    def _capture_rate_limit(
+        self,
+        headers: Mapping[str, str] | Message | None,
+        method: str,
+        path: str,
+    ) -> None:
         if headers is None:
             return
-        self.last_rate_limit = RateLimit(
+        rate_limit = RateLimit(
             self._optional_int(headers.get("X-RateLimit-Limit")),
             self._optional_int(headers.get("X-RateLimit-Remaining")),
             self._optional_int(headers.get("X-RateLimit-Reset")),
         )
+        if rate_limit == RateLimit(None, None, None):
+            return
+        self.last_rate_limit = rate_limit
+        self._rate_limits[(method.upper(), path)] = rate_limit
+
+    def rate_limit_for(self, method: str, path: str) -> RateLimit:
+        return self._rate_limits.get(
+            (method.upper(), path), RateLimit(None, None, None)
+        )
+
+    @property
+    def memory_segment_write_rate_limit(self) -> RateLimit:
+        return self.rate_limit_for("POST", "/api/user/memory-segment")
 
     @staticmethod
     def _optional_int(value: str | None) -> int | None:
@@ -170,7 +200,7 @@ class ScreepsAPIClient:
                     pass
             reset = self._optional_int(headers.get("X-RateLimit-Reset"))
             if reset is not None:
-                return max(0.0, reset - time.time())
+                return max(0.0, reset - self._clock())
         try:
             body = error.read().decode("utf-8", errors="replace")
         except Exception:
