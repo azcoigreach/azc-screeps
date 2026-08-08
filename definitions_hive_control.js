@@ -846,6 +846,9 @@
 				});
 
 				request.spawned_total = (request.spawned_total || 0) + 1;
+				// The request now exists in this tick's central queue. Preserve a
+				// non-respawning mission until spawn processing can attach its creep.
+				pendingSpawn = true;
 			}
 
 			// Flag completion for one-shot missions with no surviving creeps or pending spawns
