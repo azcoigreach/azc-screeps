@@ -817,13 +817,16 @@ global.AIInterface = {
 		if (typeof AIObserver === "undefined" || !this._segmentAvailable(AI_COMMANDER_SEGMENTS.TELEMETRY))
 			return;
 		let lastTick = _.get(Memory, ["ai", "status", "lastObservationTick"]);
+		let lastSchema = _.get(Memory, ["ai", "status", "observationSchemaVersion"]);
 		let pulse = typeof isPulse_Mid === "function" ? isPulse_Mid() : (Game.time % 50 === 0);
-		if (lastTick != null && !pulse)
+		if (lastTick != null && lastSchema === AIObserver.SCHEMA_VERSION && !pulse)
 			return;
 
 		let serialized = AIObserver.serialize();
-		if (this._writeSegment(AI_COMMANDER_SEGMENTS.TELEMETRY, serialized))
+		if (this._writeSegment(AI_COMMANDER_SEGMENTS.TELEMETRY, serialized)) {
 			_.set(Memory, ["ai", "status", "lastObservationTick"], Game.time);
+			_.set(Memory, ["ai", "status", "observationSchemaVersion"], AIObserver.SCHEMA_VERSION);
+		}
 	},
 
 	_publishStatus: function () {
@@ -910,6 +913,11 @@ global.AIInterface = {
 
 	_logError: function (message, err) {
 		let detail = err && err.message ? err.message : String(err);
+		_.set(Memory, ["ai", "status", "lastInterfaceError"], {
+			message: message,
+			detail: detail.slice(0, 500),
+			tick: _.get(Game, "time", 0)
+		});
 		console.log(`[AI] ${message}: ${detail}`);
 	},
 

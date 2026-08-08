@@ -832,9 +832,10 @@ global.AIObserver = {
 		let remoteCandidates = [];
 		let claimCandidates = [];
 		let overrides = _.get(Memory, ["ai", "policy", "roomOverrides"], {});
-		let excludedRooms = _.keys(_.pickBy(overrides, value => _.includes(["EXCLUDE", "NO_REMOTE"], value)));
-		let excludedClaims = _.keys(_.pickBy(overrides, value => _.includes(["EXCLUDE", "NO_COLONY"], value)));
-		let prioritizedRooms = _.keys(_.pickBy(overrides, value => value === "PRIORITIZE"));
+		let overrideRooms = _.keys(overrides);
+		let excludedRooms = _.filter(overrideRooms, room => _.includes(["EXCLUDE", "NO_REMOTE"], overrides[room]));
+		let excludedClaims = _.filter(overrideRooms, room => _.includes(["EXCLUDE", "NO_COLONY"], overrides[room]));
+		let prioritizedRooms = _.filter(overrideRooms, room => overrides[room] === "PRIORITIZE");
 		let existingRemotes = _.filter(_.keys(_.get(Memory, ["sites", "mining"], {})), room => _.get(Memory, ["sites", "mining", room, "colony"]) !== room);
 		_.each(nearby, name => {
 			let intel = _.get(intelRooms, name);

@@ -200,6 +200,22 @@ test("room classification separates normal, highway, center, and source-keeper t
 	assert.strictEqual(AIObserver._roomClassification("W34N14"), "source_keeper");
 });
 
+test("territory strategy supports the Screeps Lodash 3 runtime", function () {
+	reset();
+	AIInterface.initMemory();
+	Game.rooms.W1N1 = {
+		name: "W1N1", controller: { my: true, owner: { username: "tester" }, level: 5 },
+		findSources: function () { return []; }, find: function () { return []; }
+	};
+	let pickBy = _.pickBy;
+	delete _.pickBy;
+	try {
+		assert.doesNotThrow(function () { AIObserver.buildSnapshot(); });
+	} finally {
+		_.pickBy = pickBy;
+	}
+});
+
 test("segment activation uses the reserved IDs", function () {
 	reset();
 	AIInterface.activateSegments();
@@ -535,6 +551,32 @@ test("telemetry schema v3 reports identity, capabilities, defense, territory, an
 		autoColonization: false, remoteAbandonment: false,
 		market: false, production: false, offensiveCombat: false
 	});
+});
+
+test("telemetry publishes immediately when the observer schema marker is missing", function () {
+	reset();
+	AIInterface.initMemory();
+	Memory.ai.status.lastObservationTick = Game.time - 1;
+	global.isPulse_Mid = function () { return false; };
+	try {
+		AIInterface._publishObservation();
+		assert.strictEqual(Memory.ai.status.observationSchemaVersion, AIObserver.SCHEMA_VERSION);
+		assert.strictEqual(JSON.parse(RawMemory.segments[90]).schemaVersion, AIObserver.SCHEMA_VERSION);
+		RawMemory.segments[90] = "unchanged";
+		AIInterface._publishObservation();
+		assert.strictEqual(RawMemory.segments[90], "unchanged");
+	} finally {
+		global.isPulse_Mid = function () { return true; };
+	}
+});
+
+test("interface errors retain one bounded diagnostic in Memory", function () {
+	reset();
+	AIInterface.initMemory();
+	AIInterface._logError("observer failed", new Error("x".repeat(600)));
+	assert.strictEqual(Memory.ai.status.lastInterfaceError.message, "observer failed");
+	assert.strictEqual(Memory.ai.status.lastInterfaceError.detail.length, 500);
+	assert.strictEqual(Memory.ai.status.lastInterfaceError.tick, Game.time);
 });
 
 test("observer records exact remote counters and caps persisted intelligence", function () {
