@@ -444,6 +444,24 @@ test("SCOUT_ROOM queues one one-shot mission through the existing scout framewor
 	assert.strictEqual(Memory.ai.scoutHistory[0].status, "COMPLETED");
 });
 
+test("an observed scout request releases the concurrency slot", function () {
+	reset();
+	configureExecution();
+	Memory.ai.policy.allowScouting = true;
+	Game.rooms.W1N1 = { name: "W1N1", controller: { my: true } };
+	Memory.rooms.W1N1 = { scout_requests: [{
+		id: "ai-scout:observed-1", ai_managed: true, status: "OBSERVED",
+		dest_pos: { roomName: "W1N2" }, observed_tick: Game.time
+	}] };
+	putInbox(order("scout-after-observed-1", "SCOUT_ROOM", {
+		parameters: { room: "W1N3", origin: "W1N1" }
+	}));
+	assert.strictEqual(Memory.ai.orders.rejected.length, 0);
+	assert.strictEqual(Memory.ai.orders.active.length, 1);
+	assert.strictEqual(Memory.rooms.W1N1.scout_requests.length, 2);
+	assert.strictEqual(Memory.rooms.W1N1.scout_requests[1].dest_pos.roomName, "W1N3");
+});
+
 test("duplicate, expired, and paused SCOUT_ROOM commands fail closed", function () {
 	reset();
 	configureExecution();

@@ -574,7 +574,7 @@ global.AIInterface = {
 		_.each(_.get(Memory, "rooms", {}), roomMemory => {
 			concurrent += _.filter(_.get(roomMemory, "scout_requests", []), request => {
 				return request && request.ai_managed === true
-					&& !_.includes(["COMPLETED", "FAILED", "EXPIRED"], _.get(request, "status"));
+					&& !_.includes(["OBSERVED", "COMPLETED", "FAILED", "EXPIRED"], _.get(request, "status"));
 			}).length;
 		});
 		if (concurrent >= _.get(Memory, ["ai", "policy", "maxConcurrentScouts"], 1))
