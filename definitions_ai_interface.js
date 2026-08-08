@@ -826,6 +826,8 @@ global.AIInterface = {
 		if (this._writeSegment(AI_COMMANDER_SEGMENTS.TELEMETRY, serialized)) {
 			_.set(Memory, ["ai", "status", "lastObservationTick"], Game.time);
 			_.set(Memory, ["ai", "status", "observationSchemaVersion"], AIObserver.SCHEMA_VERSION);
+			if (_.has(Memory, ["ai", "status", "lastInterfaceError"]))
+				delete Memory.ai.status.lastInterfaceError;
 		}
 	},
 

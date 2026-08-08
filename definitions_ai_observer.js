@@ -847,7 +847,10 @@ global.AIObserver = {
 			copy.intelAgeTicks = Math.max(0, Game.time - copy.lastSeenTick);
 			copy.stale = copy.intelAgeTicks > staleTicks;
 			known.push(copy);
-			if (copy.stale)
+			let needsStrategicRefresh = copy.classification === "normal"
+				&& _.get(copy, ["controller", "status"]) !== "owned"
+				&& _.get(copy, "layoutAnalysis") == null;
+			if (copy.stale || needsStrategicRefresh)
 				stale.push(name);
 			if (typeof AIRemoteStrategy !== "undefined") {
 				let remote = AIRemoteStrategy.remoteCandidate(copy, {

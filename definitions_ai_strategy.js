@@ -92,12 +92,14 @@ global.AIRemoteStrategy = {
 			security: (_.get(intel, "hostileCreeps", 0) === 0 && _.get(intel, ["structures", "hostile"], 0) === 0) ? 15 : 0
 		};
 		let score = _.sum(_.values(factors)) + (_.includes(context.prioritizedRooms || [], intel.room) ? 5 : 0);
+		let minimum = _.get(context, "minimumScore", this.REMOTE_SCORE_MINIMUM);
+		if (score < minimum) disqualifiers.push("score_below_minimum");
 		return {
 			room: intel.room,
 			origin: _.get(intel, "nearestColony", null),
 			score: score,
 			factors: factors,
-			eligible: disqualifiers.length === 0 && score >= _.get(context, "minimumScore", this.REMOTE_SCORE_MINIMUM),
+			eligible: disqualifiers.length === 0,
 			disqualifiers: disqualifiers,
 			predictedEconomics: this.predictEconomics(_.get(intel, "sourceCount", 0), distance),
 			confidence: _.get(intel, "stale", false) ? 0.35 : (distance == null ? 0.55 : 0.8)
@@ -143,9 +145,12 @@ global.AIRemoteStrategy = {
 			remotePotential: Math.min(5, _.get(context, ["adjacentRemotePotential", intel.room], 0))
 		};
 		let score = _.sum(_.values(factors));
+		let minimum = _.get(context, "minimumScore", this.CLAIM_SCORE_MINIMUM);
+		if (_.get(layouts, "best") == null) disqualifiers.push("no_feasible_layout");
+		if (score < minimum) disqualifiers.push("score_below_minimum");
 		return {
 			room: intel.room, origin: _.get(intel, "nearestColony", null), score: score, factors: factors,
-			eligible: disqualifiers.length === 0 && score >= _.get(context, "minimumScore", this.CLAIM_SCORE_MINIMUM) && _.get(layouts, "best") != null,
+			eligible: disqualifiers.length === 0,
 			disqualifiers: disqualifiers, layout: _.get(layouts, "best", null),
 			currentOperationalRole: _.get(context, "currentOperationalRole", "NEUTRAL_SCOUTED")
 		};

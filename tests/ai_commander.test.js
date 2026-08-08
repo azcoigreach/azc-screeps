@@ -48,6 +48,7 @@ global.Creep_Body = {
 	}
 };
 
+require("../definitions_blueprint_layouts");
 require("../definitions_ai_strategy");
 require("../definitions_ai_observer");
 require("../definitions_ai_interface");
@@ -190,6 +191,33 @@ test("remote candidates reject foreign, source-keeper, bad-route, duplicate, and
 	assert.ok(AIRemoteStrategy.remoteCandidate(Object.assign({}, base, { routeStatus: "no_path" }), {}).disqualifiers.includes("no_route"));
 	assert.ok(AIRemoteStrategy.remoteCandidate(Object.assign({}, base, { controller: { ownerRelation: "NEUTRAL", reservationRelation: "HOSTILE" } }), {}).disqualifiers.includes("foreign_reservation"));
 	assert.ok(AIRemoteStrategy.remoteCandidate(base, { existingRemotes: ["W1N2"] }).disqualifiers.includes("already_configured"));
+	assert.ok(AIRemoteStrategy.remoteCandidate(Object.assign({}, base, { sourceCount: 1, routeLength: 8 }), { minimumScore: 90 }).disqualifiers.includes("score_below_minimum"));
+});
+
+test("claim candidates explain missing layouts and score thresholds", function () {
+	reset();
+	let intel = {
+		room: "W1N2", stale: false, classification: "normal", sourceCount: 1,
+		controller: { status: "neutral", ownerRelation: "NEUTRAL" }, routeLength: 2,
+		terrainSwampPercent: 10, hostileCreeps: 0, structures: { towers: 0 }, layoutAnalysis: null
+	};
+	let candidate = AIRemoteStrategy.claimCandidate(intel, { minimumScore: 90 });
+	assert.strictEqual(candidate.eligible, false);
+	assert.ok(candidate.disqualifiers.includes("no_feasible_layout"));
+	assert.ok(candidate.disqualifiers.includes("score_below_minimum"));
+});
+
+test("layout analysis finds deterministic blueprint origins on open terrain", function () {
+	reset();
+	let room = {
+		controller: { pos: { x: 45, y: 45 } },
+		findSources: function () { return [{ pos: { x: 4, y: 4 } }]; },
+		getTerrain: function () { return { get: function () { return 0; } }; }
+	};
+	let analysis = AIRemoteStrategy.analyzeLayouts(room);
+	assert.ok(analysis.valid.length > 0);
+	assert.ok(["def_hor", "def_vert", "def_comp"].includes(analysis.best.name));
+	assert.ok(analysis.best.origin.x >= 8 && analysis.best.origin.x <= 40);
 });
 
 test("room classification separates normal, highway, center, and source-keeper territory", function () {
