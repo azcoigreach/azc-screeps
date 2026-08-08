@@ -116,6 +116,12 @@ class OpenAIAdvisorTests(unittest.TestCase):
             with self.assertRaisesRegex(OpenAIAdvisorError, "no fallback was used"):
                 client.request_advisory("system", "{}")
 
+    def test_scout_recommendations_require_exact_room_names(self) -> None:
+        value = advisory().model_dump()
+        value["recommended_scouting"][0]["origin"] = "W1N1 with explanation"
+        with self.assertRaisesRegex(ValueError, "origin"):
+            Advisory.model_validate(value)
+
     def test_advisor_persists_history_and_queues_only_explanation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             history = HistoryStore(Path(directory) / "db.sqlite")

@@ -425,8 +425,8 @@ class RemoteAssessment(StrictModel):
 
 
 class ScoutRecommendation(StrictModel):
-    room: str
-    origin: str
+    room: str = Field(pattern=r"^[WE]\d+[NS]\d+$")
+    origin: str = Field(pattern=r"^[WE]\d+[NS]\d+$")
     priority: int = Field(ge=1, le=10)
     reason: str = Field(min_length=1, max_length=1000)
 
