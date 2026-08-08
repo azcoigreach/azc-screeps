@@ -267,6 +267,11 @@ test("SCOUT_ROOM queues one one-shot mission through the existing scout framewor
 	assert.strictEqual(requests[0].status, "QUEUED");
 	assert.deepStrictEqual(requests[0].list_route, ["W1N1", "W1N2"]);
 	assert.deepStrictEqual(Memory.sites, { mining: {}, colonization: {}, combat: {} });
+	assert.strictEqual(Memory.hive, undefined);
+	assert.doesNotThrow(function () { Control.runScoutRequests("W1N1"); });
+	assert.strictEqual(Memory.hive.spawn_requests.length, 1);
+	assert.strictEqual(Memory.hive.spawn_requests[0].args.scout_request_id, "ai-scout:scout-queue-1");
+	assert.strictEqual(requests[0].status, "SPAWNING");
 
 	RawMemory.segments[91] = "";
 	putInbox(order("scout-queue-2", "SCOUT_ROOM", { parameters: { room: "W1N2", origin: "W1N1" } }));

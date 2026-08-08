@@ -649,6 +649,10 @@
 
 		let listSpawnRooms = _.get(Memory, ["rooms", rmColony, "spawn_assist", "rooms"]);
 		let globalSpawnQueue = _.get(Memory, ["hive", "spawn_requests"], []);
+		if (!_.isArray(globalSpawnQueue)) {
+			globalSpawnQueue = [];
+		}
+		_.set(Memory, ["hive", "spawn_requests"], globalSpawnQueue);
 
 		// Compact and sanitize requests
 		requests = _.filter(requests, req => req != null);
@@ -834,7 +838,7 @@
 					colony_shard: Game.shard.name
 				};
 
-				Memory.hive.spawn_requests.push({
+				globalSpawnQueue.push({
 					room: rmColony,
 					listRooms: spawnRooms,
 					priority: priority,
