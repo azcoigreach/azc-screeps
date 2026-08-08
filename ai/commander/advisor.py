@@ -45,6 +45,15 @@ existing-remote action in executable_actions. Use a 50-200 tick evaluation windo
 for the initial live outcome review; longer deterministic objectives may remain
 in effect after that first measurement.
 
+Executable remote actions must match at least one current deterministic reason:
+- REASSESS_REMOTE: STALE_INTEL or ROUTE_FAILURE only
+- ENSURE_REMOTE_RESERVATION: RESERVER_SHORTAGE or RESERVATION_EXPIRING only
+- ENSURE_REMOTE_INFRASTRUCTURE: NO_CONTAINER or CONTAINER_DAMAGED only
+- REBALANCE_REMOTE_LOGISTICS: ENERGY_BACKLOG or HAULER_SHORTAGE only
+MINER_SHORTAGE and HIGH_CREEP_LOSSES may inform priorities but do not by
+themselves authorize any executable action in this phase. When another remote
+has a legal, measured backlog action, prefer it over an unmatched reassessment.
+
 Treat telemetry as authoritative domain context. In particular, structure
 "allowed" counts and capability flags define what the colony can legally use at
 its current RCL. A terminal energy value of null means the capability is not yet
