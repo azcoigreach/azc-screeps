@@ -8,11 +8,13 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_ENV_FILES = (REPO_ROOT / "ai" / ".env", REPO_ROOT / ".env")
 
 
 def load_env_file(path: Path | None = None) -> Path | None:
-    env_path = path or REPO_ROOT / ".env"
-    if not env_path.exists():
+    candidates = (path,) if path is not None else DEFAULT_ENV_FILES
+    env_path = next((candidate for candidate in candidates if candidate.exists()), None)
+    if env_path is None:
         return None
     for raw_line in env_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()

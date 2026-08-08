@@ -5,7 +5,7 @@ services:
       dockerfile: ai/Dockerfile
     restart: "on-failure:5"
     env_file:
-      - ../.env
+      - .env
     volumes:
       - ./data:/app/ai/data
     command: ["python", "-m", "commander.main", "watch"]

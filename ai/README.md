@@ -29,8 +29,9 @@ python3.12 -m venv ai/.venv
 ai/.venv/bin/pip install -r ai/requirements.txt
 ```
 
-The commander automatically loads the repository-root `.env`. Start from
-`ai/.env.example` and set these exact credential names:
+The commander automatically loads `ai/.env`, with the legacy repository-root
+`.env` retained as a fallback. Start from `ai/.env.example` and set these exact
+credential names:
 
 ```dotenv
 SCREEPS_API_TOKEN=...

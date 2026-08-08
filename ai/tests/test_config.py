@@ -6,10 +6,32 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from commander.config import CommanderConfig
+from commander.config import CommanderConfig, load_env_file
 
 
 class ConfigTests(unittest.TestCase):
+    def test_default_env_discovery_prefers_ai_directory_and_falls_back_to_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root_env = Path(directory) / "root.env"
+            ai_env = Path(directory) / "ai.env"
+            root_env.write_text("SCREEPS_API_TOKEN=root-value\n", encoding="utf-8")
+            ai_env.write_text("SCREEPS_API_TOKEN=ai-value\n", encoding="utf-8")
+            clean = {key: value for key, value in os.environ.items() if key != "SCREEPS_API_TOKEN"}
+            with (
+                patch("commander.config.DEFAULT_ENV_FILES", (ai_env, root_env)),
+                patch.dict(os.environ, clean, clear=True),
+            ):
+                self.assertEqual(load_env_file(), ai_env)
+                self.assertEqual(os.environ["SCREEPS_API_TOKEN"], "ai-value")
+
+            ai_env.unlink()
+            with (
+                patch("commander.config.DEFAULT_ENV_FILES", (ai_env, root_env)),
+                patch.dict(os.environ, clean, clear=True),
+            ):
+                self.assertEqual(load_env_file(), root_env)
+                self.assertEqual(os.environ["SCREEPS_API_TOKEN"], "root-value")
+
     def test_loads_exact_token_names_from_env_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             env_file = Path(directory) / ".env"
