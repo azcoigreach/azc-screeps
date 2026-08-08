@@ -199,6 +199,28 @@ class OpenAIAdvisorTests(unittest.TestCase):
             AdvisorService._authorized_automatic_action(Advisory.model_validate(value), telemetry)
         )
 
+    def test_automatic_scout_is_deferred_while_another_scout_is_active(self) -> None:
+        value = advisory().model_dump()
+        value["executable_actions"] = [value["recommended_actions"][0]]
+        candidate = Advisory.model_validate(value)
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"]["scouting"] = True
+        payload["authority"]["execution"]["autoScouting"] = True
+        payload["operations"]["scouting"] = [{
+            "id": "ai-scout:active-1", "orderId": "active-1", "origin": "W1N1",
+            "room": "W0N1", "status": "EN_ROUTE", "createdTick": 900,
+            "requestedTick": 900, "observedTick": None, "completedTick": None,
+            "intelLastSeenTick": None, "scoutCreep": "scou:active", "activeScouts": 1,
+            "failureReason": None,
+        }]
+        telemetry = Telemetry.model_validate(payload)
+        self.assertIsNone(AdvisorService._authorized_automatic_action(candidate, telemetry))
+
+        payload["operations"]["scouting"][0]["status"] = "OBSERVED"
+        telemetry = Telemetry.model_validate(payload)
+        self.assertIsNotNone(AdvisorService._authorized_automatic_action(candidate, telemetry))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -37,7 +37,9 @@ and an eligible remoteCandidates entry with the exact target and origin. The
 deterministic validator is authoritative. Stopping remotes, markets, production,
 automatic claiming, arbitrary Memory, and offensive combat remain forbidden.
 
-Choose at most one executable action per review. When mode is execute,
+Choose at most one executable action per review. Never place SCOUT_ROOM in
+executable_actions while currentState.operations.scouting contains a mission in
+QUEUED, SPAWNING, or EN_ROUTE state. When mode is execute,
 autoScouting is true, and unknownRooms or staleRooms is non-empty, place exactly
 one highest-value legal SCOUT_ROOM proposal in executable_actions unless an
 immediate hostile threat makes scouting unsafe. Do this even when disabled remote
@@ -247,11 +249,16 @@ class AdvisorService:
         owned = set(telemetry.colonies)
         remotes = {remote.room: remote for remote in telemetry.operations.remoteMining}
         unknown = set(telemetry.intelligence.unknownRooms) | set(telemetry.intelligence.staleRooms)
+        scout_active = any(
+            mission.status not in {"OBSERVED", "COMPLETED", "FAILED", "EXPIRED"}
+            for mission in telemetry.operations.scouting
+        )
         for proposal in advisory.executable_actions:
             if proposal.action == "SCOUT_ROOM":
                 if (
                     telemetry.authority.execution.scouting
                     and telemetry.authority.execution.autoScouting
+                    and not scout_active
                     and proposal.target in unknown
                     and proposal.origin in owned
                 ):
