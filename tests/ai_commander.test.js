@@ -999,6 +999,7 @@ test("status acknowledgements serialize to segment 92", function () {
 	let status = JSON.parse(RawMemory.segments[92]);
 	assert.strictEqual(status.schemaVersion, 1);
 	assert.strictEqual(status.orders.completed, 1);
+	assert.deepStrictEqual(status.orders.activeOrders, []);
 	assert.strictEqual(status.orders.recentResults[0].id, "status-1");
 });
 

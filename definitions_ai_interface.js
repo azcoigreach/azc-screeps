@@ -836,6 +836,7 @@ global.AIInterface = {
 			return;
 		let completed = _.get(Memory, ["ai", "orders", "completed"], []);
 		let rejected = _.get(Memory, ["ai", "orders", "rejected"], []);
+		let active = _.get(Memory, ["ai", "orders", "active"], []);
 		let status = {
 			schemaVersion: this.SCHEMA_VERSION,
 			tick: Game.time,
@@ -848,7 +849,12 @@ global.AIInterface = {
 			commander: _.get(Memory, ["ai", "commander"]),
 			orders: {
 				pending: _.get(Memory, ["ai", "orders", "pending"], []).length,
-				active: _.get(Memory, ["ai", "orders", "active"], []).length,
+				active: active.length,
+				activeOrders: _.map(active, order => ({
+					id: order.id,
+					action: order.action,
+					startedTick: _.get(order, "startedTick", _.get(order, "createdTick", Game.time))
+				})).slice(-this.MAX_ACTIVE),
 				completed: completed.length,
 				rejected: rejected.length,
 				recentResults: completed.slice(-10).concat(rejected.slice(-10)).sort((left, right) => left.tick - right.tick).slice(-10)

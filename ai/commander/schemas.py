@@ -518,9 +518,16 @@ class OrderResult(StrictModel):
     details: dict[str, Any] | None = None
 
 
+class ActiveOrder(StrictModel):
+    id: str
+    action: str
+    startedTick: int
+
+
 class OrderStatus(StrictModel):
     pending: int
     active: int
+    activeOrders: list[ActiveOrder] = Field(default_factory=list)
     completed: int
     rejected: int
     recentResults: list[OrderResult]

@@ -113,6 +113,24 @@ class TransportHistoryTests(unittest.TestCase):
         self.assertFalse(transport.heartbeat())
         self.assertEqual(len(fake.writes), write_count)
 
+    def test_active_order_acknowledgement_releases_heartbeat(self) -> None:
+        payload = telemetry_payload()
+        fake = FakeScreepsClient(json.dumps(payload), json.dumps(status_payload()))
+        transport = CommanderTransport(fake, self.history, self.config)
+        transport.poll()
+        order = transport.send_safe_command(
+            "SCOUT_ROOM", {"room": "W0N1", "origin": "W1N1"}, reason="test scout"
+        )
+        status = status_payload()
+        status["orders"]["active"] = 1
+        status["orders"]["activeOrders"] = [{
+            "id": order.id, "action": "SCOUT_ROOM", "startedTick": payload["tick"]
+        }]
+        fake.status = json.dumps(status)
+        transport.poll()
+        self.assertEqual(self.history.recent_commands(1)[0]["state"], "active")
+        self.assertTrue(transport.heartbeat())
+
     def test_safe_action_and_parameter_whitelists(self) -> None:
         fake = FakeScreepsClient(json.dumps(telemetry_payload()), json.dumps(status_payload()))
         transport = CommanderTransport(fake, self.history, self.config)

@@ -171,6 +171,8 @@ class CommanderTransport:
         return isinstance(value, str) and re.fullmatch(r"[WE]\d+[NS]\d+", value) is not None
 
     def _correlate_results(self, status: StatusEnvelope) -> None:
+        for active in status.orders.activeOrders:
+            self.history.update_command(active.id, "active", active.model_dump())
         for result in status.orders.recentResults:
             state = result.status
             self.history.update_command(result.id, state, result.model_dump())
