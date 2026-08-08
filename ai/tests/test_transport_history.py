@@ -134,6 +134,16 @@ class TransportHistoryTests(unittest.TestCase):
                 reason="invalid",
             )
 
+        mode = transport.send_safe_command(
+            "SET_EXECUTION_MODE", {"mode": "execute"}, reason="human mode change"
+        )
+        self.assertEqual(mode.parameters, {"mode": "execute"})
+        self.history.update_command(mode.id, "completed")
+        with self.assertRaisesRegex(TransportError, "observe or execute"):
+            transport.send_safe_command(
+                "SET_EXECUTION_MODE", {"mode": "unsafe"}, reason="invalid"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

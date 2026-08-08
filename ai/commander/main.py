@@ -40,6 +40,8 @@ def parser() -> argparse.ArgumentParser:
     authority = commands.add_parser("set-authority", help="set narrow operational authority")
     authority.add_argument("--scouting", choices=("OFF", "MANUAL", "AUTO"), required=True)
     authority.add_argument("--remotes", choices=("OFF", "MANUAL", "AUTO"), required=True)
+    mode = commands.add_parser("set-mode", help="set observe or execute mode through the audited inbox")
+    mode.add_argument("mode", choices=("observe", "execute"))
     scout = commands.add_parser("scout", help="queue the guarded SCOUT_ROOM action")
     scout.add_argument("room", help="room to observe, for example W38N10")
     scout.add_argument("origin", help="owned origin colony, for example W37N11")
@@ -335,6 +337,11 @@ def main(argv: list[str] | None = None) -> int:
                     "SET_OPERATIONAL_AUTHORITY",
                     {"scouting": args.scouting, "remoteMaintenance": args.remotes},
                     reason="Human operator set narrow Phase 4 authority through the CLI",
+                )
+            elif args.command == "set-mode":
+                order = transport.send_safe_command(
+                    "SET_EXECUTION_MODE", {"mode": args.mode},
+                    reason="Human operator changed Phase 4 execution mode through the CLI",
                 )
             elif args.command == "scout":
                 order = transport.send_safe_command(

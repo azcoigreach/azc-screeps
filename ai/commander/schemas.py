@@ -370,7 +370,7 @@ class ExecutionAuthority(StrictModel):
 class AuthorityState(StrictModel):
     mode: Literal["observe", "execute"]
     allowedActions: list[Literal[
-        "NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SET_OPERATIONAL_AUTHORITY", "SCOUT_ROOM", "REASSESS_REMOTE",
+        "NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SET_OPERATIONAL_AUTHORITY", "SET_EXECUTION_MODE", "SCOUT_ROOM", "REASSESS_REMOTE",
         "ENSURE_REMOTE_RESERVATION", "ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS"
     ]]
     execution: ExecutionAuthority
@@ -456,7 +456,7 @@ class StrategicOrder(StrictModel):
     createdTick: int
     expiresTick: int
     action: Literal[
-        "NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SET_OPERATIONAL_AUTHORITY", "SCOUT_ROOM", "REASSESS_REMOTE",
+        "NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SET_OPERATIONAL_AUTHORITY", "SET_EXECUTION_MODE", "SCOUT_ROOM", "REASSESS_REMOTE",
         "ENSURE_REMOTE_RESERVATION", "ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS"
     ]
     parameters: dict[str, Any]

@@ -205,6 +205,18 @@ test("narrow operational authority changes are validated and work in observe mod
 	assert.strictEqual(Memory.ai.orders.rejected[0].reason, "scouting authority must be OFF, MANUAL, or AUTO");
 });
 
+test("execution mode changes use a narrow audited enum", function () {
+	reset();
+	AIInterface.initMemory();
+	Memory.ai.enabled = true;
+	putInbox(order("mode-1", "SET_EXECUTION_MODE", { parameters: { mode: "execute" } }));
+	assert.strictEqual(Memory.ai.mode, "execute");
+	assert.strictEqual(Memory.ai.orders.completed[0].action, "SET_EXECUTION_MODE");
+	RawMemory.segments[91] = "";
+	putInbox(order("mode-bad-1", "SET_EXECUTION_MODE", { parameters: { mode: "danger" } }));
+	assert.strictEqual(Memory.ai.orders.rejected[0].reason, "mode must be observe or execute");
+});
+
 test("SCOUT_ROOM requires execute mode and explicit scouting policy", function () {
 	reset();
 	AIInterface.initMemory();

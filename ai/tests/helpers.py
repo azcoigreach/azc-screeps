@@ -252,7 +252,7 @@ def telemetry_payload(tick: int = 12345) -> dict:
         }],
         "authority": {
             "mode": "observe",
-            "allowedActions": ["NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SET_OPERATIONAL_AUTHORITY", "SCOUT_ROOM"],
+            "allowedActions": ["NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SET_OPERATIONAL_AUTHORITY", "SET_EXECUTION_MODE", "SCOUT_ROOM"],
             "execution": {
                 "scouting": False,
                 "autoScouting": False,
@@ -266,6 +266,7 @@ def telemetry_payload(tick: int = 12345) -> dict:
             },
             "matrix": {
                 "SET_OPERATIONAL_AUTHORITY": {"allowed": True, "automatic": False},
+                "SET_EXECUTION_MODE": {"allowed": True, "automatic": False},
                 "SCOUT_ROOM": {"allowed": False, "automatic": False},
                 "REASSESS_REMOTE": {"allowed": False, "automatic": False},
                 "ENSURE_REMOTE_RESERVATION": {"allowed": False, "automatic": False},

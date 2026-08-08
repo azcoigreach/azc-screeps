@@ -119,6 +119,9 @@ class CommanderTransport:
                 raise TransportError("scouting authority must be OFF, MANUAL, or AUTO")
             if params["remoteMaintenance"] not in {"OFF", "MANUAL", "AUTO"}:
                 raise TransportError("remoteMaintenance authority must be OFF, MANUAL, or AUTO")
+        if action == "SET_EXECUTION_MODE":
+            if set(params) != {"mode"} or params["mode"] not in {"observe", "execute"}:
+                raise TransportError("SET_EXECUTION_MODE requires mode observe or execute")
         if action == "SCOUT_ROOM":
             room = params.get("room")
             origin = params.get("origin")

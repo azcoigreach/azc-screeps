@@ -27,6 +27,7 @@ global.AIInterface = {
 		REQUEST_STATUS: true,
 		SET_EXPLANATION: true,
 		SET_OPERATIONAL_AUTHORITY: true,
+		SET_EXECUTION_MODE: true,
 		SCOUT_ROOM: true,
 		REASSESS_REMOTE: true,
 		ENSURE_REMOTE_RESERVATION: true,
@@ -37,7 +38,8 @@ global.AIInterface = {
 		NOOP: true,
 		REQUEST_STATUS: true,
 		SET_EXPLANATION: true,
-		SET_OPERATIONAL_AUTHORITY: true
+		SET_OPERATIONAL_AUTHORITY: true,
+		SET_EXECUTION_MODE: true
 	},
 
 	initMemory: function () {
@@ -201,6 +203,12 @@ global.AIInterface = {
 				return "scouting authority must be OFF, MANUAL, or AUTO";
 			if (!_.includes(["OFF", "MANUAL", "AUTO"], order.parameters.remoteMaintenance))
 				return "remoteMaintenance authority must be OFF, MANUAL, or AUTO";
+		}
+		if (order.action === "SET_EXECUTION_MODE") {
+			if (keys.length !== 1 || !_.has(order.parameters, "mode"))
+				return "SET_EXECUTION_MODE requires only parameters.mode";
+			if (!_.includes(["observe", "execute"], order.parameters.mode))
+				return "mode must be observe or execute";
 		}
 		if (order.action === "SCOUT_ROOM") {
 			if (keys.length !== 2 || !_.has(order.parameters, "room") || !_.has(order.parameters, "origin"))
@@ -383,6 +391,10 @@ global.AIInterface = {
 			_.set(Memory, ["ai", "policy", "allowRemoteMaintenance"], remotes !== "OFF");
 			_.set(Memory, ["ai", "policy", "autoRemoteMaintenance"], remotes === "AUTO");
 			return `Operational authority set: scouting=${scouting}, remoteMaintenance=${remotes}`;
+		}
+		if (order.action === "SET_EXECUTION_MODE") {
+			_.set(Memory, ["ai", "mode"], order.parameters.mode);
+			return `Commander mode set to ${order.parameters.mode}`;
 		}
 		if (order.action === "SCOUT_ROOM")
 			return this._queueScoutMission(order);
