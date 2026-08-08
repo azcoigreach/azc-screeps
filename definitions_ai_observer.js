@@ -1492,13 +1492,17 @@ global.AIObserver = {
 				_.get(intel, ["structures", "fortifications", "max"], 0) || 0
 			]);
 			let breachTicks = ourDismantle > 0 ? Math.ceil(fortificationHits / ourDismantle) : null;
+			let routeStatus = _.get(intel, "routeStatus", "available");
+			let routeBlocked = _.includes(["protected_boundary", "no_path", "unavailable", "unknown"], routeStatus);
 			let travelTicks = (_.get(intel, "routeLength", 0) || 0) * 50;
 			let travelLoss = Math.min(1, travelTicks / 1500);
-			let success = safeMode ? 0 : Math.max(0, Math.min(0.99,
+			let success = (safeMode || routeBlocked) ? 0 : Math.max(0, Math.min(0.99,
 				(advantage / (advantage + 1)) * confidence * (1 - travelLoss * 0.5)));
 			let recommendation = stale ? "STALE_INTEL" : (safeMode ? "SAFE_MODE_ACTIVE"
+				: (routeStatus === "protected_boundary" ? "PROTECTED_BOUNDARY"
+					: (routeBlocked ? "NO_ROUTE"
 				: (_.get(capability, ["spawnThroughput", "spawns"], 0) < 1 || ourPressure <= 0 ? "INSUFFICIENT_CAPABILITY"
-					: (success >= 0.7 && (breachTicks == null || breachTicks <= 1500) ? "FEASIBLE" : "HIGH_RISK")));
+					: (success >= 0.7 && (breachTicks == null || breachTicks <= 1500) ? "FEASIBLE" : "HIGH_RISK")))));
 			return {
 				target: intel.room, owner: _.get(intel, ["controller", "owner"], null), intelAgeTicks: age,
 				intelConfidence: Math.round(confidence * 100) / 100,
@@ -1516,7 +1520,7 @@ global.AIObserver = {
 				},
 				constraints: {
 					safeModeTicks: safeMode, safeModeAvailable: _.get(intel, ["controller", "safeModeAvailable"], null), breachTicks: breachTicks,
-					routeLength: _.get(intel, "routeLength", null), travelTicks: travelTicks, travelLifetimeLoss: Math.round(travelLoss * 100) / 100,
+					routeStatus: routeStatus, routeLength: _.get(intel, "routeLength", null), travelTicks: travelTicks, travelLifetimeLoss: Math.round(travelLoss * 100) / 100,
 					boostEffectsIncluded: _.get(enemy, "boosts", []).length > 0
 				},
 				estimatedForceAdvantage: Math.round(advantage * 100) / 100,

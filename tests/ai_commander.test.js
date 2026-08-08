@@ -620,6 +620,12 @@ test("combat math uses tower falloff, active boosted parts, safe mode, and stale
 	assert.strictEqual(assessment.estimatedSuccess, 0);
 	assert.strictEqual(assessment.constraints.breachTicks, 400);
 	assert.strictEqual(assessment.executionAuthorized, false);
+	room.controller.safeMode = null;
+	room.routeStatus = "protected_boundary";
+	assessment = AIObserver._combatAssessments([room], capability)[0];
+	assert.strictEqual(assessment.recommendation, "PROTECTED_BOUNDARY");
+	assert.strictEqual(assessment.estimatedSuccess, 0);
+	room.routeStatus = "available";
 	room.stale = true;
 	room.intelAgeTicks = 11000;
 	assert.strictEqual(AIObserver._combatAssessments([room], capability)[0].recommendation, "STALE_INTEL");
