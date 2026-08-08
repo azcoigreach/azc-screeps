@@ -456,6 +456,22 @@ test("territory telemetry distinguishes stale and unknown nearby rooms", functio
 	assert.ok(snapshot.expansionCandidates[0].disqualifiers.indexOf("intelligence_stale") >= 0);
 });
 
+test("observer reuses cached strategic routes on later snapshots", function () {
+	reset();
+	AIInterface.initMemory();
+	let routeCalls = 0;
+	Game.map.findRoute = function (from, to) { routeCalls++; return from === to ? [] : [{ room: to }]; };
+	Game.rooms.W1N1 = {
+		name: "W1N1", controller: { my: true, level: 5 },
+		findSources: function () { return []; }, find: function () { return []; }
+	};
+	AIObserver.buildSnapshot();
+	assert.strictEqual(routeCalls, 1);
+	Game.time++;
+	AIObserver.buildSnapshot();
+	assert.strictEqual(routeCalls, 1);
+});
+
 test("status acknowledgements serialize to segment 92", function () {
 	reset();
 	configureExecution();

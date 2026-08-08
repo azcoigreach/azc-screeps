@@ -465,9 +465,11 @@ global.AIObserver = {
 			let terrainSwampPercent = _.get(previous, "terrainSwampPercent", null);
 			if (terrainSwampPercent == null)
 				terrainSwampPercent = this._swampPercent(room);
-			let routeLength = null;
-			let routeStatus = nearest ? "unknown" : "unavailable";
-			if (nearest && _.isFunction(_.get(Game, ["map", "findRoute"]))) {
+			// Room-to-room routes are stable enough for strategic telemetry. Cache
+			// the first result instead of paying pathfinder CPU on every snapshot.
+			let routeLength = _.has(previous, "routeLength") ? previous.routeLength : null;
+			let routeStatus = _.get(previous, "routeStatus", nearest ? "unknown" : "unavailable");
+			if (nearest && routeStatus === "unknown" && _.isFunction(_.get(Game, ["map", "findRoute"]))) {
 				let route = Game.map.findRoute(nearest.room, room.name);
 				if (_.isArray(route)) {
 					routeLength = route.length;
