@@ -146,6 +146,33 @@
 		help_ai.push("ai.authority() - Show the complete AI authority matrix");
 		ai.authority = function () { return AIInterface.consoleAuthority(); };
 
+		help_ai.push('ai.newRemotes(true|false) - Allow or deny new remote establishment');
+		ai.newRemotes = function (allowed) {
+			if (!_.isBoolean(allowed)) return "[AI] Error: new remote policy must be true or false.";
+			_.set(Memory, ["ai", "policy", "allowNewRemotes"], allowed);
+			if (!allowed) _.set(Memory, ["ai", "policy", "autoNewRemotes"], false);
+			return `[AI] New remote establishment ${allowed ? "enabled" : "disabled"} by human operator.`;
+		};
+
+		help_ai.push('ai.autoNewRemotes(true|false) - Allow one-at-a-time strategist remote expansion');
+		ai.autoNewRemotes = function (allowed) {
+			if (!_.isBoolean(allowed)) return "[AI] Error: automatic new remote policy must be true or false.";
+			_.set(Memory, ["ai", "policy", "allowNewRemotes"], allowed);
+			_.set(Memory, ["ai", "policy", "autoNewRemotes"], allowed);
+			return `[AI] Automatic new remote establishment ${allowed ? "enabled" : "disabled"} by human operator.`;
+		};
+
+		help_ai.push('ai.colonization(true|false) - Allow or deny guarded manual colonization');
+		ai.colonization = function (allowed) {
+			if (!_.isBoolean(allowed)) return "[AI] Error: colonization policy must be true or false.";
+			_.set(Memory, ["ai", "policy", "allowColonization"], allowed);
+			if (!allowed) _.set(Memory, ["ai", "policy", "autoColonization"], false);
+			return `[AI] Colonization ${allowed ? "enabled" : "disabled"} by human operator.`;
+		};
+
+		help_ai.push('ai.roomPolicy("W1N2", "PRIORITIZE"|"EXCLUDE"|"NO_REMOTE"|"NO_COLONY"|"NONE")');
+		ai.roomPolicy = function (room, policy) { return AIInterface.consoleRoomPolicy(room, policy); };
+
 		help_ai.push("ai.operations() - Show active strategic orders and objectives");
 		ai.operations = function () { return AIInterface.consoleOperations(); };
 

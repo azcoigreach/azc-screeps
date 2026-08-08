@@ -65,6 +65,7 @@ require("definitions_intershard_memory");
 require("definitions_portals");
 require("definitions_shard_coordinator");
 require("definitions_global_creeps");
+require("definitions_ai_strategy");
 require("definitions_ai_observer");
 require("definitions_ai_interface");
 

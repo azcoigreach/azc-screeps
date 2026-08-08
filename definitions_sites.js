@@ -574,6 +574,10 @@
 
 			Run: function (rmColony, rmHarvest) {
 				Stats_CPU.Start(rmColony, "Mining-init");
+				if (rmColony != rmHarvest && _.get(Memory, ["sites", "mining", rmHarvest, "ai_paused"], false) === true) {
+					Stats_CPU.End(rmColony, "Mining-init");
+					return;
+				}
 
 				// Local mining: ensure the room has a spawn or tower... rebuilding? Sacked? Unclaimed?
 				if (rmColony == rmHarvest) {
@@ -795,6 +799,22 @@
 						popTarget = _.cloneDeep(Population_Mining["SK"]);
 				}
 
+				// A remote creep only satisfies continuity when it can remain alive
+				// through the replacement's body spawn, route travel, and safety margin.
+				// Spawning creeps still count, so this does not create duplicate demand.
+				let continuity = {};
+				if (rmColony != rmHarvest && typeof AIRemoteStrategy !== "undefined") {
+					_.each(["reserver", "burrower", "miner", "carrier"], role => {
+						let settings = _.get(popTarget, role);
+						if (!settings) return;
+						let plan = AIRemoteStrategy.rolePlan(role, settings, listCreeps,
+							_.get(Memory, ["sites", "mining", rmHarvest], {}), rmColony, rmHarvest, 0);
+						continuity[role] = plan;
+						popActual[role] = plan.viable;
+					});
+					_.set(Memory, ["sites", "mining", rmHarvest, "continuity"], continuity);
+				}
+
 				// Remote mining: adjust soldier levels based on threat level
 				if (rmHarvest != rmColony && threat_level != NONE && hasKeepers == false) {
 					if (threat_level == LOW || threat_level == null) {
@@ -916,17 +936,26 @@
 
 				if (is_safe) {
 					let reserveWarning = _.get(Memory, ["ai", "policy", "reservationWarningTicks"], 2000);
+					let reservation = _.get(Game, ["rooms", rmHarvest, "controller", "reservation"], null);
+					let reservePlan = typeof AIRemoteStrategy === "undefined" ? null
+						: AIRemoteStrategy.reservationPlan(_.get(popTarget, "reserver", {}), listCreeps,
+							_.get(Memory, ["sites", "mining", rmHarvest], {}), rmColony, rmHarvest, reservation, 0);
+					if (reservePlan) {
+						reserveWarning = Math.max(reserveWarning, reservePlan.leadTicks);
+						_.set(Memory, ["sites", "mining", rmHarvest, "continuity", "reserver"], reservePlan);
+					}
 					if (reservationObjective && _.get(reservationObjective, "expiresTick", 0) >= Game.time)
 						reservationObjective.appliedTick = Game.time;
-					if (_.get(popActual, "reserver", 0) < _.get(popTarget, ["reserver", "amount"], 0)
+					let replacementReserver = reservePlan && reservePlan.continuityAtRisk && reservePlan.spawning < 1;
+					if ((_.get(popActual, "reserver", 0) < _.get(popTarget, ["reserver", "amount"], 0) || replacementReserver)
 						&& Game.rooms[rmHarvest] != null && Game.rooms[rmHarvest].controller != null
 						&& (Game.rooms[rmHarvest].controller.reservation == null
 							|| Game.rooms[rmHarvest].controller.reservation.ticksToEnd < reserveWarning)
-						&& (_.get(Memory, ["sites", "mining", rmHarvest, "survey", "reserve_access"], null) == null
+						&& (replacementReserver || _.get(Memory, ["sites", "mining", rmHarvest, "survey", "reserve_access"], null) == null
 							|| _.get(popActual, "reserver", 0) < _.get(Memory, ["sites", "mining", rmHarvest, "survey", "reserve_access"], 0))) {
 						Memory["shard"]["spawn_requests"].push({
 							room: rmColony, listRooms: listSpawnRooms,
-							priority: 17,
+							priority: replacementReserver ? 13 : 17,
 							level: _.get(popTarget, ["reserver", "level"], 1),
 							scale: _.get(popTarget, ["reserver", "scale"], true),
 							body: _.get(popTarget, ["reserver", "body"], "reserver"),

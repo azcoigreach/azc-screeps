@@ -32,7 +32,9 @@ global.AIInterface = {
 		REASSESS_REMOTE: true,
 		ENSURE_REMOTE_RESERVATION: true,
 		ENSURE_REMOTE_INFRASTRUCTURE: true,
-		REBALANCE_REMOTE_LOGISTICS: true
+		REBALANCE_REMOTE_LOGISTICS: true,
+		START_REMOTE_MINING: true,
+		COLONIZE_ROOM: true
 	},
 	OBSERVE_ACTIONS: {
 		NOOP: true,
@@ -64,10 +66,19 @@ global.AIInterface = {
 		this._default(["ai", "policy", "autoScouting"], false, _.isBoolean);
 		this._default(["ai", "policy", "allowRemoteMaintenance"], false, _.isBoolean);
 		this._default(["ai", "policy", "autoRemoteMaintenance"], false, _.isBoolean);
+		this._default(["ai", "policy", "allowNewRemotes"], false, _.isBoolean);
+		this._default(["ai", "policy", "autoNewRemotes"], false, _.isBoolean);
+		this._default(["ai", "policy", "allowColonization"], false, _.isBoolean);
+		this._default(["ai", "policy", "autoColonization"], false, _.isBoolean);
 		this._default(["ai", "policy", "intelligenceRadius"], 2, value => this._isInteger(value) && value >= 1 && value <= 5);
 		this._default(["ai", "policy", "intelStaleTicks"], 10000, value => this._isInteger(value) && value >= 100);
 		this._default(["ai", "policy", "reservationWarningTicks"], 2000, value => this._isInteger(value) && value >= 100 && value <= 5000);
 		this._default(["ai", "policy", "maxConcurrentScouts"], 1, value => this._isInteger(value) && value >= 1 && value <= this.MAX_AI_SCOUTS);
+		this._default(["ai", "policy", "minimumRemoteScore"], 65, value => this._isInteger(value) && value >= 0 && value <= 100);
+		this._default(["ai", "policy", "minimumClaimScore"], 70, value => this._isInteger(value) && value >= 0 && value <= 100);
+		this._default(["ai", "policy", "remoteExpansionCooldownTicks"], 10000, value => this._isInteger(value) && value >= 1000);
+		this._default(["ai", "policy", "colonizationCooldownTicks"], 50000, value => this._isInteger(value) && value >= 5000);
+		if (!_.isObject(_.get(Memory, ["ai", "policy", "roomOverrides"]))) _.set(Memory, ["ai", "policy", "roomOverrides"], {});
 
 		if (!_.isObject(_.get(Memory, ["ai", "commander"])) || _.isArray(_.get(Memory, ["ai", "commander"])))
 			_.set(Memory, ["ai", "commander"], {});
@@ -107,6 +118,8 @@ global.AIInterface = {
 			_.set(Memory, ["ai", "remoteObjectives"], {});
 		if (!_.isArray(_.get(Memory, ["ai", "scoutHistory"])))
 			_.set(Memory, ["ai", "scoutHistory"], []);
+		if (!_.isObject(_.get(Memory, ["ai", "establishments"]))) _.set(Memory, ["ai", "establishments"], {});
+		if (!_.isObject(_.get(Memory, ["ai", "majorOperations"]))) _.set(Memory, ["ai", "majorOperations"], {});
 	},
 
 	_default: function (path, value, validator) {
@@ -197,12 +210,17 @@ global.AIInterface = {
 				return "explanation must be a non-empty string of at most 2000 characters";
 		}
 		if (order.action === "SET_OPERATIONAL_AUTHORITY") {
-			if (keys.length !== 2 || !_.has(order.parameters, "scouting") || !_.has(order.parameters, "remoteMaintenance"))
-				return "SET_OPERATIONAL_AUTHORITY requires scouting and remoteMaintenance";
+			let allowedKeys = ["scouting", "remoteMaintenance", "newRemotes", "colonization"];
+			if (!_.has(order.parameters, "scouting") || !_.has(order.parameters, "remoteMaintenance") || _.some(keys, key => !_.includes(allowedKeys, key)))
+				return "SET_OPERATIONAL_AUTHORITY requires scouting and remoteMaintenance, with optional newRemotes and colonization";
 			if (!_.includes(["OFF", "MANUAL", "AUTO"], order.parameters.scouting))
 				return "scouting authority must be OFF, MANUAL, or AUTO";
 			if (!_.includes(["OFF", "MANUAL", "AUTO"], order.parameters.remoteMaintenance))
 				return "remoteMaintenance authority must be OFF, MANUAL, or AUTO";
+			if (_.has(order.parameters, "newRemotes") && !_.includes(["OFF", "MANUAL", "AUTO"], order.parameters.newRemotes))
+				return "newRemotes authority must be OFF, MANUAL, or AUTO";
+			if (_.has(order.parameters, "colonization") && !_.includes(["OFF", "MANUAL", "AUTO"], order.parameters.colonization))
+				return "colonization authority must be OFF, MANUAL, or AUTO";
 		}
 		if (order.action === "SET_EXECUTION_MODE") {
 			if (keys.length !== 1 || !_.has(order.parameters, "mode"))
@@ -236,7 +254,80 @@ global.AIInterface = {
 			if (!colony || _.get(colony, ["controller", "my"], false) !== true)
 				return `${order.action} remote colony is not owned and visible`;
 		}
+		if (_.includes(["START_REMOTE_MINING", "COLONIZE_ROOM"], order.action)) {
+			let expectedKeys = order.action === "START_REMOTE_MINING" ? ["origin", "target"] : ["origin", "target", "layout"];
+			if (keys.length !== expectedKeys.length || _.some(expectedKeys, key => !_.has(order.parameters, key)))
+				return `${order.action} requires only ${expectedKeys.join(", ")}`;
+			if (!this._isRoomName(order.parameters.origin) || !this._isRoomName(order.parameters.target))
+				return `${order.action} origin and target must be valid room names`;
+			let origin = _.get(Game, ["rooms", order.parameters.origin]);
+			if (!origin || _.get(origin, ["controller", "my"], false) !== true)
+				return `${order.action} origin is not an owned visible colony`;
+			let eligibility = this._strategicEligibility(order.action, order.parameters);
+			if (!eligibility.valid) return eligibility.reason;
+		}
 		return null;
+	},
+
+	_strategicEligibility: function (action, parameters) {
+		let target = parameters.target;
+		if (_.has(Memory, ["sites", "mining", target]))
+			return action === "START_REMOTE_MINING" ? { valid: true, duplicate: true } : { valid: false, reason: "COLONIZE_ROOM target is already an operational mining room" };
+		if (_.has(Memory, ["sites", "colonization", target]))
+			return { valid: false, reason: `${action} target already has a colonization operation` };
+		let intel = _.get(Memory, ["ai", "intelligence", "rooms", target]);
+		if (!intel) return { valid: false, reason: `${action} requires known target intelligence` };
+		let visibleTarget = _.get(Game, ["rooms", target]);
+		if (_.get(visibleTarget, ["controller", "my"], false) === true)
+			return { valid: false, reason: `${action} target is already owned` };
+		if (_.get(visibleTarget, ["controller", "owner", "username"]) != null)
+			return { valid: false, reason: `${action} target is visibly foreign-owned` };
+		let age = Game.time - _.get(intel, "lastSeenTick", 0);
+		if (age > _.get(Memory, ["ai", "policy", "intelStaleTicks"], 10000))
+			return { valid: false, reason: `${action} target intelligence is stale` };
+		if (_.get(intel, ["controller", "ownerRelation"]) !== "NEUTRAL")
+			return { valid: false, reason: `${action} target is not neutral and unowned` };
+		if (!_.includes(["NEUTRAL", "SELF"], _.get(intel, ["controller", "reservationRelation"])))
+			return { valid: false, reason: `${action} target has an incompatible reservation` };
+		if (_.get(intel, "routeStatus") !== "available")
+			return { valid: false, reason: `${action} target route is not acceptable` };
+		let override = _.get(Memory, ["ai", "policy", "roomOverrides", target]);
+		if (_.includes(["EXCLUDE", action === "START_REMOTE_MINING" ? "NO_REMOTE" : "NO_COLONY"], override))
+			return { valid: false, reason: `${action} is blocked by human room policy` };
+		let candidates = action === "START_REMOTE_MINING" ? _.get(Memory, ["ai", "strategy", "remoteCandidates"], []) : _.get(Memory, ["ai", "strategy", "claimCandidates"], []);
+		let candidate = _.find(candidates, item => item.room === target);
+		if (!candidate || candidate.eligible !== true)
+			return { valid: false, reason: `${action} target does not pass deterministic candidate validation` };
+		if (_.get(candidate, "origin") !== parameters.origin)
+			return { valid: false, reason: `${action} origin does not match the deterministic candidate origin` };
+		let minimumScore = action === "START_REMOTE_MINING"
+			? _.get(Memory, ["ai", "policy", "minimumRemoteScore"], 65)
+			: _.get(Memory, ["ai", "policy", "minimumClaimScore"], 70);
+		if (!_.isNumber(_.get(candidate, "score")) || candidate.score < minimumScore)
+			return { valid: false, reason: `${action} candidate score is below policy minimum` };
+		let routeResult = Game.map.findRoute(parameters.origin, target);
+		if (!_.isArray(routeResult) || (parameters.origin !== target && _.get(_.last(routeResult), "room") !== target))
+			return { valid: false, reason: `${action} authoritative route validation failed` };
+		if (action === "COLONIZE_ROOM") {
+			if (_.get(Game, ["gcl", "level"], 0) <= _.filter(_.get(Game, "rooms", {}), room => _.get(room, ["controller", "my"], false)).length)
+				return { valid: false, reason: "COLONIZE_ROOM has no available GCL slot" };
+			let validLayouts = _.get(intel, ["layoutAnalysis", "valid"], []);
+			if (!_.isObject(parameters.layout) || validLayouts.length === 0)
+				return { valid: false, reason: "COLONIZE_ROOM requires a deterministically valid layout" };
+			let selectedLayout = _.find(validLayouts, option =>
+				_.get(parameters.layout, "name") === _.get(option, "name")
+				&& _.get(parameters.layout, ["origin", "x"]) === _.get(option, ["origin", "x"])
+				&& _.get(parameters.layout, ["origin", "y"]) === _.get(option, ["origin", "y"]));
+			if (!selectedLayout)
+				return { valid: false, reason: "COLONIZE_ROOM layout does not match a deterministic feasible option" };
+		}
+		let colony = _.get(Game, ["rooms", parameters.origin]);
+		let pop = _.get(Memory, ["ai", "metrics", "population", "colonies", parameters.origin]);
+		let actual = _.sum(_.values(_.get(pop, "actual", {})));
+		let expected = _.sum(_.values(_.get(pop, "expected", {})));
+		if (_.get(colony, "energyCapacityAvailable", 0) < 550 || (expected > 0 && actual / expected < 0.6))
+			return { valid: false, reason: `${action} origin spawn capacity or population is insufficient` };
+		return { valid: true, candidate: candidate };
 	},
 
 	_isRoomName: function (value) {
@@ -362,6 +453,10 @@ global.AIInterface = {
 			"ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS"
 		], order.action) && !_.get(Memory, ["ai", "policy", "allowRemoteMaintenance"], false))
 			return "Existing remote maintenance is not authorized by policy";
+		if (order.action === "START_REMOTE_MINING" && !_.get(Memory, ["ai", "policy", "allowNewRemotes"], false))
+			return "New remote establishment is not authorized by policy";
+		if (order.action === "COLONIZE_ROOM" && !_.get(Memory, ["ai", "policy", "allowColonization"], false))
+			return "Permanent colonization is not authorized by policy";
 		if (order.expiresTick < Game.time)
 			return "Order expired before execution";
 		return null;
@@ -386,11 +481,17 @@ global.AIInterface = {
 		if (order.action === "SET_OPERATIONAL_AUTHORITY") {
 			let scouting = order.parameters.scouting;
 			let remotes = order.parameters.remoteMaintenance;
+			let newRemotes = _.get(order.parameters, "newRemotes", "OFF");
+			let colonization = _.get(order.parameters, "colonization", "OFF");
 			_.set(Memory, ["ai", "policy", "allowScouting"], scouting !== "OFF");
 			_.set(Memory, ["ai", "policy", "autoScouting"], scouting === "AUTO");
 			_.set(Memory, ["ai", "policy", "allowRemoteMaintenance"], remotes !== "OFF");
 			_.set(Memory, ["ai", "policy", "autoRemoteMaintenance"], remotes === "AUTO");
-			return `Operational authority set: scouting=${scouting}, remoteMaintenance=${remotes}`;
+			_.set(Memory, ["ai", "policy", "allowNewRemotes"], newRemotes !== "OFF");
+			_.set(Memory, ["ai", "policy", "autoNewRemotes"], newRemotes === "AUTO");
+			_.set(Memory, ["ai", "policy", "allowColonization"], colonization !== "OFF");
+			_.set(Memory, ["ai", "policy", "autoColonization"], colonization === "AUTO");
+			return `Operational authority set: scouting=${scouting}, remoteMaintenance=${remotes}, newRemotes=${newRemotes}, colonization=${colonization}`;
 		}
 		if (order.action === "SET_EXECUTION_MODE") {
 			_.set(Memory, ["ai", "mode"], order.parameters.mode);
@@ -403,7 +504,60 @@ global.AIInterface = {
 			"ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS"
 		], order.action))
 			return this._delegateRemoteObjective(order);
+		if (order.action === "START_REMOTE_MINING")
+			return this._startRemoteMining(order);
+		if (order.action === "COLONIZE_ROOM")
+			return this._colonizeRoom(order);
 		throw new Error("Unsupported action reached executor");
+	},
+
+	_startRemoteMining: function (order) {
+		let origin = order.parameters.origin, target = order.parameters.target;
+		if (_.has(Memory, ["sites", "mining", target]))
+			return `Remote ${target} is already configured; no duplicate was created`;
+		let eligibility = this._strategicEligibility(order.action, order.parameters);
+		if (!eligibility.valid) throw new Error(eligibility.reason);
+		let active = _.filter(_.values(_.get(Memory, ["ai", "establishments"], {})), operation =>
+			!_.includes(["HEALTHY", "DEGRADED", "FAILED"], _.get(operation, "state")));
+		if (active.length >= 1) throw new Error("Maximum concurrent new remote establishments reached");
+		let last = _.get(Memory, ["ai", "majorOperations", "lastRemoteStartTick"]);
+		if (_.isNumber(last) && Game.time - last < _.get(Memory, ["ai", "policy", "remoteExpansionCooldownTicks"], 10000))
+			throw new Error("Remote expansion cooldown is active");
+		let intel = _.get(Memory, ["ai", "intelligence", "rooms", target]);
+		let routeResult = Game.map.findRoute(origin, target);
+		let route = [origin].concat(_.map(_.isArray(routeResult) ? routeResult : [], step => step.room));
+		if (_.last(route) !== target) route.push(target);
+		_.set(Memory, ["sites", "mining", target], {
+			colony: origin, has_keepers: false, list_route: _.uniq(route),
+			spawn_assist: null, population: null, ai_managed: true, ai_order_id: order.id
+		});
+		_.set(Memory, ["ai", "establishments", target], {
+			orderId: order.id, origin: origin, target: target, state: "CONFIGURING",
+			createdTick: Game.time, updatedTick: Game.time, prediction: eligibility.candidate.predictedEconomics,
+			candidateScore: eligibility.candidate.score, firstDeliveryTotal: _.get(Memory, ["ai", "metrics", "remotes", target, "energyDeliveredTotal"], 0),
+			failureReason: null
+		});
+		_.set(Memory, ["ai", "majorOperations", "lastRemoteStartTick"], Game.time);
+		return `START_REMOTE_MINING configured ${target} from ${origin} through AZC's existing mining system`;
+	},
+
+	_colonizeRoom: function (order) {
+		let eligibility = this._strategicEligibility(order.action, order.parameters);
+		if (!eligibility.valid) throw new Error(eligibility.reason);
+		if (_.size(_.get(Memory, ["sites", "colonization"], {})) >= 1)
+			throw new Error("Maximum concurrent colonizations reached");
+		let last = _.get(Memory, ["ai", "majorOperations", "lastColonizationTick"]);
+		if (_.isNumber(last) && Game.time - last < _.get(Memory, ["ai", "policy", "colonizationCooldownTicks"], 50000))
+			throw new Error("Colonization cooldown is active");
+		let origin = order.parameters.origin, target = order.parameters.target;
+		let routeResult = Game.map.findRoute(origin, target);
+		let route = [origin].concat(_.map(_.isArray(routeResult) ? routeResult : [], step => step.room));
+		_.set(Memory, ["sites", "colonization", target], {
+			from: origin, target: target, layout: order.parameters.layout, focus_defense: true,
+			list_route: _.uniq(route), ai_managed: true, ai_order_id: order.id
+		});
+		_.set(Memory, ["ai", "majorOperations", "lastColonizationTick"], Game.time);
+		return `COLONIZE_ROOM delegated ${target} to AZC's existing colonization system`;
 	},
 
 	_queueScoutMission: function (order) {
@@ -791,8 +945,8 @@ global.AIInterface = {
 			`Production: ${policy.allowProduction ? "enabled" : "disabled"}`,
 			`Scouting: ${policy.allowScouting ? (policy.autoScouting ? "AUTO" : "allowed") : "disabled"}`,
 			`Existing Remote Maintenance: ${policy.allowRemoteMaintenance ? (policy.autoRemoteMaintenance ? "AUTO" : "allowed") : "disabled"}`,
-			`New Remote Establishment: disabled`,
-			`Colonization: disabled`,
+			`New Remote Establishment: ${policy.allowNewRemotes ? (policy.autoNewRemotes ? "AUTO" : "allowed") : "disabled"}`,
+			`Colonization: ${policy.allowColonization ? (policy.autoColonization ? "AUTO" : "allowed") : "disabled"}`,
 			`Offensive Combat: disabled`
 		];
 		let output = lines.join("\n");
@@ -832,8 +986,10 @@ global.AIInterface = {
 			`ENSURE_REMOTE_RESERVATION: ${policy.allowRemoteMaintenance ? (policy.autoRemoteMaintenance ? "AUTO" : "MANUAL") : "DISABLED"}`,
 			`ENSURE_REMOTE_INFRASTRUCTURE: ${policy.allowRemoteMaintenance ? (policy.autoRemoteMaintenance ? "AUTO" : "MANUAL") : "DISABLED"}`,
 			`REBALANCE_REMOTE_LOGISTICS: ${policy.allowRemoteMaintenance ? (policy.autoRemoteMaintenance ? "AUTO" : "MANUAL") : "DISABLED"}`,
-			"START_REMOTE_MINING: DISABLED", "STOP_REMOTE_MINING: DISABLED",
-			"COLONIZE_ROOM: DISABLED", "ATTACK_ROOM: DISABLED"
+			`START_REMOTE_MINING: ${policy.allowNewRemotes ? (policy.autoNewRemotes ? "AUTO" : "MANUAL") : "DISABLED"}`,
+			"STOP_REMOTE_MINING: HUMAN GATED",
+			`COLONIZE_ROOM: ${policy.allowColonization ? (policy.autoColonization ? "AUTO" : "MANUAL") : "DISABLED"}`,
+			"ATTACK_ROOM: DISABLED", "MARKET: DISABLED", "PRODUCTION: DISABLED"
 		].join("\n");
 		console.log(output);
 		return output;
@@ -859,5 +1015,15 @@ global.AIInterface = {
 		}, null, 2);
 		console.log(output);
 		return output;
+	},
+
+	consoleRoomPolicy: function (room, policy) {
+		this.initMemory();
+		if (!this._isRoomName(room)) return "[AI] Error: invalid room name.";
+		if (!_.includes(["NONE", "PRIORITIZE", "EXCLUDE", "NO_REMOTE", "NO_COLONY"], policy))
+			return "[AI] Error: policy must be NONE, PRIORITIZE, EXCLUDE, NO_REMOTE, or NO_COLONY.";
+		if (policy === "NONE") delete Memory.ai.policy.roomOverrides[room];
+		else _.set(Memory, ["ai", "policy", "roomOverrides", room], policy);
+		return `[AI] Room policy for ${room}: ${policy}. Human policy overrides AI planning.`;
 	}
 };

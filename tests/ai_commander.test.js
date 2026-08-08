@@ -41,7 +41,14 @@ global.console = {
 	}
 };
 global.isPulse_Mid = function () { return true; };
+global.Creep_Body = {
+	getBody: function (name) {
+		return name === "reserver_at" ? new Array(12).fill("move")
+			: (name === "burrower" ? new Array(10).fill("work") : new Array(8).fill("move"));
+	}
+};
 
+require("../definitions_ai_strategy");
 require("../definitions_ai_observer");
 require("../definitions_ai_interface");
 require("../definitions_hive_control");
@@ -113,6 +120,86 @@ test("AI Memory initializes safely", function () {
 	assert.strictEqual(Memory.ai.policy.intelligenceRadius, 2);
 });
 
+test("remote replacement timing includes route, body spawn time, and role safety", function () {
+	reset();
+	let timing = AIRemoteStrategy.replacementLeadTicks(
+		"reserver", { level: 5, body: "reserver_at" }, { list_route: ["W1N1", "W1N2"] }, "W1N1", "W1N2"
+	);
+	assert.strictEqual(timing.travelTicks, 100);
+	assert.strictEqual(timing.spawnTicks, 36);
+	assert.strictEqual(timing.safetyMargin, 150);
+	assert.strictEqual(timing.leadTicks, 286);
+});
+
+test("remote miner and hauler replacements start before travel-guaranteed downtime", function () {
+	reset();
+	let site = { survey: { travel_ticks: 80 } };
+	let miner = AIRemoteStrategy.rolePlan("burrower", { amount: 1, level: 5, body: "burrower" }, [
+		{ memory: { role: "burrower" }, ticksToLive: 190 }
+	], site, "W1N1", "W1N2", 0);
+	let hauler = AIRemoteStrategy.rolePlan("carrier", { amount: 1, level: 5, body: "carrier" }, [
+		{ memory: { role: "carrier" }, ticksToLive: 170 }
+	], site, "W1N1", "W1N2", 0);
+	assert.strictEqual(miner.replacementNeeded, 1);
+	assert.strictEqual(hauler.replacementNeeded, 1);
+});
+
+test("queued or spawning remote replacement prevents duplicate demand", function () {
+	reset();
+	let plan = AIRemoteStrategy.rolePlan("carrier", { amount: 1, level: 5, body: "carrier" }, [
+		{ memory: { role: "carrier" }, spawning: true }
+	], {}, "W1N1", "W1N2", 0);
+	assert.strictEqual(plan.spawning, 1);
+	assert.strictEqual(plan.replacementNeeded, 0);
+	plan = AIRemoteStrategy.rolePlan("carrier", { amount: 1, level: 5, body: "carrier" }, [], {}, "W1N1", "W1N2", 1);
+	assert.strictEqual(plan.replacementNeeded, 0);
+});
+
+test("reservation continuity distinguishes healthy, expiring, and expired reserves", function () {
+	reset();
+	global.getUsername = function () { return "tester"; };
+	let settings = { amount: 1, level: 5, body: "reserver_at" };
+	let active = [{ memory: { role: "reserver" }, ticksToLive: 1000 }];
+	let healthy = AIRemoteStrategy.reservationPlan(settings, active, {}, "W1N1", "W1N2", { username: "tester", ticksToEnd: 4000 }, 0);
+	let expiring = AIRemoteStrategy.reservationPlan(settings, active, {}, "W1N1", "W1N2", { username: "tester", ticksToEnd: 100 }, 0);
+	let expired = AIRemoteStrategy.reservationPlan(settings, [], {}, "W1N1", "W1N2", null, 0);
+	assert.strictEqual(healthy.continuityAtRisk, false);
+	assert.strictEqual(expiring.continuityAtRisk, true);
+	assert.strictEqual(expired.continuityAtRisk, true);
+});
+
+test("remote replacement priorities remain below home emergencies and are ageable", function () {
+	reset();
+	let homeEmergency = { room: "W1N1", priority: 5, args: { role: "worker", room: "W1N1", colony: "W1N1" } };
+	let remoteReplacement = { room: "W1N1", priority: 13, args: { role: "reserver", room: "W1N2", colony: "W1N1" } };
+	assert.ok(Control.effectiveSpawnPriority(homeEmergency, { firstSeenTick: 1 }) < Control.effectiveSpawnPriority(remoteReplacement, { firstSeenTick: 1 }));
+	assert.ok(Control.effectiveSpawnPriority(remoteReplacement, { firstSeenTick: 1 }) >= 10);
+});
+
+test("remote candidates reject foreign, source-keeper, bad-route, duplicate, and stale targets", function () {
+	reset();
+	let base = {
+		room: "W1N2", stale: false, classification: "normal", sourceCount: 2,
+		controller: { ownerRelation: "NEUTRAL", reservationRelation: "NEUTRAL" },
+		routeStatus: "available", routeLength: 1, terrainSwampPercent: 10,
+		hostileCreeps: 0, structures: { hostile: 0 }, nearestColony: "W1N1"
+	};
+	assert.strictEqual(AIRemoteStrategy.remoteCandidate(base, {}).eligible, true);
+	assert.ok(AIRemoteStrategy.remoteCandidate(Object.assign({}, base, { stale: true }), {}).disqualifiers.includes("stale_intel"));
+	assert.ok(AIRemoteStrategy.remoteCandidate(Object.assign({}, base, { classification: "source_keeper" }), {}).disqualifiers.includes("unsupported_room_classification"));
+	assert.ok(AIRemoteStrategy.remoteCandidate(Object.assign({}, base, { routeStatus: "no_path" }), {}).disqualifiers.includes("no_route"));
+	assert.ok(AIRemoteStrategy.remoteCandidate(Object.assign({}, base, { controller: { ownerRelation: "NEUTRAL", reservationRelation: "HOSTILE" } }), {}).disqualifiers.includes("foreign_reservation"));
+	assert.ok(AIRemoteStrategy.remoteCandidate(base, { existingRemotes: ["W1N2"] }).disqualifiers.includes("already_configured"));
+});
+
+test("room classification separates normal, highway, center, and source-keeper territory", function () {
+	reset();
+	assert.strictEqual(AIObserver._roomClassification("W38N11"), "normal");
+	assert.strictEqual(AIObserver._roomClassification("W40N11"), "highway");
+	assert.strictEqual(AIObserver._roomClassification("W35N15"), "sector_center");
+	assert.strictEqual(AIObserver._roomClassification("W34N14"), "source_keeper");
+});
+
 test("segment activation uses the reserved IDs", function () {
 	reset();
 	AIInterface.activateSegments();
@@ -133,7 +220,7 @@ test("malformed JSON does not throw", function () {
 test("unsupported actions are rejected", function () {
 	reset();
 	configureExecution();
-	putInbox(order("unsupported-1", "COLONIZE_ROOM"));
+	putInbox(order("unsupported-1", "STOP_REMOTE_MINING"));
 	assert.strictEqual(Memory.ai.orders.rejected[0].reason, "Unsupported action");
 	assert.strictEqual(Memory.ai.orders.completed.length, 0);
 });
@@ -444,6 +531,8 @@ test("telemetry schema v3 reports identity, capabilities, defense, territory, an
 	assert.deepStrictEqual(snapshot.authority.execution, {
 		scouting: false, autoScouting: false, expansion: false,
 		remoteMaintenance: false, autoRemoteMaintenance: false, remoteMiningChanges: false,
+		newRemotes: false, autoNewRemotes: false, colonization: false,
+		autoColonization: false, remoteAbandonment: false,
 		market: false, production: false, offensiveCombat: false
 	});
 });
@@ -530,7 +619,7 @@ test("territory telemetry distinguishes stale and unknown nearby rooms", functio
 	assert.deepStrictEqual(snapshot.intelligence.staleRooms, ["W1N2"]);
 	assert.deepStrictEqual(snapshot.intelligence.unknownRooms, ["W2N1"]);
 	assert.strictEqual(snapshot.expansionCandidates[0].room, "W1N2");
-	assert.ok(snapshot.expansionCandidates[0].disqualifiers.indexOf("intelligence_stale") >= 0);
+	assert.ok(snapshot.expansionCandidates[0].disqualifiers.indexOf("stale_intel") >= 0);
 });
 
 test("observer reuses cached strategic routes on later snapshots", function () {
@@ -552,7 +641,7 @@ test("observer reuses cached strategic routes on later snapshots", function () {
 test("identity detection classifies self, ally, foreign, and neutral reservations", function () {
 	reset();
 	AIInterface.initMemory();
-	Memory.hive = { allies: ["Friendly"] };
+	Memory.hive = { allies: ["Friendly"], enemies: ["OtherPlayer"] };
 	Game.map.describeExits = function (room) {
 		if (room === "W1N1") return { 1: "W1N2", 3: "W2N1", 5: "W2N2" };
 		return {};
@@ -703,6 +792,110 @@ test("remote maintenance actions require authority and delegate only existing-re
 	RawMemory.segments[91] = "";
 	putInbox(order("remote-bad-1", "REASSESS_REMOTE", { parameters: { room: "W9N9" } }));
 	assert.ok(Memory.ai.orders.rejected[0].reason.indexOf("not an existing remote") >= 0);
+});
+
+function configureStrategicCandidate(target) {
+	Game.rooms.W1N1 = {
+		name: "W1N1", controller: { my: true, level: 5 }, energyCapacityAvailable: 800,
+		findSources: function () { return []; }, find: function () { return []; }
+	};
+	Memory.ai.metrics.population = { colonies: { W1N1: { expected: { worker: 2 }, actual: { worker: 2 } } } };
+	Memory.ai.intelligence.rooms[target] = {
+		room: target, lastSeenTick: Game.time, classification: "normal", sourceCount: 2,
+		controller: { status: "neutral", ownerRelation: "NEUTRAL", reservationRelation: "NEUTRAL" },
+		routeStatus: "available", routeLength: 1, nearestColony: "W1N1",
+		layoutAnalysis: { valid: [{ name: "def_hor", origin: { x: 20, y: 20 }, score: 90 }] }
+	};
+	Memory.ai.strategy = { remoteCandidates: [{
+		room: target, origin: "W1N1", score: 90, eligible: true,
+		predictedEconomics: AIRemoteStrategy.predictEconomics(2, 1)
+	}], claimCandidates: [{
+		room: target, origin: "W1N1", score: 85, eligible: true,
+		layout: { name: "def_hor", origin: { x: 20, y: 20 } }
+	}] };
+}
+
+test("START_REMOTE_MINING is authority-gated, validated, idempotent, and delegates to AZC", function () {
+	reset();
+	configureExecution();
+	configureStrategicCandidate("W1N2");
+	putInbox(order("new-remote-denied", "START_REMOTE_MINING", { parameters: { origin: "W1N1", target: "W1N2" } }));
+	assert.strictEqual(Memory.ai.orders.rejected[0].reason, "New remote establishment is not authorized by policy");
+
+	Game.time++;
+	Memory.ai.policy.allowNewRemotes = true;
+	configureStrategicCandidate("W1N2");
+	putInbox(order("new-remote-ok", "START_REMOTE_MINING", { parameters: { origin: "W1N1", target: "W1N2" } }));
+	assert.strictEqual(Memory.sites.mining.W1N2.colony, "W1N1");
+	assert.strictEqual(Memory.sites.mining.W1N2.ai_managed, true);
+	assert.ok(["CONFIGURING", "RESERVING"].includes(Memory.ai.establishments.W1N2.state));
+
+	Game.time++;
+	putInbox(order("new-remote-duplicate", "START_REMOTE_MINING", { parameters: { origin: "W1N1", target: "W1N2" } }));
+	assert.strictEqual(Object.keys(Memory.sites.mining).length, 1);
+	assert.ok(_.last(Memory.ai.orders.completed).message.includes("already configured"));
+});
+
+test("START_REMOTE_MINING rejects stale, foreign, low-score, and invalid-origin targets", function () {
+	reset();
+	configureExecution();
+	configureStrategicCandidate("W1N2");
+	Memory.ai.policy.allowNewRemotes = true;
+	Memory.ai.intelligence.rooms.W1N2.lastSeenTick = Game.time - 20000;
+	putInbox(order("new-remote-stale", "START_REMOTE_MINING", { parameters: { origin: "W1N1", target: "W1N2" } }));
+	assert.ok(Memory.ai.orders.rejected[0].reason.includes("stale"));
+
+	reset(); configureExecution(); configureStrategicCandidate("W1N2"); Memory.ai.policy.allowNewRemotes = true;
+	Memory.ai.intelligence.rooms.W1N2.controller.ownerRelation = "HOSTILE";
+	putInbox(order("new-remote-foreign", "START_REMOTE_MINING", { parameters: { origin: "W1N1", target: "W1N2" } }));
+	assert.ok(Memory.ai.orders.rejected[0].reason.includes("not neutral"));
+
+	reset(); configureExecution(); configureStrategicCandidate("W1N2"); Memory.ai.policy.allowNewRemotes = true;
+	Memory.ai.strategy.remoteCandidates[0].eligible = false;
+	putInbox(order("new-remote-score", "START_REMOTE_MINING", { parameters: { origin: "W1N1", target: "W1N2" } }));
+	assert.ok(Memory.ai.orders.rejected[0].reason.includes("candidate validation"));
+
+	reset(); configureExecution(); configureStrategicCandidate("W1N2"); Memory.ai.policy.allowNewRemotes = true;
+	putInbox(order("new-remote-origin", "START_REMOTE_MINING", { parameters: { origin: "W9N9", target: "W1N2" } }));
+	assert.ok(Memory.ai.orders.rejected[0].reason.includes("origin"));
+
+	reset(); configureExecution(); configureStrategicCandidate("W1N2"); Memory.ai.policy.allowNewRemotes = true;
+	Game.rooms.W2N2 = { name: "W2N2", controller: { my: true }, energyCapacityAvailable: 800 };
+	putInbox(order("new-remote-wrong-origin", "START_REMOTE_MINING", { parameters: { origin: "W2N2", target: "W1N2" } }));
+	assert.ok(Memory.ai.orders.rejected[0].reason.includes("deterministic candidate origin"));
+
+	reset(); configureExecution(); configureStrategicCandidate("W1N2"); Memory.ai.policy.allowNewRemotes = true;
+	Game.map.findRoute = function () { return ERR_NO_PATH; };
+	putInbox(order("new-remote-no-live-route", "START_REMOTE_MINING", { parameters: { origin: "W1N1", target: "W1N2" } }));
+	assert.ok(Memory.ai.orders.rejected[0].reason.includes("route validation"));
+});
+
+test("COLONIZE_ROOM is implemented through existing AZC memory but remains disabled by default", function () {
+	reset();
+	configureExecution();
+	configureStrategicCandidate("W1N2");
+	let parameters = { origin: "W1N1", target: "W1N2", layout: { name: "def_hor", origin: { x: 20, y: 20 } } };
+	putInbox(order("colonize-denied", "COLONIZE_ROOM", { parameters: parameters }));
+	assert.strictEqual(Memory.ai.orders.rejected[0].reason, "Permanent colonization is not authorized by policy");
+	Game.time++;
+	Memory.ai.policy.allowColonization = true;
+	configureStrategicCandidate("W1N2");
+	putInbox(order("colonize-ok", "COLONIZE_ROOM", { parameters: parameters }));
+	assert.strictEqual(Memory.sites.colonization.W1N2.from, "W1N1");
+	assert.deepStrictEqual(Memory.sites.colonization.W1N2.layout, parameters.layout);
+});
+
+test("COLONIZE_ROOM rejects unavailable GCL and layouts outside deterministic feasibility", function () {
+	reset(); configureExecution(); configureStrategicCandidate("W1N2"); Memory.ai.policy.allowColonization = true;
+	Game.gcl.level = 1;
+	let parameters = { origin: "W1N1", target: "W1N2", layout: { name: "def_hor", origin: { x: 20, y: 20 } } };
+	putInbox(order("colonize-no-gcl", "COLONIZE_ROOM", { parameters: parameters }));
+	assert.ok(Memory.ai.orders.rejected[0].reason.includes("GCL slot"));
+
+	reset(); configureExecution(); configureStrategicCandidate("W1N2"); Memory.ai.policy.allowColonization = true;
+	parameters = { origin: "W1N1", target: "W1N2", layout: { name: "def_hor", origin: { x: 21, y: 20 } } };
+	putInbox(order("colonize-invalid-layout", "COLONIZE_ROOM", { parameters: parameters }));
+	assert.ok(Memory.ai.orders.rejected[0].reason.includes("feasible option"));
 });
 
 test("scout terminal failure and expiry do not report successful observation", function () {
