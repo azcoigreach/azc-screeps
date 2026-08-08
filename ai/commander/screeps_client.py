@@ -213,10 +213,18 @@ class ScreepsAPIClient:
         return {str(name): str(source) for name, source in modules.items()}
 
     def upload_code(self, branch: str, modules: Mapping[str, str]) -> None:
+        branch_names = {str(item.get("branch")) for item in self.list_branches()}
+        if branch in branch_names:
+            self._request(
+                "POST",
+                "/api/user/code",
+                payload={"branch": branch, "modules": dict(modules), "_hash": int(time.time() * 1000)},
+            )
+            return
         self._request(
             "POST",
-            "/api/user/code",
-            payload={"branch": branch, "modules": dict(modules), "_hash": int(time.time() * 1000)},
+            "/api/user/clone-branch",
+            payload={"branch": "", "newName": branch, "defaultModules": dict(modules)},
         )
 
     def activate_branch(self, branch: str) -> None:

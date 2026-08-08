@@ -66,6 +66,20 @@ class ScreepsClientTests(unittest.TestCase):
         client = ScreepsAPIClient("secret", opener=SequenceOpener([FakeResponse(payload)]))
         self.assertEqual(client.active_world_branch(), "default")
 
+    def test_upload_creates_a_missing_branch_with_modules(self) -> None:
+        opener = SequenceOpener([
+            FakeResponse({"ok": 1, "list": [{"branch": "default", "activeWorld": True}]}),
+            FakeResponse({"ok": 1}),
+        ])
+        client = ScreepsAPIClient("secret", opener=opener)
+        client.upload_code("ai-test", {"main": "module.exports.loop=()=>{};"})
+        request, _timeout = opener.requests[1]
+        self.assertEqual(request.full_url, "https://screeps.com/api/user/clone-branch")
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["branch"], "")
+        self.assertEqual(payload["newName"], "ai-test")
+        self.assertEqual(set(payload["defaultModules"]), {"main"})
+
     def test_retries_429_and_honors_retry_after(self) -> None:
         headers = Message()
         headers["Retry-After"] = "2"

@@ -232,6 +232,8 @@ The repository-native uploader reads `SCREEPS_API_TOKEN` from the root `.env`,
 validates every top-level JavaScript module with `node --check`, and uploads only
 those modules using their filename stem as the Screeps module name. It excludes
 the AI service, credentials, Git data, documentation, tests, and other assets.
+If the requested non-production Screeps branch does not exist yet, the uploader
+creates it through Screeps' branch-clone endpoint with the validated modules.
 
 List Screeps branches and identify the live branch:
 
