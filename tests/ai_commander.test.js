@@ -1479,6 +1479,27 @@ test("empire load marks severe home shortage critical and ranks failed remote fi
 	assert.strictEqual(load.remoteRanking[0].recommendation, "PAUSE");
 });
 
+test("failed establishment preserves its original remote pause identity", function () {
+	reset({ time: 9000 });
+	AIInterface.initMemory();
+	Memory.sites.mining.W1N2 = {
+		colony: "W1N1", can_mine: true, ai_paused: true,
+		ai_pause: {
+			state: "PAUSED", pausedTick: 8000, reason: "startup failed",
+			source: "ESTABLISHMENT_STOP_LOSS", recoverySinceTick: null
+		}
+	};
+	Memory.ai.establishments = {
+		"establish-1": { target: "W1N2", createdTick: 1000, firstDeliveryTotal: 0 }
+	};
+	Memory.ai.intelligence.rooms.W1N2 = { controller: { ownerRelation: "NEUTRAL" } };
+	AIObserver._updateEstablishments();
+	assert.strictEqual(Memory.sites.mining.W1N2.ai_pause.pausedTick, 8000);
+	Game.time = 9100;
+	AIObserver._updateEstablishments();
+	assert.strictEqual(Memory.sites.mining.W1N2.ai_pause.pausedTick, 8000);
+});
+
 test("frontier exploration extends one bounded layer beyond known territory", function () {
 	reset();
 	AIInterface.initMemory();

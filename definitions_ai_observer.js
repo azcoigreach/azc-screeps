@@ -771,14 +771,12 @@ global.AIObserver = {
 			} else if (_.get(site, "route_failure", false)) {
 				operation.state = "FAILED";
 				operation.failureReason = "deterministic route failure";
-				site.ai_paused = true;
-				site.ai_pause = { state: "PAUSED", pausedTick: Game.time, reason: operation.failureReason, source: "ESTABLISHMENT_STOP_LOSS", recoverySinceTick: null };
+				this._pauseFailedEstablishment(site, operation.failureReason);
 			} else if (_.get(intel, ["controller", "ownerRelation"]) !== "NEUTRAL"
 				&& _.get(intel, ["controller", "ownerRelation"]) !== "SELF") {
 				operation.state = "FAILED";
 				operation.failureReason = "target controller became foreign-owned";
-				site.ai_paused = true;
-				site.ai_pause = { state: "PAUSED", pausedTick: Game.time, reason: operation.failureReason, source: "ESTABLISHMENT_STOP_LOSS", recoverySinceTick: null };
+				this._pauseFailedEstablishment(site, operation.failureReason);
 			} else if (!room) operation.state = "RESERVING";
 			else {
 				let population = _.filter(_.get(Game, "creeps", {}), creep => _.get(creep, ["memory", "room"]) === operation.target);
@@ -792,13 +790,33 @@ global.AIObserver = {
 				else if (age >= 7500) {
 					operation.state = "FAILED";
 					operation.failureReason = "delivery never began within the startup stop-loss window";
-					site.ai_paused = true;
-					site.ai_pause = { state: "PAUSED", pausedTick: Game.time, reason: operation.failureReason, source: "ESTABLISHMENT_STOP_LOSS", recoverySinceTick: null };
+					this._pauseFailedEstablishment(site, operation.failureReason);
 				} else operation.state = "RESERVING";
 				operation.actualDelivered = Math.max(0, delivered);
 			}
 			operation.updatedTick = Game.time;
 		});
+	},
+
+	_pauseFailedEstablishment: function (site, reason) {
+		if (_.get(site, "ai_paused", false) !== true) {
+			site.ai_paused = true;
+			site.ai_pause = {
+				state: "PAUSED", pausedTick: Game.time, reason: reason,
+				source: "ESTABLISHMENT_STOP_LOSS", recoverySinceTick: null
+			};
+			return;
+		}
+		// A failed establishment remains failed on every observer pass. Preserve the
+		// original pause identity so the durable journal records one transition, not
+		// a new synthetic pause for every telemetry tick.
+		let pause = _.get(site, "ai_pause", {});
+		if (pause.pausedTick == null) pause.pausedTick = Game.time;
+		if (pause.state == null) pause.state = "PAUSED";
+		if (pause.reason == null) pause.reason = reason;
+		if (pause.source == null) pause.source = "ESTABLISHMENT_STOP_LOSS";
+		if (pause.recoverySinceTick === undefined) pause.recoverySinceTick = null;
+		site.ai_pause = pause;
 	},
 
 	_updateColonizations: function () {
