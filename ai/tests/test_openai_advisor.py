@@ -113,6 +113,8 @@ class OpenAIAdvisorTests(unittest.TestCase):
         self.assertIn("NOVICE uses claimLimitType NOVICE_THREE_ROOM", SYSTEM_PROMPT)
         self.assertIn("RESPAWN uses claimLimitType NORMAL_GCL", SYSTEM_PROMPT)
         self.assertIn("not capped at three permanent colonies", SYSTEM_PROMPT)
+        self.assertIn("schedulerRecovery.active", SYSTEM_PROMPT)
+        self.assertIn("Never place maintenance\nfor a paused remote", SYSTEM_PROMPT)
 
     def test_structured_response_model_and_cost(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -199,6 +201,24 @@ class OpenAIAdvisorTests(unittest.TestCase):
         self.assertIsNotNone(proposal)
         self.assertEqual(proposal.action, "REBALANCE_REMOTE_LOGISTICS")
 
+        payload["operations"]["remoteMining"][0]["paused"] = True
+        telemetry = Telemetry.model_validate(payload)
+        self.assertIsNone(AdvisorService._authorized_automatic_action(candidate, telemetry))
+        payload["operations"]["remoteMining"][0]["paused"] = False
+
+        payload["operations"]["remoteMining"][0]["lifecycleState"] = "PAUSED"
+        telemetry = Telemetry.model_validate(payload)
+        self.assertIsNone(AdvisorService._authorized_automatic_action(candidate, telemetry))
+        payload["operations"]["remoteMining"][0]["lifecycleState"] = "ACTIVE"
+
+        payload["empireLoad"] = {
+            "state": "OVEREXTENDED", "growthVeto": True,
+            "schedulerRecovery": {"active": True, "rooms": {"W1N1": {}}},
+        }
+        telemetry = Telemetry.model_validate(payload)
+        self.assertIsNone(AdvisorService._authorized_automatic_action(candidate, telemetry))
+        payload["empireLoad"] = {"state": "HEALTHY", "growthVeto": False}
+
         payload["operations"]["remoteMining"][0]["objectives"] = ["logistics"]
         telemetry = Telemetry.model_validate(payload)
         self.assertIsNone(AdvisorService._authorized_automatic_action(candidate, telemetry))
@@ -208,6 +228,45 @@ class OpenAIAdvisorTests(unittest.TestCase):
         value["executable_actions"][0]["target"] = "W9N9"
         self.assertIsNone(
             AdvisorService._authorized_automatic_action(Advisory.model_validate(value), telemetry)
+        )
+
+    def test_advisor_recovery_allows_only_held_reservation_continuity(self) -> None:
+        value = advisory().model_dump()
+        value["executable_actions"] = [{
+            "action": "ENSURE_REMOTE_RESERVATION", "target": "W1N2", "origin": None,
+            "confidence": 0.9, "evidence": ["RESERVATION_EXPIRING"],
+            "reason": "Preserve an already-held reservation.",
+            "expectedOutcome": "Reservation continuity is maintained.",
+            "evaluationWindowTicks": 200,
+        }]
+        candidate = Advisory.model_validate(value)
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"]["remoteMaintenance"] = True
+        payload["authority"]["execution"]["autoRemoteMaintenance"] = True
+        payload["empireLoad"] = {
+            "state": "STRAINED", "growthVeto": False,
+            "schedulerRecovery": {"active": True, "rooms": {"W1N1": {}}},
+        }
+        remote = payload["operations"]["remoteMining"][0]
+        remote["reasons"] = ["RESERVATION_EXPIRING"]
+        remote["diagnostics"] = [{
+            "diagnostic": "RESERVATION_EXPIRING", "severity": "HIGH",
+            "evidence": {"ticksToEnd": 100},
+        }]
+        remote["reservation"].update({
+            "relation": "SELF", "ticksToEnd": 100,
+            "continuity": {"leadTicks": 236},
+        })
+        telemetry = Telemetry.model_validate(payload)
+        self.assertIsNotNone(
+            AdvisorService._authorized_automatic_action(candidate, telemetry)
+        )
+
+        remote["paused"] = True
+        telemetry = Telemetry.model_validate(payload)
+        self.assertIsNone(
+            AdvisorService._authorized_automatic_action(candidate, telemetry)
         )
 
     def test_automatic_scout_is_deferred_while_another_scout_is_active(self) -> None:
@@ -231,6 +290,14 @@ class OpenAIAdvisorTests(unittest.TestCase):
         payload["operations"]["scouting"][0]["status"] = "OBSERVED"
         telemetry = Telemetry.model_validate(payload)
         self.assertIsNotNone(AdvisorService._authorized_automatic_action(candidate, telemetry))
+
+        payload["empireLoad"] = {
+            "state": "STRAINED", "growthVeto": False,
+            "schedulerRecovery": {"active": True, "rooms": {"W1N1": {}}},
+        }
+        telemetry = Telemetry.model_validate(payload)
+        self.assertIsNone(AdvisorService._authorized_automatic_action(candidate, telemetry))
+        payload["empireLoad"] = {"state": "HEALTHY", "growthVeto": False}
 
         payload["intelligence"]["protectionByRoom"]["W0N1"]["accessibility"] = "BLOCKED_BY_PROTECTED_BOUNDARY"
         payload["intelligence"]["protectionByRoom"]["W0N1"]["reachableNow"] = False

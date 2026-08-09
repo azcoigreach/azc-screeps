@@ -9,6 +9,11 @@ from typing import Any
 
 from .history import HistoryStore
 from .openai_client import OpenAIAdvisoryResult, OpenAIAdvisorClient
+from .recovery_policy import (
+    growth_blocked,
+    recovery_active,
+    remote_maintenance_allowed,
+)
 from .remote_ops import REMOTE_ACTIONS, RemoteEconomics, remote_snapshot
 from .schemas import Advisory, Telemetry
 from .transport import CommanderTransport, TransportError
@@ -104,6 +109,12 @@ Population expected/desired values are active AZC demand, and each role carries 
 deterministic state. assignedTotal includes roles outside the current demand;
 aliveTotal covers demanded roles. A queueDepth observed after spawn processing
 may be zero while a role's persisted queued count records the latest demand pulse.
+When currentState.empireLoad.schedulerRecovery.active is true, do not place
+SCOUT_ROOM, START_REMOTE_MINING, COLONIZE_ROOM, or routine remote maintenance in
+executable_actions. The only recovery-time maintenance exception is
+ENSURE_REMOTE_RESERVATION for a non-paused remote that already has a SELF
+reservation inside its positive continuity lead window. Never place maintenance
+for a paused remote in executable_actions.
 Remote health and diagnostic reasons are deterministic inputs, not LLM scores.
 
 Keep these concepts separate:
@@ -279,6 +290,7 @@ class AdvisorService:
     def _authorized_automatic_action(advisory: Advisory, telemetry: Telemetry):
         if telemetry.authority.mode != "execute":
             return None
+        recovering = recovery_active(telemetry)
         owned = set(telemetry.colonies)
         remotes = {remote.room: remote for remote in telemetry.operations.remoteMining}
         unknown = set(telemetry.intelligence.unknownRooms) | set(telemetry.intelligence.staleRooms)
@@ -292,6 +304,7 @@ class AdvisorService:
                 if (
                     telemetry.authority.execution.scouting
                     and telemetry.authority.execution.autoScouting
+                    and not recovering
                     and not scout_active
                     and proposal.target in unknown
                     and proposal.origin in owned
@@ -311,6 +324,7 @@ class AdvisorService:
                 if (
                     telemetry.authority.execution.newRemotes
                     and telemetry.authority.execution.autoNewRemotes
+                    and not growth_blocked(telemetry)
                     and candidate is not None
                     and candidate.eligible
                     and proposal.origin == candidate.origin
@@ -326,6 +340,10 @@ class AdvisorService:
                 ):
                     continue
                 remote = remotes[proposal.target]
+                if not remote_maintenance_allowed(
+                    remote, proposal.action, recovering=recovering
+                ):
+                    continue
                 if REMOTE_ACTION_OBJECTIVES[proposal.action] in remote.objectives:
                     continue
                 reasons = set(remote.reasons)

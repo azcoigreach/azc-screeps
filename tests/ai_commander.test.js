@@ -1538,6 +1538,11 @@ test("temporary remote pause and resume preserve configuration", function () {
 test("empire load marks severe home shortage critical and ranks failed remote first", function () {
 	reset();
 	AIInterface.initMemory();
+	_.set(Memory, ["rooms", "W1N1", "population_recovery"], {
+		active: true, enteredTick: 900, stableSinceTick: null,
+		reason: "EMPIRE_LOAD_CRITICAL", satisfaction: 18.75,
+		criticalSatisfaction: 37.5, updatedTick: Game.time
+	});
 	Memory.ai.establishments.failed = { target: "W1N3", state: "FAILED" };
 	let role = function (desired, alive) { return { desired: desired, alive: alive, spawning: 0 }; };
 	let colonies = { W1N1: {
@@ -1555,6 +1560,8 @@ test("empire load marks severe home shortage critical and ranks failed remote fi
 	let load = AIObserver._empireLoad(colonies, [remote("W1N2", "DEGRADED", 2), remote("W1N3", "FAILING", 10)]);
 	assert.strictEqual(load.state, "CRITICAL");
 	assert.strictEqual(load.growthVeto, true);
+	assert.strictEqual(load.schedulerRecovery.active, true);
+	assert.strictEqual(load.schedulerRecovery.rooms.W1N1.reason, "EMPIRE_LOAD_CRITICAL");
 	assert.strictEqual(load.remoteRanking[0].room, "W1N3");
 	assert.strictEqual(load.remoteRanking[0].recommendation, "PAUSE");
 });

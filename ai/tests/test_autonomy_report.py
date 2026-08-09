@@ -85,6 +85,26 @@ class AutonomyReportTests(unittest.TestCase):
         self.assertIsNone(AutonomyController(self.history, transport).run(telemetry))
         self.assertEqual(transport.sent, [])
 
+    def test_native_recovery_latch_suppresses_maintenance_after_load_improves(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"]["autoRemoteMaintenance"] = True
+        payload["empireLoad"] = {
+            "state": "STRAINED", "growthVeto": False,
+            "schedulerRecovery": {"active": True, "rooms": {"W1N1": {}}},
+            "homePopulation": {"satisfaction": 100, "criticalSatisfaction": 100},
+            "spawnPressure": {"queueDepth": 0},
+        }
+        remote = payload["operations"]["remoteMining"][0]
+        remote["diagnostics"] = [{
+            "diagnostic": "HAULER_SHORTAGE", "severity": "HIGH", "evidence": {}
+        }]
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        self.assertIsNone(AutonomyController(self.history, transport).run(telemetry))
+        self.assertEqual(transport.sent, [])
+        self.assertIn("Native scheduler recovery: ACTIVE", build_report(self.history, telemetry))
+
     def test_critical_recovery_allows_only_held_reservation_inside_lead_window(self) -> None:
         payload = telemetry_payload()
         payload["authority"]["mode"] = "execute"

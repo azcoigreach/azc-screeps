@@ -41,6 +41,17 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
         f"Empire load: {load.get('state', 'UNKNOWN')}; growth veto "
         f"{'ON' if load.get('growthVeto') else 'OFF'}; reasons {load.get('reasons') or 'none'}."
     )
+    scheduler_recovery = load.get("schedulerRecovery") or {}
+    recovery_rooms = scheduler_recovery.get("rooms") or {}
+    recovery_details = ", ".join(
+        f"{room} {state.get('satisfaction', 'unknown')}%"
+        for room, state in sorted(recovery_rooms.items())
+    )
+    lines.append(
+        "Native scheduler recovery: "
+        f"{'ACTIVE' if scheduler_recovery.get('active') else 'INACTIVE'}"
+        f"{f' ({recovery_details})' if recovery_details else ''}."
+    )
     home_load = load.get("homePopulation", {})
     spawn_load = load.get("spawnPressure", {})
     remote_load = load.get("remotePressure", {})

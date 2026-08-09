@@ -6,6 +6,12 @@ import re
 from typing import Any
 
 from .history import HistoryStore
+from .recovery_policy import (
+    growth_blocked,
+    load_state,
+    recovery_active,
+    remote_maintenance_allowed,
+)
 from .remote_ops import remote_snapshot
 from .remote_ops import RemoteEconomics
 from .schemas import StrategicOrder, Telemetry
@@ -45,33 +51,41 @@ class AutonomyController:
         authority = telemetry.authority
         if authority.mode != "execute" or self.history.pending_commands():
             return None
-        load_state = str(telemetry.empireLoad.get("state", "HEALTHY"))
-        if authority.execution.autoRemotePausing and load_state in {"OVEREXTENDED", "CRITICAL"}:
+        current_load = load_state(telemetry)
+        recovering = recovery_active(telemetry)
+        if (
+            authority.execution.autoRemotePausing
+            and current_load in {"OVEREXTENDED", "CRITICAL"}
+        ):
             order = self._pause_remote(telemetry)
             if order:
                 return order
-        if authority.execution.remotePausing and load_state in {"HEALTHY", "STRAINED"}:
+        if (
+            authority.execution.remotePausing
+            and not recovering
+            and current_load in {"HEALTHY", "STRAINED"}
+        ):
             order = self._resume_remote(telemetry)
             if order:
                 return order
         # Frontier scouting gets a bounded opportunity ahead of routine repairs,
         # but never while the home colony is overextended or critical.
-        if authority.execution.autoScouting and load_state in {"HEALTHY", "STRAINED"}:
+        if authority.execution.autoScouting and not recovering and current_load in {"HEALTHY", "STRAINED"}:
             order = self._scout(telemetry)
             if order:
                 return order
         if authority.execution.autoRemoteMaintenance:
-            order = self._remote_maintenance(telemetry, load_state)
+            order = self._remote_maintenance(telemetry, recovering=recovering)
             if order:
                 return order
         if authority.execution.autoColonization:
-            if telemetry.empireLoad.get("growthVeto"):
+            if growth_blocked(telemetry):
                 return None
             order = self._colonization(telemetry)
             if order:
                 return order
         if authority.execution.autoNewRemotes:
-            if telemetry.empireLoad.get("growthVeto"):
+            if growth_blocked(telemetry):
                 return None
             return self._new_remote(telemetry)
         return None
@@ -127,32 +141,19 @@ class AutonomyController:
         return order
 
     def _remote_maintenance(
-        self, telemetry: Telemetry, load_state: str = "HEALTHY"
+        self, telemetry: Telemetry, *, recovering: bool = False
     ) -> StrategicOrder | None:
         severity = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
         options: list[tuple[int, str, Any]] = []
         for remote in telemetry.operations.remoteMining:
-            if remote.paused:
-                continue
             for diagnostic in remote.diagnostics:
                 action = DIAGNOSTIC_ACTIONS.get(diagnostic.diagnostic)
                 objective = ACTION_OBJECTIVES.get(action or "")
-                recovery_essential = True
-                if load_state in {"OVEREXTENDED", "CRITICAL"}:
-                    continuity = remote.reservation.continuity or {}
-                    ticks = remote.reservation.ticksToEnd
-                    lead = int(continuity.get("leadTicks") or 0)
-                    recovery_essential = (
-                        action == "ENSURE_REMOTE_RESERVATION"
-                        and remote.reservation.relation == "SELF"
-                        and ticks is not None
-                        and ticks > 0
-                        and lead > 0
-                        and ticks <= lead
-                    )
                 if (
                     action
-                    and recovery_essential
+                    and remote_maintenance_allowed(
+                        remote, action, recovering=recovering
+                    )
                     and objective not in remote.objectives
                     and self._cooled_down(
                         action, remote.room, telemetry.tick,

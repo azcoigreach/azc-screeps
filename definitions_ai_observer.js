@@ -661,6 +661,21 @@ global.AIObserver = {
 			};
 		});
 		ranking = _.sortBy(ranking, item => -item.score);
+		let recoveryRooms = {};
+		_.each(_.keys(colonies), roomName => {
+			let recovery = _.get(Memory, ["rooms", roomName, "population_recovery"]);
+			if (_.get(recovery, "active", false) === true) {
+				recoveryRooms[roomName] = {
+					active: true,
+					enteredTick: _.get(recovery, "enteredTick", null),
+					stableSinceTick: _.get(recovery, "stableSinceTick", null),
+					reason: _.get(recovery, "reason", null),
+					satisfaction: _.get(recovery, "satisfaction", null),
+					criticalSatisfaction: _.get(recovery, "criticalSatisfaction", null),
+					updatedTick: _.get(recovery, "updatedTick", null)
+				};
+			}
+		});
 		return {
 			state: state, reasons: reasons, evaluatedTick: Game.time,
 			homePopulation: { desired: desired, alive: alive, satisfaction: Math.round(satisfaction * 10000) / 100,
@@ -670,7 +685,9 @@ global.AIObserver = {
 				queueDepth: queue, oldestHomeDemandTicks: oldest },
 			remotePressure: { desired: remoteDesired, available: remoteAvailable,
 				staffingDeficit: Math.max(0, remoteDesired - remoteAvailable), reservationReplacementDemand: reserverDemand },
-			growthVeto: _.includes(["OVEREXTENDED", "CRITICAL"], state), remoteRanking: ranking
+			growthVeto: _.includes(["OVEREXTENDED", "CRITICAL"], state),
+			schedulerRecovery: { active: _.size(recoveryRooms) > 0, rooms: recoveryRooms },
+			remoteRanking: ranking
 		};
 	},
 
