@@ -625,18 +625,26 @@ global.AIObserver = {
 		let satisfaction = desired > 0 ? alive / desired : 1;
 		let criticalSatisfaction = criticalDesired > 0 ? criticalAvailable / criticalDesired : 1;
 		let utilization = spawns > 0 ? busy / spawns : 1;
+		let remoteDeficit = Math.max(0, remoteDesired - remoteAvailable);
+		let remotePressureHigh = remoteDeficit > Math.max(3, alive);
 		let state = "HEALTHY";
 		let reasons = [];
 		if (satisfaction < 0.35 || criticalSatisfaction < 0.5 || (desired > 0 && alive <= Math.max(1, spawns * 3))) {
 			state = "CRITICAL";
 			reasons.push("HOME_POPULATION_CRITICAL");
-		} else if (satisfaction < 0.65 || criticalSatisfaction < 0.75 || queue >= Math.max(4, spawns * 3)
-			|| remoteDesired - remoteAvailable > Math.max(3, alive)) {
+		} else if (satisfaction < 0.65 || criticalSatisfaction < 0.75 || queue >= Math.max(4, spawns * 3)) {
 			state = "OVEREXTENDED";
 			reasons.push("SPAWN_CAPACITY_OVEREXTENDED");
 		} else if (satisfaction < 0.85 || criticalSatisfaction < 0.9 || queue > 0 || utilization >= 0.9) {
 			state = "STRAINED";
 			reasons.push("RECOVERY_IN_PROGRESS");
+		}
+		// Remote staffing pressure blocks further growth but is not evidence that
+		// the home colony itself is overextended. Treating intentional drawdown as
+		// home overload would keep the recovery latch active forever.
+		if (remotePressureHigh) {
+			if (state === "HEALTHY") state = "STRAINED";
+			reasons.push("REMOTE_STAFFING_DEFICIT");
 		}
 		let establishments = {};
 		_.each(_.values(_.get(Memory, ["ai", "establishments"], {})), operation => {
@@ -657,7 +665,8 @@ global.AIObserver = {
 				spawnBurden: _.get(remote, ["population", "desiredTotal"], 0), staffingDeficit: deficit,
 				reservationBurden: reserverDemand, losses: _.get(remote, ["losses", "creepLossesTotal"], 0),
 				routeLength: _.get(remote, ["route", "length"], null), backlog: _.get(remote, ["mining", "energyWaiting"], 0),
-				recommendation: _.includes(["OVEREXTENDED", "CRITICAL"], state) && !remote.paused ? "PAUSE" : (remote.paused ? "HOLD_PAUSED" : "RETAIN")
+				recommendation: (_.includes(["OVEREXTENDED", "CRITICAL"], state) || remotePressureHigh)
+					&& !remote.paused ? "PAUSE" : (remote.paused ? "HOLD_PAUSED" : "RETAIN")
 			};
 		});
 		ranking = _.sortBy(ranking, item => -item.score);
@@ -684,8 +693,9 @@ global.AIObserver = {
 			spawnPressure: { spawns: spawns, busy: busy, utilization: Math.round(utilization * 10000) / 100,
 				queueDepth: queue, oldestHomeDemandTicks: oldest },
 			remotePressure: { desired: remoteDesired, available: remoteAvailable,
-				staffingDeficit: Math.max(0, remoteDesired - remoteAvailable), reservationReplacementDemand: reserverDemand },
-			growthVeto: _.includes(["OVEREXTENDED", "CRITICAL"], state),
+				staffingDeficit: remoteDeficit, reservationReplacementDemand: reserverDemand },
+			growthVeto: _.includes(["OVEREXTENDED", "CRITICAL"], state)
+				|| remotePressureHigh || _.size(recoveryRooms) > 0,
 			schedulerRecovery: { active: _.size(recoveryRooms) > 0, rooms: recoveryRooms },
 			remoteRanking: ranking
 		};

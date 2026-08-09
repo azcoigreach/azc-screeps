@@ -1566,6 +1566,33 @@ test("empire load marks severe home shortage critical and ranks failed remote fi
 	assert.strictEqual(load.remoteRanking[0].recommendation, "PAUSE");
 });
 
+test("intentional remote drawdown blocks growth without deadlocking home recovery", function () {
+	reset();
+	AIInterface.initMemory();
+	let role = function (desired, alive) {
+		return { desired: desired, alive: alive, spawning: 0 };
+	};
+	let colonies = { W1N1: {
+		population: {
+			desiredTotal: 10, aliveTotal: 10, oldestWaitingTicks: 0,
+			roles: { worker: role(8, 8), upgrader: role(2, 2) }
+		},
+		spawning: { spawns: 1, busy: 0, queueDepth: 0 }
+	} };
+	let remotes = [{
+		room: "W1N2", paused: false, health: "FAILING", lifecycleState: "FAILING",
+		population: { desiredTotal: 18, assignedTotal: 0, roles: {} },
+		reservation: { reserverPresent: 0, reserverSpawning: 0, reserverQueued: 0 },
+		losses: { creepLossesTotal: 0 }, mining: { energyWaiting: 0 },
+		route: { length: 1 }, delivery: { energyDeliveredTotal: 0 }
+	}];
+	let load = AIObserver._empireLoad(colonies, remotes);
+	assert.strictEqual(load.state, "STRAINED");
+	assert.strictEqual(load.growthVeto, true);
+	assert.ok(_.includes(load.reasons, "REMOTE_STAFFING_DEFICIT"));
+	assert.strictEqual(load.schedulerRecovery.active, false);
+});
+
 test("failed establishment preserves its original remote pause identity", function () {
 	reset({ time: 9000 });
 	AIInterface.initMemory();
