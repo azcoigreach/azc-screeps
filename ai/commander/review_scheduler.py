@@ -272,6 +272,8 @@ class ReviewScheduler:
                 "reservationBand": 0 if ticks <= 0 else 1 if ticks < 500 else 2 if ticks < 1500 else 3,
                 "hostilePresence": remote.get("security", {}).get("hostileCreeps", 0) > 0,
                 "stopLoss": remote.get("stopLoss", {}).get("state"),
+                "lifecycleState": remote.get("lifecycleState"),
+                "paused": remote.get("paused", False),
                 "majorLossBand": int(remote.get("losses", {}).get("creepLossesTotal") or 0) // 5,
             }
 
@@ -306,6 +308,10 @@ class ReviewScheduler:
                 "status": data.get("expansionReadiness", {}).get("status"),
                 "room": data.get("expansionReadiness", {}).get("recommendedRoom"),
                 "reasons": sorted(data.get("expansionReadiness", {}).get("reasons", [])),
+            },
+            "empireLoad": {
+                "state": data.get("empireLoad", {}).get("state"),
+                "growthVeto": data.get("empireLoad", {}).get("growthVeto"),
             },
             "eligibleClaims": sorted(
                 (item.get("room"), item.get("claimCandidateStatus"), bool(item.get("layout")))
@@ -407,13 +413,13 @@ class ReviewScheduler:
                 add(f"remote_membership:{room}:{after is not None}", MATERIAL, f"Remote portfolio changed for {room}")
                 continue
             if before.get("health") != after.get("health"):
-                priority = URGENT if after.get("health") in {"FAILING", "UNSAFE"} else MATERIAL
-                add(f"remote_health:{room}:{before.get('health')}:{after.get('health')}", priority, f"{room} health changed from {before.get('health')} to {after.get('health')}")
+                add(f"remote_health:{room}:{before.get('health')}:{after.get('health')}", MATERIAL, f"{room} health changed from {before.get('health')} to {after.get('health')}")
+            if before.get("lifecycleState") != after.get("lifecycleState"):
+                add(f"remote_lifecycle:{room}:{after.get('lifecycleState')}", MATERIAL, f"{room} lifecycle entered {after.get('lifecycleState')}")
             old_relation = before.get("reservation", {}).get("relation")
             new_relation = after.get("reservation", {}).get("relation")
             if old_relation != new_relation:
-                priority = URGENT if new_relation not in {"SELF", "NONE", None} else MATERIAL
-                add(f"remote_reservation:{room}:{old_relation}:{new_relation}", priority, f"{room} reservation relation changed")
+                add(f"remote_reservation:{room}:{old_relation}:{new_relation}", MATERIAL, f"{room} reservation relation changed")
             old_losses = int(before.get("losses", {}).get("creepLossesTotal") or 0)
             new_losses = int(after.get("losses", {}).get("creepLossesTotal") or 0)
             if new_losses - old_losses >= 5:
@@ -432,7 +438,7 @@ class ReviewScheduler:
                 if before.get("state") == after.get("state"):
                     continue
                 state = after.get("state", "REMOVED")
-                priority = URGENT if state == "FAILED" else MATERIAL
+                priority = URGENT if operation_name == "colonizations" and state == "FAILED" else MATERIAL
                 add(
                     f"{operation_name}:{target}:{state}", priority,
                     f"{operation_name} operation for {target} entered {state}",
@@ -468,6 +474,11 @@ class ReviewScheduler:
                 f"expansion_readiness:{new_readiness.get('status')}:{new_readiness.get('recommendedRoom')}", MATERIAL,
                 "Permanent-colony readiness or preferred room changed",
             )
+
+        old_load = old.get("empireLoad", {}).get("state")
+        new_load = new.get("empireLoad", {}).get("state")
+        if old_load != new_load:
+            add(f"empire_load:{old_load}:{new_load}", MATERIAL, f"Empire load changed from {old_load} to {new_load}")
 
         old_scouts = {
             (item.get("room"), item.get("status"), item.get("completedTick"))

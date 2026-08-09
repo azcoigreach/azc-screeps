@@ -44,11 +44,11 @@ class TrendAnalyzer:
     def _window(self, current: Telemetry, target_tick: int, label: str) -> dict[str, Any]:
         baseline_row = self.history.observation_at_or_before(target_tick)
         partial_window = False
-        if baseline_row is None or baseline_row["telemetry"].get("schemaVersion") not in (3, 4, 5, 6):
+        if baseline_row is None or baseline_row["telemetry"].get("schemaVersion") not in (3, 4, 5, 6, 7):
             baseline_row = next(
                 (
                     row for row in self.history.observations_since(target_tick)
-                    if row["telemetry"].get("schemaVersion") in (3, 4, 5, 6)
+                    if row["telemetry"].get("schemaVersion") in (3, 4, 5, 6, 7)
                     and row["screeps_tick"] <= current.tick
                 ),
                 None,
@@ -66,7 +66,7 @@ class TrendAnalyzer:
         span = max(0, current.tick - int(baseline["tick"]))
         rows = [
             row for row in self.history.observations_since(int(baseline["tick"]))
-            if row["telemetry"].get("schemaVersion") in (3, 4, 5, 6) and row["screeps_tick"] <= current.tick
+            if row["telemetry"].get("schemaVersion") in (3, 4, 5, 6, 7) and row["screeps_tick"] <= current.tick
         ]
         colony_trends: dict[str, Any] = {}
         for room, colony in current.colonies.items():

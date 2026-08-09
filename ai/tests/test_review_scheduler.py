@@ -146,6 +146,19 @@ class ReviewSchedulerTests(unittest.TestCase):
             for event in decision.events
         ))
 
+    def test_remote_reservation_and_health_flaps_are_material_not_urgent(self) -> None:
+        payload = self.establish_reviewed_baseline()
+        changed = json.loads(json.dumps(payload))
+        changed["tick"] += 1
+        remote = changed["operations"]["remoteMining"][0]
+        remote["health"] = "FAILING"
+        remote["reservation"]["relation"] = "NEUTRAL"
+        decision = self.scheduler.evaluate(self.process(changed), self.now + 180)
+        self.assertFalse(decision.should_review)
+        matching = [event for event in decision.events if event.key.startswith(("remote_health:", "remote_reservation:"))]
+        self.assertTrue(matching)
+        self.assertTrue(all(event.priority == "MATERIAL" for event in matching))
+
 
 if __name__ == "__main__":
     unittest.main()

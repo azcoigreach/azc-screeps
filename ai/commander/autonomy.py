@@ -7,6 +7,7 @@ from typing import Any
 
 from .history import HistoryStore
 from .remote_ops import remote_snapshot
+from .remote_ops import RemoteEconomics
 from .schemas import StrategicOrder, Telemetry
 from .transport import CommanderTransport
 
@@ -44,19 +45,34 @@ class AutonomyController:
         authority = telemetry.authority
         if authority.mode != "execute" or self.history.pending_commands():
             return None
+        load_state = str(telemetry.empireLoad.get("state", "HEALTHY"))
+        if authority.execution.autoRemotePausing and load_state in {"OVEREXTENDED", "CRITICAL"}:
+            order = self._pause_remote(telemetry)
+            if order:
+                return order
+        if authority.execution.remotePausing and load_state in {"HEALTHY", "STRAINED"}:
+            order = self._resume_remote(telemetry)
+            if order:
+                return order
+        # Frontier scouting gets a bounded opportunity ahead of routine repairs,
+        # but never while the home colony is overextended or critical.
+        if authority.execution.autoScouting and load_state in {"HEALTHY", "STRAINED"}:
+            order = self._scout(telemetry)
+            if order:
+                return order
         if authority.execution.autoRemoteMaintenance:
             order = self._remote_maintenance(telemetry)
             if order:
                 return order
-        if authority.execution.autoScouting:
-            order = self._scout(telemetry)
-            if order:
-                return order
         if authority.execution.autoColonization:
+            if telemetry.empireLoad.get("growthVeto"):
+                return None
             order = self._colonization(telemetry)
             if order:
                 return order
         if authority.execution.autoNewRemotes:
+            if telemetry.empireLoad.get("growthVeto"):
+                return None
             return self._new_remote(telemetry)
         return None
 
@@ -114,13 +130,20 @@ class AutonomyController:
         severity = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
         options: list[tuple[int, str, Any]] = []
         for remote in telemetry.operations.remoteMining:
+            if remote.paused:
+                continue
             for diagnostic in remote.diagnostics:
                 action = DIAGNOSTIC_ACTIONS.get(diagnostic.diagnostic)
                 objective = ACTION_OBJECTIVES.get(action or "")
                 if (
                     action
                     and objective not in remote.objectives
-                    and self._cooled_down(action, remote.room, telemetry.tick, self.ROUTINE_COOLDOWN)
+                    and self._cooled_down(
+                        action, remote.room, telemetry.tick,
+                        2000 if action == "ENSURE_REMOTE_RESERVATION" else self.ROUTINE_COOLDOWN,
+                    )
+                    and not (action == "ENSURE_REMOTE_RESERVATION"
+                        and (remote.reservation.reserverSpawning > 0 or remote.reservation.reserverQueued > 0))
                 ):
                     options.append((severity[diagnostic.severity], action, remote))
         if not options:
@@ -169,6 +192,66 @@ class AutonomyController:
             reason=f"Deterministic radius-{telemetry.intelligence.radius} territorial mapping for {target}",
         )
 
+    def drawdown_ranking(self, telemetry: Telemetry) -> list[dict[str, Any]]:
+        """Rank reversible load shedding with measured economics when available."""
+        economics = RemoteEconomics(self.history).build(telemetry)
+        base = {item.get("room"): dict(item) for item in telemetry.remoteDrawdownRanking}
+        result: list[dict[str, Any]] = []
+        for remote in telemetry.operations.remoteMining:
+            item = base.get(remote.room, {"room": remote.room, "score": 0})
+            value = economics.get(remote.room, {}).get("value", {})
+            net = value.get("components", {}).get("estimatedNetValuePer1000")
+            confidence = float(value.get("confidence") or 0)
+            if net is not None and confidence >= 0.5:
+                item["score"] = float(item.get("score") or 0) + max(0.0, -float(net) / 500.0)
+            item["estimatedNetPer1000"] = net
+            item["economicConfidence"] = confidence
+            item["economicQuality"] = value.get("quality", "UNKNOWN")
+            item["paused"] = remote.paused
+            result.append(item)
+        return sorted(result, key=lambda item: (-float(item.get("score") or 0), str(item["room"])))
+
+    def _pause_remote(self, telemetry: Telemetry) -> StrategicOrder | None:
+        if not self._cooled_down("PAUSE_REMOTE_MINING", "*", telemetry.tick, 5000):
+            return None
+        ranking = [item for item in self.drawdown_ranking(telemetry) if not item.get("paused")]
+        if not ranking:
+            return None
+        target = ranking[0]
+        order = self.transport.send_safe_command(
+            "PAUSE_REMOTE_MINING", {"room": target["room"]},
+            reason=(f"Empire load {telemetry.empireLoad.get('state')} selected reversible drawdown rank 1: "
+                f"score {target.get('score')}, health {target.get('health')}, net/1k {target.get('estimatedNetPer1000')}")
+        )
+        if order:
+            baseline = remote_snapshot(telemetry, target["room"]) or {}
+            baseline["empireLoad"] = telemetry.empireLoad
+            baseline["drawdownRanking"] = ranking
+            self.history.create_operation(
+                f"op-{order.id}", order.id, "empire overextension", target["room"], "PAUSE_REMOTE_MINING",
+                "Pause the least valuable remote to release spawn capacity", None, telemetry.tick,
+                baseline, "home population and spawn pressure should recover", telemetry.tick + 2000,
+            )
+        return order
+
+    def _resume_remote(self, telemetry: Telemetry) -> StrategicOrder | None:
+        population = telemetry.empireLoad.get("homePopulation", {})
+        spawn = telemetry.empireLoad.get("spawnPressure", {})
+        if float(population.get("satisfaction") or 0) < 85 or float(population.get("criticalSatisfaction") or 0) < 100:
+            return None
+        if int(spawn.get("queueDepth") or 0) > 1:
+            return None
+        candidates = [remote for remote in telemetry.operations.remoteMining if remote.lifecycleState == "RECOVERY_CANDIDATE"]
+        if not candidates:
+            return None
+        remote = sorted(candidates, key=lambda item: item.room)[0]
+        if not self._cooled_down("RESUME_REMOTE_MINING", remote.room, telemetry.tick, 3000):
+            return None
+        return self.transport.send_safe_command(
+            "RESUME_REMOTE_MINING", {"room": remote.room},
+            reason=f"Stable home recovery permits hysteretic reactivation of {remote.room}",
+        )
+
     def _new_remote(self, telemetry: Telemetry) -> StrategicOrder | None:
         active = [item for item in telemetry.operations.remoteEstablishments if item.state not in {"HEALTHY", "DEGRADED", "FAILED"}]
         if active:
@@ -200,7 +283,7 @@ class AutonomyController:
                 continue
             import json
             parameters = json.loads(command["parameters_json"])
-            if parameters.get("room", parameters.get("target")) == room:
+            if room == "*" or parameters.get("room", parameters.get("target")) == room:
                 return False
         return True
 

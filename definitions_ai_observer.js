@@ -6,7 +6,7 @@
 // individual creep state, and long time-series histories stay out of segments.
 global.AIObserver = {
 
-	SCHEMA_VERSION: 6,
+	SCHEMA_VERSION: 7,
 	MAX_HOSTILE_EVENTS: 50,
 	MAX_INTEL_ROOMS: 150,
 	STRUCTURE_TYPES: [
@@ -43,6 +43,9 @@ global.AIObserver = {
 		let territory = this._territory(ownedNames, colonies);
 		this._updateEstablishments();
 		this._updateColonizations(colonies);
+		let remoteMining = this._remoteMining();
+		let empireLoad = this._empireLoad(colonies, remoteMining);
+		_.set(Memory, ["ai", "strategy", "empireLoad"], _.cloneDeep(empireLoad));
 		let readiness = this._expansionReadiness(territory.claimCandidates, colonies);
 		_.set(Memory, ["ai", "strategy", "expansionReadiness"], _.cloneDeep(readiness));
 		let militaryPreparation = this._militaryPreparation(ownedRooms, protection.empire);
@@ -76,7 +79,7 @@ global.AIObserver = {
 			colonies: colonies,
 			operations: {
 				colonizations: this._colonizations(),
-				remoteMining: this._remoteMining(),
+				remoteMining: remoteMining,
 				remoteEstablishments: _.values(_.get(Memory, ["ai", "establishments"], {})),
 				combat: this._combat(),
 				scouting: this._scouting()
@@ -86,6 +89,8 @@ global.AIObserver = {
 			remoteCandidates: territory.remoteCandidates,
 			claimCandidates: territory.claimCandidates,
 			expansionReadiness: readiness,
+			empireLoad: empireLoad,
+			remoteDrawdownRanking: empireLoad.remoteRanking,
 			playerHistory: this._playerHistory(),
 			combatAssessments: combatAssessments,
 			authority: {
@@ -94,6 +99,7 @@ global.AIObserver = {
 					"NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SET_OPERATIONAL_AUTHORITY", "SET_EXECUTION_MODE", "SCOUT_ROOM",
 					"REASSESS_REMOTE", "ENSURE_REMOTE_RESERVATION",
 					"ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS",
+					"PAUSE_REMOTE_MINING", "RESUME_REMOTE_MINING",
 					"START_REMOTE_MINING", "COLONIZE_ROOM"
 				],
 				execution: {
@@ -102,6 +108,8 @@ global.AIObserver = {
 					expansion: _.get(Memory, ["ai", "policy", "allowColonization"], false) === true,
 					remoteMaintenance: _.get(Memory, ["ai", "policy", "allowRemoteMaintenance"], false) === true,
 					autoRemoteMaintenance: _.get(Memory, ["ai", "policy", "autoRemoteMaintenance"], false) === true,
+					remotePausing: _.get(Memory, ["ai", "policy", "allowRemotePausing"], true) === true,
+					autoRemotePausing: _.get(Memory, ["ai", "policy", "autoRemotePausing"], false) === true,
 					remoteMiningChanges: _.get(Memory, ["ai", "policy", "allowNewRemotes"], false) === true,
 					newRemotes: _.get(Memory, ["ai", "policy", "allowNewRemotes"], false) === true,
 					autoNewRemotes: _.get(Memory, ["ai", "policy", "autoNewRemotes"], false) === true,
@@ -120,12 +128,15 @@ global.AIObserver = {
 					ENSURE_REMOTE_RESERVATION: { allowed: _.get(Memory, ["ai", "policy", "allowRemoteMaintenance"], false) === true, automatic: _.get(Memory, ["ai", "policy", "autoRemoteMaintenance"], false) === true },
 					ENSURE_REMOTE_INFRASTRUCTURE: { allowed: _.get(Memory, ["ai", "policy", "allowRemoteMaintenance"], false) === true, automatic: _.get(Memory, ["ai", "policy", "autoRemoteMaintenance"], false) === true },
 					REBALANCE_REMOTE_LOGISTICS: { allowed: _.get(Memory, ["ai", "policy", "allowRemoteMaintenance"], false) === true, automatic: _.get(Memory, ["ai", "policy", "autoRemoteMaintenance"], false) === true },
+					PAUSE_REMOTE_MINING: { allowed: _.get(Memory, ["ai", "policy", "allowRemotePausing"], true) === true, automatic: _.get(Memory, ["ai", "policy", "autoRemotePausing"], false) === true },
+					RESUME_REMOTE_MINING: { allowed: _.get(Memory, ["ai", "policy", "allowRemotePausing"], true) === true, automatic: _.get(Memory, ["ai", "policy", "autoRemotePausing"], false) === true },
 					START_REMOTE_MINING: { allowed: _.get(Memory, ["ai", "policy", "allowNewRemotes"], false) === true, automatic: _.get(Memory, ["ai", "policy", "autoNewRemotes"], false) === true },
 					STOP_REMOTE_MINING: { allowed: false, automatic: false },
 					COLONIZE_ROOM: { allowed: _.get(Memory, ["ai", "policy", "allowColonization"], false) === true, automatic: _.get(Memory, ["ai", "policy", "autoColonization"], false) === true },
 					ATTACK_ROOM: { allowed: false, automatic: false }
 				}
 			},
+			authorityAudit: _.get(Memory, ["ai", "authorityAudit"], []).slice(-20),
 			alerts: alerts
 		};
 	},
@@ -469,7 +480,9 @@ global.AIObserver = {
 				room: roomName,
 				colony: colony,
 				configured: true,
-				active: _.get(site, "can_mine", false) === true,
+				active: _.get(site, "can_mine", false) === true && _.get(site, "ai_paused", false) !== true,
+				paused: _.get(site, "ai_paused", false) === true,
+				pause: _.cloneDeep(_.get(site, "ai_pause", null)),
 				hasKeepers: _.get(site, "has_keepers", false) === true,
 				visible: visible,
 				lastSeenTick: _.get(intel, "lastSeenTick", null),
@@ -527,10 +540,111 @@ global.AIObserver = {
 			remote.reasons = assessment.reasons;
 			remote.diagnostics = assessment.diagnostics;
 			remote.stopLoss = this._stopLoss(remote);
+			remote.lifecycleState = this._remoteLifecycle(remote, site);
 			_.set(Memory, ["ai", "metrics", "remotes", roomName, "lastHealth"], remote.health);
 			result.push(remote);
 		});
 		return result;
+	},
+
+	_remoteLifecycle: function (remote, site) {
+		if (_.get(site, "ai_paused", false) === true) {
+			let pause = _.get(site, "ai_pause", {});
+			let minimum = _.get(Memory, ["ai", "policy", "remotePauseMinimumTicks"], 5000);
+			let stableTicks = _.get(Memory, ["ai", "policy", "remoteRecoveryStableTicks"], 3000);
+			let minimumPopulation = _.get(Memory, ["ai", "policy", "remoteRecoveryPopulationSatisfaction"], 85);
+			let load = _.get(Memory, ["ai", "strategy", "empireLoad", "state"], "CRITICAL");
+			let population = _.get(Memory, ["ai", "strategy", "empireLoad", "homePopulation", "satisfaction"], 0);
+			let recovering = _.includes(["HEALTHY", "STRAINED"], load) && population >= minimumPopulation;
+			if (recovering && pause.recoverySinceTick == null) pause.recoverySinceTick = Game.time;
+			if (!recovering) pause.recoverySinceTick = null;
+			site.ai_pause = pause;
+			if (Game.time - _.get(pause, "pausedTick", Game.time) >= minimum && pause.recoverySinceTick != null
+				&& Game.time - pause.recoverySinceTick >= stableTicks)
+				return "RECOVERY_CANDIDATE";
+			return "PAUSED";
+		}
+		if (_.get(site, ["ai_pause", "state"]) === "REACTIVATING") return "REACTIVATING";
+		if (_.get(remote, ["stopLoss", "state"]) === "ABANDON_RECOMMENDED") return "ABANDON_RECOMMENDED";
+		if (_.get(remote, ["stopLoss", "state"]) === "PAUSE_RECOMMENDED") return "PAUSE_RECOMMENDED";
+		return remote.health === "FAILING" ? "FAILING" : (remote.health === "DEGRADED" ? "DEGRADED" : "ACTIVE");
+	},
+
+	_empireLoad: function (colonies, remotes) {
+		let criticalNames = ["harvester", "miner", "burrower", "carrier", "hauler", "worker", "multirole", "upgrader"];
+		let desired = 0, alive = 0, criticalDesired = 0, criticalAvailable = 0;
+		let spawns = 0, busy = 0, queue = 0, oldest = 0;
+		_.each(colonies, colony => {
+			desired += _.get(colony, ["population", "desiredTotal"], 0);
+			alive += _.get(colony, ["population", "aliveTotal"], 0);
+			spawns += _.get(colony, ["spawning", "spawns"], 0);
+			busy += _.get(colony, ["spawning", "busy"], 0);
+			queue += _.get(colony, ["spawning", "queueDepth"], 0);
+			oldest = Math.max(oldest, _.get(colony, ["population", "oldestWaitingTicks"], 0));
+			_.each(_.get(colony, ["population", "roles"], {}), (role, name) => {
+				if (_.includes(criticalNames, name)) {
+					criticalDesired += _.get(role, "desired", 0);
+					criticalAvailable += _.get(role, "alive", 0) + _.get(role, "spawning", 0);
+				}
+			});
+		});
+		let remoteDesired = _.sum(_.map(remotes, remote => remote.paused ? 0 : _.get(remote, ["population", "desiredTotal"], 0)));
+		let remoteAvailable = _.sum(_.map(remotes, remote => remote.paused ? 0 : _.get(remote, ["population", "assignedTotal"], 0)));
+		let reserverDemand = _.sum(_.map(remotes, remote => remote.paused ? 0 : Math.max(0,
+			_.get(remote, ["population", "roles", "reserver", "desired"], 0)
+			- _.get(remote, ["reservation", "reserverPresent"], 0)
+			- _.get(remote, ["reservation", "reserverSpawning"], 0)
+			- _.get(remote, ["reservation", "reserverQueued"], 0))));
+		let satisfaction = desired > 0 ? alive / desired : 1;
+		let criticalSatisfaction = criticalDesired > 0 ? criticalAvailable / criticalDesired : 1;
+		let utilization = spawns > 0 ? busy / spawns : 1;
+		let state = "HEALTHY";
+		let reasons = [];
+		if (satisfaction < 0.35 || criticalSatisfaction < 0.5 || (desired > 0 && alive <= Math.max(1, spawns * 3))) {
+			state = "CRITICAL";
+			reasons.push("HOME_POPULATION_CRITICAL");
+		} else if (satisfaction < 0.65 || criticalSatisfaction < 0.75 || queue >= Math.max(4, spawns * 3)
+			|| remoteDesired - remoteAvailable > Math.max(3, alive)) {
+			state = "OVEREXTENDED";
+			reasons.push("SPAWN_CAPACITY_OVEREXTENDED");
+		} else if (satisfaction < 0.85 || criticalSatisfaction < 0.9 || queue > 0 || utilization >= 0.9) {
+			state = "STRAINED";
+			reasons.push("RECOVERY_IN_PROGRESS");
+		}
+		let establishments = {};
+		_.each(_.values(_.get(Memory, ["ai", "establishments"], {})), operation => {
+			if (_.isString(_.get(operation, "target"))) establishments[operation.target] = operation;
+		});
+		let ranking = _.map(remotes, remote => {
+			let deficit = Math.max(0, _.get(remote, ["population", "desiredTotal"], 0) - _.get(remote, ["population", "assignedTotal"], 0));
+			let establishmentFailed = _.get(establishments, [remote.room, "state"]) === "FAILED";
+			let score = (remote.health === "FAILING" ? 35 : (remote.health === "DEGRADED" ? 15 : 0))
+				+ (establishmentFailed ? 30 : 0) + deficit * 4
+				+ Math.min(20, _.get(remote, ["losses", "creepLossesTotal"], 0) / 5)
+				+ Math.min(10, _.get(remote, ["mining", "energyWaiting"], 0) / 500)
+				+ Math.max(0, (_.get(remote, ["route", "length"], 1) || 1) - 1) * 2
+				- Math.min(15, _.get(remote, ["delivery", "energyDeliveredTotal"], 0) / 20000);
+			return {
+				room: remote.room, score: Math.round(score * 100) / 100, health: remote.health,
+				lifecycleState: remote.lifecycleState, establishmentFailed: establishmentFailed,
+				spawnBurden: _.get(remote, ["population", "desiredTotal"], 0), staffingDeficit: deficit,
+				reservationBurden: reserverDemand, losses: _.get(remote, ["losses", "creepLossesTotal"], 0),
+				routeLength: _.get(remote, ["route", "length"], null), backlog: _.get(remote, ["mining", "energyWaiting"], 0),
+				recommendation: _.includes(["OVEREXTENDED", "CRITICAL"], state) && !remote.paused ? "PAUSE" : (remote.paused ? "HOLD_PAUSED" : "RETAIN")
+			};
+		});
+		ranking = _.sortBy(ranking, item => -item.score);
+		return {
+			state: state, reasons: reasons, evaluatedTick: Game.time,
+			homePopulation: { desired: desired, alive: alive, satisfaction: Math.round(satisfaction * 10000) / 100,
+				criticalDesired: criticalDesired, criticalAvailable: criticalAvailable,
+				criticalSatisfaction: Math.round(criticalSatisfaction * 10000) / 100 },
+			spawnPressure: { spawns: spawns, busy: busy, utilization: Math.round(utilization * 10000) / 100,
+				queueDepth: queue, oldestHomeDemandTicks: oldest },
+			remotePressure: { desired: remoteDesired, available: remoteAvailable,
+				staffingDeficit: Math.max(0, remoteDesired - remoteAvailable), reservationReplacementDemand: reserverDemand },
+			growthVeto: _.includes(["OVEREXTENDED", "CRITICAL"], state), remoteRanking: ranking
+		};
 	},
 
 	_remoteHealth: function (remote) {
@@ -602,11 +716,15 @@ global.AIObserver = {
 		if (_.includes(remote.reasons, "LOW_DELIVERY")) evidence.push("delivery_near_zero");
 		if (_.includes(remote.reasons, "HIGH_CREEP_LOSSES")) evidence.push("high_creep_losses");
 		if (_.includes(remote.reasons, "HOSTILE_INTERRUPTION")) evidence.push("hostile_interruption");
+		if (_.get(_.find(_.values(_.get(Memory, ["ai", "establishments"], {})), item => _.get(item, "target") === remote.room), "state") === "FAILED")
+			evidence.push("establishment_failed");
 		let key = ["ai", "metrics", "remotes", remote.room, "stopLoss"];
 		let previous = _.get(Memory, key, { badWindows: 0, state: "ACTIVE" });
-		let bad = remote.health === "FAILING" || remote.health === "UNSAFE" || _.includes(remote.reasons, "ROUTE_FAILURE");
+		let bad = remote.health === "FAILING" || remote.health === "UNSAFE" || _.includes(remote.reasons, "ROUTE_FAILURE") || _.includes(evidence, "establishment_failed");
+		let recovered = remote.health === "HEALTHY" && evidence.length === 0;
 		let pulse = Game.time - _.get(previous, "evaluatedTick", 0) >= 1000;
-		let badWindows = pulse ? (bad ? _.get(previous, "badWindows", 0) + 1 : 0) : _.get(previous, "badWindows", 0);
+		let badWindows = _.get(previous, "badWindows", 0);
+		if (pulse) badWindows = bad ? badWindows + 1 : (recovered ? Math.max(0, badWindows - 1) : badWindows);
 		let state = badWindows >= 3 ? "ABANDON_RECOMMENDED" : (badWindows >= 2 ? "PAUSE_RECOMMENDED" : (badWindows >= 1 ? "PROBATION" : (evidence.length ? "WATCH" : "ACTIVE")));
 		let result = { state: state, badWindows: badWindows, evidence: evidence, evaluatedTick: pulse ? Game.time : _.get(previous, "evaluatedTick", Game.time) };
 		_.set(Memory, key, result);
@@ -1022,8 +1140,16 @@ global.AIObserver = {
 	_territory: function (ownedNames, colonies) {
 		let radius = _.get(Memory, ["ai", "policy", "intelligenceRadius"], 2);
 		let staleTicks = _.get(Memory, ["ai", "policy", "intelStaleTicks"], 10000);
-		let nearby = this._nearbyRooms(ownedNames, radius);
 		let intelRooms = _.get(Memory, ["ai", "intelligence", "rooms"], {});
+		let coreRooms = this._nearbyRooms(ownedNames, radius);
+		let frontier = this._frontierRooms(ownedNames, coreRooms, intelRooms);
+		let nearby = _.uniq(coreRooms.concat(frontier.all));
+		_.each(nearby, name => {
+			if (!_.has(this._protectionByRoom || {}, name)) {
+				let nearest = this._nearestColony(name, ownedNames);
+				this._protectionByRoom[name] = this._roomProtection(nearest ? nearest.room : null, name, _.get(Game, ["rooms", name]));
+			}
+		});
 		let known = [];
 		let unknown = [];
 		let stale = [];
@@ -1065,7 +1191,14 @@ global.AIObserver = {
 				: this._nearestColony(name, ownedNames);
 			copy.protection = this._roomProtection(nearest ? nearest.room : null, name, _.get(Game, ["rooms", name]));
 			copy.intelAgeTicks = Math.max(0, Game.time - copy.lastSeenTick);
-			copy.stale = copy.intelAgeTicks > staleTicks;
+			let roomStaleTicks = _.includes(existingRemotes, name)
+				? _.get(Memory, ["ai", "policy", "activeRemoteIntelStaleTicks"], 2000)
+				: (_.includes(prioritizedRooms, name)
+					? _.get(Memory, ["ai", "policy", "expansionIntelStaleTicks"], 5000)
+					: (_.get(copy, "hostilePlayers", []).length > 0
+						? _.get(Memory, ["ai", "policy", "borderIntelStaleTicks"], 15000) : staleTicks));
+			copy.staleAfterTicks = roomStaleTicks;
+			copy.stale = copy.intelAgeTicks > roomStaleTicks;
 			known.push(copy);
 			let needsStrategicRefresh = copy.classification === "normal"
 				&& _.get(copy, ["controller", "status"]) !== "owned"
@@ -1132,6 +1265,10 @@ global.AIObserver = {
 				knownRooms: known,
 				unknownRooms: _.sortBy(unknown),
 				staleRooms: _.sortBy(stale),
+				reachableFrontier: _.sortBy(frontier.reachable),
+				blockedFrontier: _.sortBy(frontier.blocked),
+				staleFrontier: _.sortBy(_.filter(stale, name => _.includes(frontier.all, name))),
+				highValueFrontier: _.sortBy(frontier.highValue),
 				protectionByRoom: _.pick(this._protectionByRoom || {}, nearby),
 				candidateSets: candidateSets,
 				territoryGraph: territoryGraph,
@@ -1140,6 +1277,30 @@ global.AIObserver = {
 			remoteCandidates: remoteCandidates,
 			claimCandidates: claimCandidates
 		};
+	},
+
+	_frontierRooms: function (ownedNames, coreRooms, intelRooms) {
+		let maximum = _.get(Memory, ["ai", "policy", "intelligenceFrontierMaxDistance"], 4);
+		let seeds = _.uniq(coreRooms.concat(_.keys(intelRooms)));
+		let activeRemotes = _.keys(_.get(Memory, ["sites", "mining"], {}));
+		let all = [], reachable = [], blocked = [], highValue = [];
+		if (!_.isFunction(_.get(Game, ["map", "describeExits"])))
+			return { all: all, reachable: reachable, blocked: blocked, highValue: highValue };
+		_.each(seeds, seed => {
+			let nearest = this._nearestColony(seed, ownedNames);
+			if (!nearest || nearest.distance > maximum) return;
+			_.each(Game.map.describeExits(seed) || {}, roomName => {
+				if (!_.isString(roomName) || _.includes(seeds, roomName) || _.includes(all, roomName)) return;
+				let origin = this._nearestColony(roomName, ownedNames);
+				if (!origin || origin.distance > maximum) return;
+				all.push(roomName);
+				let protection = this._roomProtection(origin.room, roomName, _.get(Game, ["rooms", roomName]));
+				if (_.get(protection, "accessibility") === "REACHABLE_NOW") reachable.push(roomName);
+				else if (_.includes(["BLOCKED_BY_PROTECTED_BOUNDARY", "REACHABLE_AFTER_PROTECTION"], _.get(protection, "accessibility"))) blocked.push(roomName);
+				if (_.includes(activeRemotes, seed) || _.includes(coreRooms, seed)) highValue.push(roomName);
+			});
+		});
+		return { all: _.uniq(all), reachable: _.uniq(reachable), blocked: _.uniq(blocked), highValue: _.uniq(highValue) };
 	},
 
 	_expansionReadiness: function (candidates, colonies) {

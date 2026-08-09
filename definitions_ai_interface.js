@@ -33,6 +33,8 @@ global.AIInterface = {
 		ENSURE_REMOTE_RESERVATION: true,
 		ENSURE_REMOTE_INFRASTRUCTURE: true,
 		REBALANCE_REMOTE_LOGISTICS: true,
+		PAUSE_REMOTE_MINING: true,
+		RESUME_REMOTE_MINING: true,
 		START_REMOTE_MINING: true,
 		COLONIZE_ROOM: true
 	},
@@ -66,12 +68,17 @@ global.AIInterface = {
 		this._default(["ai", "policy", "autoScouting"], false, _.isBoolean);
 		this._default(["ai", "policy", "allowRemoteMaintenance"], false, _.isBoolean);
 		this._default(["ai", "policy", "autoRemoteMaintenance"], false, _.isBoolean);
+		this._default(["ai", "policy", "allowRemotePausing"], true, _.isBoolean);
+		this._default(["ai", "policy", "autoRemotePausing"], false, _.isBoolean);
 		this._default(["ai", "policy", "allowNewRemotes"], false, _.isBoolean);
 		this._default(["ai", "policy", "autoNewRemotes"], false, _.isBoolean);
 		this._default(["ai", "policy", "allowColonization"], false, _.isBoolean);
 		this._default(["ai", "policy", "autoColonization"], false, _.isBoolean);
 		this._default(["ai", "policy", "intelligenceRadius"], 2, value => this._isInteger(value) && value >= 1 && value <= 5);
 		this._default(["ai", "policy", "intelStaleTicks"], 10000, value => this._isInteger(value) && value >= 100);
+		this._default(["ai", "policy", "activeRemoteIntelStaleTicks"], 2000, value => this._isInteger(value) && value >= 100);
+		this._default(["ai", "policy", "expansionIntelStaleTicks"], 5000, value => this._isInteger(value) && value >= 100);
+		this._default(["ai", "policy", "borderIntelStaleTicks"], 15000, value => this._isInteger(value) && value >= 100);
 		this._default(["ai", "policy", "reservationWarningTicks"], 2000, value => this._isInteger(value) && value >= 100 && value <= 5000);
 		this._default(["ai", "policy", "maxConcurrentScouts"], 1, value => this._isInteger(value) && value >= 1 && value <= this.MAX_AI_SCOUTS);
 		this._default(["ai", "policy", "minimumRemoteScore"], 65, value => this._isInteger(value) && value >= 0 && value <= 100);
@@ -84,6 +91,10 @@ global.AIInterface = {
 		this._default(["ai", "policy", "minimumOriginEnergyCapacity"], 800, value => this._isInteger(value) && value >= 300);
 		this._default(["ai", "policy", "minimumStableColonyRcl"], 3, value => this._isInteger(value) && value >= 2 && value <= 6);
 		this._default(["ai", "policy", "minimumStableColonyPopulationSatisfaction"], 75, value => _.isNumber(value) && value >= 0 && value <= 100);
+		this._default(["ai", "policy", "remotePauseMinimumTicks"], 5000, value => this._isInteger(value) && value >= 1000);
+		this._default(["ai", "policy", "remoteRecoveryStableTicks"], 3000, value => this._isInteger(value) && value >= 500);
+		this._default(["ai", "policy", "remoteRecoveryPopulationSatisfaction"], 85, value => _.isNumber(value) && value >= 50 && value <= 100);
+		this._default(["ai", "policy", "intelligenceFrontierMaxDistance"], 4, value => this._isInteger(value) && value >= 2 && value <= 8);
 		this._default(["ai", "policy", "protectionThresholdHours"], [168, 72, 24, 6, 0], value => _.isArray(value));
 		if (!_.isObject(_.get(Memory, ["ai", "policy", "roomOverrides"]))) _.set(Memory, ["ai", "policy", "roomOverrides"], {});
 		if (!_.isObject(_.get(Memory, ["ai", "protection"])) || _.isArray(_.get(Memory, ["ai", "protection"])))
@@ -141,6 +152,62 @@ global.AIInterface = {
 		if (!_.isObject(_.get(Memory, ["ai", "establishments"]))) _.set(Memory, ["ai", "establishments"], {});
 		if (!_.isObject(_.get(Memory, ["ai", "majorOperations"]))) _.set(Memory, ["ai", "majorOperations"], {});
 		if (!_.isObject(_.get(Memory, ["ai", "colonizations"]))) _.set(Memory, ["ai", "colonizations"], {});
+		if (!_.isArray(_.get(Memory, ["ai", "authorityAudit"]))) _.set(Memory, ["ai", "authorityAudit"], []);
+		this._auditUnattributedAuthorityChanges();
+	},
+
+	_authorityValues: function () {
+		let policy = _.get(Memory, ["ai", "policy"], {});
+		return {
+			mode: _.get(Memory, ["ai", "mode"], "observe"),
+			allowScouting: policy.allowScouting === true,
+			autoScouting: policy.autoScouting === true,
+			allowRemoteMaintenance: policy.allowRemoteMaintenance === true,
+			autoRemoteMaintenance: policy.autoRemoteMaintenance === true,
+			allowRemotePausing: policy.allowRemotePausing === true,
+			autoRemotePausing: policy.autoRemotePausing === true,
+			allowNewRemotes: policy.allowNewRemotes === true,
+			autoNewRemotes: policy.autoNewRemotes === true,
+			allowColonization: policy.allowColonization === true,
+			autoColonization: policy.autoColonization === true
+		};
+	},
+
+	_recordAuthorityChange: function (authority, oldValue, newValue, source, actor, reason) {
+		if (oldValue === newValue) return;
+		let audit = _.get(Memory, ["ai", "authorityAudit"], []);
+		if (!_.isArray(audit)) audit = [];
+		audit.push({
+			timestamp: Date.now(), tick: _.get(Game, "time", 0), authority: authority,
+			oldValue: oldValue === undefined ? null : oldValue,
+			newValue: newValue, source: source, actor: actor, reason: reason || null
+		});
+		if (audit.length > 100) audit.splice(0, audit.length - 100);
+		_.set(Memory, ["ai", "authorityAudit"], audit);
+	},
+
+	_auditUnattributedAuthorityChanges: function () {
+		let current = this._authorityValues();
+		let previous = _.get(Memory, ["ai", "authoritySnapshot"]);
+		if (!_.isObject(previous)) {
+			_.each(current, (value, key) => this._recordAuthorityChange(key, undefined, value,
+				"MEMORY_INITIALIZATION", "SYSTEM", "Authority baseline initialized or migrated"));
+		} else {
+			_.each(current, (value, key) => {
+				if (_.has(previous, key) && previous[key] !== value)
+					this._recordAuthorityChange(key, previous[key], value, "UNATTRIBUTED_MEMORY_CHANGE", "SYSTEM",
+						"Authority changed outside an audited commander or console setter");
+			});
+		}
+		_.set(Memory, ["ai", "authoritySnapshot"], _.cloneDeep(current));
+	},
+
+	setAuthorityValue: function (authority, value, source, actor, reason) {
+		let path = authority === "mode" ? ["ai", "mode"] : ["ai", "policy", authority];
+		let oldValue = _.get(Memory, path);
+		_.set(Memory, path, value);
+		this._recordAuthorityChange(authority, oldValue, value, source, actor, reason);
+		_.set(Memory, ["ai", "authoritySnapshot"], this._authorityValues());
 	},
 
 	_default: function (path, value, validator) {
@@ -274,6 +341,17 @@ global.AIInterface = {
 			let colony = _.get(Game, ["rooms", _.get(site, "colony")]);
 			if (!colony || _.get(colony, ["controller", "my"], false) !== true)
 				return `${order.action} remote colony is not owned and visible`;
+		}
+		if (_.includes(["PAUSE_REMOTE_MINING", "RESUME_REMOTE_MINING"], order.action)) {
+			if (keys.length !== 1 || !_.has(order.parameters, "room") || !this._isRoomName(order.parameters.room))
+				return `${order.action} requires one valid remote room`;
+			let site = _.get(Memory, ["sites", "mining", order.parameters.room]);
+			if (!site || _.get(site, "colony") === order.parameters.room)
+				return `${order.action} target is not an existing remote mining room`;
+			if (order.action === "PAUSE_REMOTE_MINING" && _.get(site, "ai_paused", false) === true)
+				return `${order.parameters.room} is already paused`;
+			if (order.action === "RESUME_REMOTE_MINING" && _.get(site, "ai_paused", false) !== true)
+				return `${order.parameters.room} is not paused`;
 		}
 		if (_.includes(["START_REMOTE_MINING", "COLONIZE_ROOM"], order.action)) {
 			let expectedKeys = order.action === "START_REMOTE_MINING" ? ["origin", "target"] : ["origin", "target", "layout"];
@@ -496,8 +574,15 @@ global.AIInterface = {
 			"ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS"
 		], order.action) && !_.get(Memory, ["ai", "policy", "allowRemoteMaintenance"], false))
 			return "Existing remote maintenance is not authorized by policy";
+		if (_.includes(["PAUSE_REMOTE_MINING", "RESUME_REMOTE_MINING"], order.action)
+			&& !_.get(Memory, ["ai", "policy", "allowRemotePausing"], true))
+			return "Temporary remote load shedding is not authorized by policy";
 		if (order.action === "START_REMOTE_MINING" && !_.get(Memory, ["ai", "policy", "allowNewRemotes"], false))
 			return "New remote establishment is not authorized by policy";
+		let duplicateRemoteStart = order.action === "START_REMOTE_MINING" && _.has(Memory, ["sites", "mining", _.get(order, ["parameters", "target"])]);
+		if (!duplicateRemoteStart && _.includes(["START_REMOTE_MINING", "COLONIZE_ROOM"], order.action)
+			&& _.includes(["OVEREXTENDED", "CRITICAL"], _.get(Memory, ["ai", "strategy", "empireLoad", "state"])))
+			return `Empire load ${_.get(Memory, ["ai", "strategy", "empireLoad", "state"])} vetoes growth`;
 		if (order.action === "COLONIZE_ROOM" && !_.get(Memory, ["ai", "policy", "allowColonization"], false))
 			return "Permanent colonization is not authorized by policy";
 		if (order.expiresTick < Game.time)
@@ -526,18 +611,19 @@ global.AIInterface = {
 			let remotes = order.parameters.remoteMaintenance;
 			let newRemotes = _.get(order.parameters, "newRemotes", "OFF");
 			let colonization = _.get(order.parameters, "colonization", "OFF");
-			_.set(Memory, ["ai", "policy", "allowScouting"], scouting !== "OFF");
-			_.set(Memory, ["ai", "policy", "autoScouting"], scouting === "AUTO");
-			_.set(Memory, ["ai", "policy", "allowRemoteMaintenance"], remotes !== "OFF");
-			_.set(Memory, ["ai", "policy", "autoRemoteMaintenance"], remotes === "AUTO");
-			_.set(Memory, ["ai", "policy", "allowNewRemotes"], newRemotes !== "OFF");
-			_.set(Memory, ["ai", "policy", "autoNewRemotes"], newRemotes === "AUTO");
-			_.set(Memory, ["ai", "policy", "allowColonization"], colonization !== "OFF");
-			_.set(Memory, ["ai", "policy", "autoColonization"], colonization === "AUTO");
+			let reason = _.get(order, "reason", "Commander authority order");
+			this.setAuthorityValue("allowScouting", scouting !== "OFF", "COMMANDER_ORDER", "COMMANDER", reason);
+			this.setAuthorityValue("autoScouting", scouting === "AUTO", "COMMANDER_ORDER", "COMMANDER", reason);
+			this.setAuthorityValue("allowRemoteMaintenance", remotes !== "OFF", "COMMANDER_ORDER", "COMMANDER", reason);
+			this.setAuthorityValue("autoRemoteMaintenance", remotes === "AUTO", "COMMANDER_ORDER", "COMMANDER", reason);
+			this.setAuthorityValue("allowNewRemotes", newRemotes !== "OFF", "COMMANDER_ORDER", "COMMANDER", reason);
+			this.setAuthorityValue("autoNewRemotes", newRemotes === "AUTO", "COMMANDER_ORDER", "COMMANDER", reason);
+			this.setAuthorityValue("allowColonization", colonization !== "OFF", "COMMANDER_ORDER", "COMMANDER", reason);
+			this.setAuthorityValue("autoColonization", colonization === "AUTO", "COMMANDER_ORDER", "COMMANDER", reason);
 			return `Operational authority set: scouting=${scouting}, remoteMaintenance=${remotes}, newRemotes=${newRemotes}, colonization=${colonization}`;
 		}
 		if (order.action === "SET_EXECUTION_MODE") {
-			_.set(Memory, ["ai", "mode"], order.parameters.mode);
+			this.setAuthorityValue("mode", order.parameters.mode, "COMMANDER_ORDER", "COMMANDER", _.get(order, "reason"));
 			return `Commander mode set to ${order.parameters.mode}`;
 		}
 		if (order.action === "SCOUT_ROOM")
@@ -547,11 +633,40 @@ global.AIInterface = {
 			"ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS"
 		], order.action))
 			return this._delegateRemoteObjective(order);
+		if (order.action === "PAUSE_REMOTE_MINING")
+			return this._pauseRemoteMining(order);
+		if (order.action === "RESUME_REMOTE_MINING")
+			return this._resumeRemoteMining(order);
 		if (order.action === "START_REMOTE_MINING")
 			return this._startRemoteMining(order);
 		if (order.action === "COLONIZE_ROOM")
 			return this._colonizeRoom(order);
 		throw new Error("Unsupported action reached executor");
+	},
+
+	_pauseRemoteMining: function (order) {
+		let roomName = order.parameters.room;
+		let site = _.get(Memory, ["sites", "mining", roomName]);
+		let load = _.cloneDeep(_.get(Memory, ["ai", "strategy", "empireLoad"], {}));
+		site.ai_paused = true;
+		site.ai_pause = {
+			state: "PAUSED", pausedTick: Game.time, reason: _.get(order, "reason", "temporary load shedding"),
+			orderId: order.id, baseline: load, recoverySinceTick: null
+		};
+		if (_.has(Memory, ["ai", "remoteObjectives", roomName])) delete Memory.ai.remoteObjectives[roomName];
+		return `Remote mining in ${roomName} temporarily paused; configuration and history preserved`;
+	},
+
+	_resumeRemoteMining: function (order) {
+		let roomName = order.parameters.room;
+		let site = _.get(Memory, ["sites", "mining", roomName]);
+		site.ai_paused = false;
+		let pause = _.get(site, "ai_pause", {});
+		pause.state = "REACTIVATING";
+		pause.resumedTick = Game.time;
+		pause.resumeOrderId = order.id;
+		site.ai_pause = pause;
+		return `Remote mining in ${roomName} resumed from preserved configuration`;
 	},
 
 	_startRemoteMining: function (order) {
@@ -1101,8 +1216,10 @@ global.AIInterface = {
 			`ENSURE_REMOTE_RESERVATION: ${policy.allowRemoteMaintenance ? (policy.autoRemoteMaintenance ? "AUTO" : "MANUAL") : "DISABLED"}`,
 			`ENSURE_REMOTE_INFRASTRUCTURE: ${policy.allowRemoteMaintenance ? (policy.autoRemoteMaintenance ? "AUTO" : "MANUAL") : "DISABLED"}`,
 			`REBALANCE_REMOTE_LOGISTICS: ${policy.allowRemoteMaintenance ? (policy.autoRemoteMaintenance ? "AUTO" : "MANUAL") : "DISABLED"}`,
+			`PAUSE_REMOTE_MINING: ${policy.allowRemotePausing ? (policy.autoRemotePausing ? "AUTO" : "MANUAL") : "DISABLED"}`,
+			`RESUME_REMOTE_MINING: ${policy.allowRemotePausing ? (policy.autoRemotePausing ? "AUTO" : "MANUAL") : "DISABLED"}`,
 			`START_REMOTE_MINING: ${policy.allowNewRemotes ? (policy.autoNewRemotes ? "AUTO" : "MANUAL") : "DISABLED"}`,
-			"STOP_REMOTE_MINING: HUMAN GATED",
+			"STOP_REMOTE_MINING: UNSUPPORTED / HUMAN GATED",
 			`COLONIZE_ROOM: ${policy.allowColonization ? (policy.autoColonization ? "AUTO" : "MANUAL") : "DISABLED"}`,
 			"ATTACK_ROOM: DISABLED", "MARKET: DISABLED", "PRODUCTION: DISABLED"
 		].join("\n");

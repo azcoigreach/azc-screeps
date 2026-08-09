@@ -67,6 +67,27 @@ class AutonomyReportTests(unittest.TestCase):
         self.assertIsNone(AutonomyController(self.history, transport).run(telemetry))
         self.assertEqual(transport.sent, [])
 
+    def test_critical_empire_pauses_only_top_ranked_remote(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"]["autoRemotePausing"] = True
+        payload["empireLoad"] = {
+            "state": "CRITICAL", "growthVeto": True,
+            "homePopulation": {"satisfaction": 18.75, "criticalSatisfaction": 40},
+            "spawnPressure": {"queueDepth": 5},
+        }
+        payload["remoteDrawdownRanking"] = [
+            {"room": "W1N2", "score": 90, "health": "FAILING"},
+        ]
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        order = AutonomyController(self.history, transport).run(telemetry)
+        self.assertIsNotNone(order)
+        self.assertEqual(order.action, "PAUSE_REMOTE_MINING")
+        self.assertEqual(order.parameters, {"room": "W1N2"})
+        self.assertEqual(len(transport.sent), 1)
+        self.assertEqual(self.history.recent_operations()[0]["action"], "PAUSE_REMOTE_MINING")
+
     def test_autonomous_scouting_is_bounded_and_resolves_unknown_intel(self) -> None:
         payload = telemetry_payload()
         payload["authority"]["mode"] = "execute"

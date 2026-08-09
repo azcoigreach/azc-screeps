@@ -345,6 +345,8 @@ class RemoteMiningOperation(StrictModel):
     colony: str | None
     configured: bool
     active: bool
+    paused: bool = False
+    pause: dict[str, Any] | None = None
     hasKeepers: bool
     visible: bool
     lastSeenTick: int | None
@@ -363,6 +365,10 @@ class RemoteMiningOperation(StrictModel):
     diagnostics: list[RemoteDiagnostic]
     objectives: list[str]
     stopLoss: "StopLossState" = Field(default_factory=lambda: StopLossState())
+    lifecycleState: Literal[
+        "ACTIVE", "DEGRADED", "FAILING", "PAUSE_RECOMMENDED", "PAUSED",
+        "RECOVERY_CANDIDATE", "REACTIVATING", "ABANDON_RECOMMENDED"
+    ] = "ACTIVE"
 
 
 class StopLossState(StrictModel):
@@ -478,6 +484,7 @@ class RoomIntel(StrictModel):
     reinforcementRoutes: list[list[str]] = Field(default_factory=list)
     routeStatus: Literal["available", "no_path", "protected_boundary", "unknown", "unavailable"]
     intelAgeTicks: int
+    staleAfterTicks: int | None = None
     stale: bool
 
 
@@ -494,6 +501,10 @@ class IntelligenceState(StrictModel):
     knownRooms: list[RoomIntel]
     unknownRooms: list[str]
     staleRooms: list[str]
+    reachableFrontier: list[str] = Field(default_factory=list)
+    blockedFrontier: list[str] = Field(default_factory=list)
+    staleFrontier: list[str] = Field(default_factory=list)
+    highValueFrontier: list[str] = Field(default_factory=list)
     protectionByRoom: dict[str, RoomProtection] = Field(default_factory=dict)
     candidateSets: dict[str, dict[str, list[str]]] = Field(default_factory=dict)
     territoryGraph: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -607,6 +618,8 @@ class ExecutionAuthority(StrictModel):
     expansion: bool
     remoteMaintenance: bool
     autoRemoteMaintenance: bool
+    remotePausing: bool = True
+    autoRemotePausing: bool = False
     remoteMiningChanges: bool
     newRemotes: bool = False
     autoNewRemotes: bool = False
@@ -623,7 +636,7 @@ class AuthorityState(StrictModel):
     allowedActions: list[Literal[
         "NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SET_OPERATIONAL_AUTHORITY", "SET_EXECUTION_MODE", "SCOUT_ROOM", "REASSESS_REMOTE",
         "ENSURE_REMOTE_RESERVATION", "ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS",
-        "START_REMOTE_MINING", "COLONIZE_ROOM"
+        "PAUSE_REMOTE_MINING", "RESUME_REMOTE_MINING", "START_REMOTE_MINING", "COLONIZE_ROOM"
     ]]
     execution: ExecutionAuthority
     matrix: dict[str, dict[str, bool]]
@@ -635,7 +648,7 @@ class ObserverMetrics(StrictModel):
 
 
 class Telemetry(StrictModel):
-    schemaVersion: Literal[3, 4, 5, 6]
+    schemaVersion: Literal[3, 4, 5, 6, 7]
     tick: int
     shard: str
     cpu: CPUState
@@ -650,9 +663,12 @@ class Telemetry(StrictModel):
         status="INSUFFICIENT_INTEL", reasons=["NO_PHASE5_DATA"], recommendedRoom=None,
         origin=None, claimSlots=0, spawnCapacity="CONSTRAINED"
     ))
+    empireLoad: dict[str, Any] = Field(default_factory=lambda: {"state": "HEALTHY", "growthVeto": False, "remoteRanking": []})
+    remoteDrawdownRanking: list[dict[str, Any]] = Field(default_factory=list)
     playerHistory: list[PlayerHistory] = Field(default_factory=list)
     combatAssessments: list[dict[str, Any]] = Field(default_factory=list)
     authority: AuthorityState
+    authorityAudit: list[dict[str, Any]] = Field(default_factory=list)
     alerts: list[str]
     observer: ObserverMetrics
 
@@ -725,7 +741,7 @@ class StrategicOrder(StrictModel):
     action: Literal[
         "NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SET_OPERATIONAL_AUTHORITY", "SET_EXECUTION_MODE", "SCOUT_ROOM", "REASSESS_REMOTE",
         "ENSURE_REMOTE_RESERVATION", "ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS",
-        "START_REMOTE_MINING", "COLONIZE_ROOM"
+        "PAUSE_REMOTE_MINING", "RESUME_REMOTE_MINING", "START_REMOTE_MINING", "COLONIZE_ROOM"
     ]
     parameters: dict[str, Any]
     reason: str

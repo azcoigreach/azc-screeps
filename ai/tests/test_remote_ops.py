@@ -7,11 +7,29 @@ from pathlib import Path
 from commander.history import HistoryStore
 from commander.remote_ops import RemoteEconomics, evaluate_operation, remote_snapshot
 from commander.schemas import Telemetry
+from commander.schemas import StrategicOrder
 
 from helpers import telemetry_payload
 
 
 class RemoteOperationTests(unittest.TestCase):
+    def test_expired_awaiting_execution_operation_is_reconciled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            history = HistoryStore(Path(directory) / "db.sqlite")
+            order = StrategicOrder(
+                schemaVersion=1, id="expired-command", createdTick=1000, expiresTick=1100,
+                action="ENSURE_REMOTE_RESERVATION", parameters={"room": "W1N2"}, reason="test",
+            )
+            history.record_command(order, "sent")
+            history.create_operation(
+                "expired-op", order.id, "reservation", "W1N2", order.action, "test", None,
+                1000, {}, "reservation improves", 1500,
+            )
+            self.assertEqual(history.reconcile_operations(1200), 1)
+            operation = history.recent_operations()[0]
+            self.assertEqual(operation["outcome"], "EXPIRED")
+            self.assertEqual(history.recent_commands()[0]["state"], "expired")
+            history.close()
     def test_queued_operation_is_not_evaluated_before_command_execution(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             history = HistoryStore(Path(directory) / "db.sqlite")

@@ -14,6 +14,8 @@ REMOTE_ACTIONS = frozenset({
     "ENSURE_REMOTE_RESERVATION",
     "ENSURE_REMOTE_INFRASTRUCTURE",
     "REBALANCE_REMOTE_LOGISTICS",
+    "PAUSE_REMOTE_MINING",
+    "RESUME_REMOTE_MINING",
 })
 
 
@@ -52,10 +54,10 @@ class RemoteEconomics:
             if window is not None else None
         )
         partial = False
-        if baseline_row is None or baseline_row["telemetry"].get("schemaVersion") not in (3, 4, 5, 6):
+        if baseline_row is None or baseline_row["telemetry"].get("schemaVersion") not in (3, 4, 5, 6, 7):
             rows = [
                 row for row in self.history.observations_since(0 if window is None else telemetry.tick - window)
-                if row["telemetry"].get("schemaVersion") in (3, 4, 5, 6)
+                if row["telemetry"].get("schemaVersion") in (3, 4, 5, 6, 7)
             ]
             baseline_row = rows[0] if rows else None
             partial = True
@@ -68,7 +70,7 @@ class RemoteEconomics:
         span = max(0, telemetry.tick - int(baseline_row["screeps_tick"]))
         rows = [
             row for row in self.history.observations_since(int(baseline_row["screeps_tick"]))
-            if row["telemetry"].get("schemaVersion") in (3, 4, 5, 6)
+            if row["telemetry"].get("schemaVersion") in (3, 4, 5, 6, 7)
             and row["screeps_tick"] <= telemetry.tick
         ]
         samples = [item for row in rows if (item := self._remote(row["telemetry"], remote.room))]
@@ -234,6 +236,9 @@ def remote_snapshot(telemetry: Telemetry, room: str) -> dict[str, Any] | None:
             + remote.reservation.reserverSpawning
             + remote.reservation.reserverQueued
         ),
+        "reserverContinuity": remote.reservation.continuity or remote.continuity.get("reserver", {}),
+        "paused": remote.paused,
+        "lifecycleState": remote.lifecycleState,
         "populationState": remote.population.state,
         "diagnostics": remote.reasons,
     }
@@ -283,6 +288,32 @@ def evaluate_operation(operation: dict[str, Any], telemetry: Telemetry) -> tuple
         return "INCONCLUSIVE", {}, "The configured remote is absent from current telemetry."
     baseline = operation["baseline"]
     action = operation["action"]
+    if action == "PAUSE_REMOTE_MINING":
+        if current.get("paused") and current.get("lifecycleState") in {"PAUSED", "RECOVERY_CANDIDATE"}:
+            before_load = baseline.get("empireLoad") or {}
+            after_load = telemetry.empireLoad
+            before_home = before_load.get("homePopulation", {})
+            after_home = after_load.get("homePopulation", {})
+            before_spawn = before_load.get("spawnPressure", {})
+            after_spawn = after_load.get("spawnPressure", {})
+            alive_gain = int(after_home.get("alive") or 0) - int(before_home.get("alive") or 0)
+            queue_reduction = int(before_spawn.get("queueDepth") or 0) - int(after_spawn.get("queueDepth") or 0)
+            wait_reduction = int(before_spawn.get("oldestHomeDemandTicks") or 0) - int(after_spawn.get("oldestHomeDemandTicks") or 0)
+            current["loadSheddingOutcome"] = {
+                "homeAliveGain": alive_gain, "spawnQueueReduction": queue_reduction,
+                "oldestHomeDemandReduction": wait_reduction,
+                "beforeLoad": before_load.get("state"), "afterLoad": after_load.get("state"),
+            }
+            if alive_gain > 0 or queue_reduction > 0 or wait_reduction > 0:
+                return "SUCCESS", current, "The remote remained paused and deterministic home population or spawn-pressure metrics improved."
+            if before_load and after_load.get("remotePressure", {}).get("desired", 0) < before_load.get("remotePressure", {}).get("desired", 0):
+                return "PARTIAL_SUCCESS", current, "Remote demand fell after pausing, but home recovery is not yet measurable."
+            return "NO_EFFECT", current, "The remote is paused, but the evaluation window has not yet produced measurable home recovery."
+        return "NO_EFFECT", current, "The remote is still active after the pause evaluation window."
+    if action == "RESUME_REMOTE_MINING":
+        if not current.get("paused") and current.get("lifecycleState") in {"REACTIVATING", "ACTIVE", "DEGRADED", "FAILING"}:
+            return "SUCCESS", current, "The preserved remote configuration resumed ordinary operation."
+        return "NO_EFFECT", current, "The remote remains paused after the resume evaluation window."
     if action == "REBALANCE_REMOTE_LOGISTICS":
         before = int(baseline.get("energyWaiting") or 0)
         after = int(current["energyWaiting"])
@@ -310,8 +341,14 @@ def evaluate_operation(operation: dict[str, Any], telemetry: Telemetry) -> tuple
         after = int(current.get("reservationTicks") or 0)
         if current["reservationRelation"] == "SELF" and after > before:
             return "SUCCESS", current, "The self reservation increased during the evaluation window."
-        if int(current["reserverCapacity"]) > int(baseline.get("reserverCapacity") or 0):
-            return "PARTIAL_SUCCESS", current, "Reserver capacity was queued or added, but reserve ticks have not risen yet."
+        continuity = current.get("reserverContinuity") or {}
+        if (
+            int(current["reserverCapacity"]) > int(baseline.get("reserverCapacity") or 0)
+            and int(continuity.get("replacementNeeded") or 0) == 0
+            and (int(continuity.get("queued") or 0) > 0 or int(continuity.get("spawning") or 0) > 0
+                 or int(continuity.get("viable") or 0) > 0)
+        ):
+            return "PARTIAL_SUCCESS", current, "A timed viable, spawning, or queued reserver now covers the calculated spawn-and-travel lead window."
         return "NO_EFFECT", current, "Neither reserver capacity nor self-reservation ticks improved."
     if action == "REASSESS_REMOTE":
         if current["tick"] > int(baseline.get("tick") or 0):

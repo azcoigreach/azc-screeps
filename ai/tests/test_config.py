@@ -52,9 +52,9 @@ class ConfigTests(unittest.TestCase):
                 self.assertEqual(config.openai_timeout_seconds, 120.0)
                 self.assertEqual(config.heartbeat_interval_seconds, 120.0)
                 self.assertEqual(config.rate_limit_safety_seconds, 2.0)
-                self.assertEqual(config.review_min_interval_seconds, 900.0)
-                self.assertEqual(config.review_max_idle_interval_seconds, 3600.0)
-                self.assertEqual(config.review_event_debounce_seconds, 120.0)
+                self.assertEqual(config.review_min_interval_seconds, 2700.0)
+                self.assertEqual(config.review_max_idle_interval_seconds, 14400.0)
+                self.assertEqual(config.review_event_debounce_seconds, 180.0)
                 self.assertEqual(config.daily_cost_warning_usd, 2.0)
                 self.assertNotIn("OPENAI_API_KEY", os.environ)
 

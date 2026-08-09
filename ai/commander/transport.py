@@ -85,6 +85,7 @@ class CommanderTransport:
 
         self._expire_local_commands()
         if self.health.telemetry is not None:
+            self.history.reconcile_operations(self.health.telemetry.tick)
             for operation in self.history.due_operations(self.health.telemetry.tick):
                 outcome, result, reason = evaluate_operation(operation, self.health.telemetry)
                 self.history.complete_operation(operation["operation_id"], self.health.telemetry.tick, outcome, result, reason)
@@ -197,6 +198,7 @@ class CommanderTransport:
         if action in {
             "REASSESS_REMOTE", "ENSURE_REMOTE_RESERVATION",
             "ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS",
+            "PAUSE_REMOTE_MINING", "RESUME_REMOTE_MINING",
         }:
             room = params.get("room")
             if set(params) != {"room"} or not self._room_name(room):

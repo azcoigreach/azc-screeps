@@ -36,6 +36,11 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
         "remote abandonment OFF; offensive combat OFF.", "",
         "Population and energy",
     ]
+    load = telemetry.empireLoad
+    lines.append(
+        f"Empire load: {load.get('state', 'UNKNOWN')}; growth veto "
+        f"{'ON' if load.get('growthVeto') else 'OFF'}; reasons {load.get('reasons') or 'none'}."
+    )
     for room, colony in telemetry.colonies.items():
         lines.append(
             f"- {room}: RCL {colony.controller.rcl} ({colony.controller.progressPercent:.1f}%); "
@@ -58,11 +63,24 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
             f"(lead {continuity.get('leadTicks', 'unknown')}); "
             f"stop-loss {remote.stopLoss.state}."
         )
+    if telemetry.remoteDrawdownRanking:
+        lines.extend(["", "Remote drawdown ranking"])
+        for index, item in enumerate(telemetry.remoteDrawdownRanking, 1):
+            lines.append(
+                f"{index}. {item.get('room')}: score {item.get('score')}; {item.get('health')}; "
+                f"staffing deficit {item.get('staffingDeficit')}; spawn burden {item.get('spawnBurden')}; "
+                f"establishment failed {item.get('establishmentFailed')}; recommendation {item.get('recommendation')}."
+            )
     lines.extend(["", "Territorial intelligence"])
     lines.append(
         f"Known {len(telemetry.intelligence.knownRooms)}; unknown "
         f"{', '.join(telemetry.intelligence.unknownRooms) or 'none'}; stale "
         f"{', '.join(telemetry.intelligence.staleRooms) or 'none'}."
+    )
+    lines.append(
+        f"Frontier: reachable {', '.join(telemetry.intelligence.reachableFrontier) or 'none'}; "
+        f"blocked {', '.join(telemetry.intelligence.blockedFrontier) or 'none'}; "
+        f"high-value {', '.join(telemetry.intelligence.highValueFrontier) or 'none'}."
     )
     current_set = telemetry.intelligence.candidateSets.get("CURRENTLY_REACHABLE", {})
     post_set = telemetry.intelligence.candidateSets.get("POST_PROTECTION", {})

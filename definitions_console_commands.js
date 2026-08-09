@@ -91,7 +91,7 @@
 			AIInterface.initMemory();
 			if (mode !== "observe" && mode !== "execute")
 				return `[AI] Error: mode must be "observe" or "execute".`;
-			_.set(Memory, ["ai", "mode"], mode);
+			AIInterface.setAuthorityValue("mode", mode, "HUMAN_CONSOLE", "HUMAN", "ai.mode console command");
 			return `[AI] Commander mode set to ${mode}.`;
 		};
 
@@ -110,7 +110,7 @@
 			AIInterface.initMemory();
 			if (!_.isBoolean(allowed))
 				return `[AI] Error: scouting policy must be true or false.`;
-			_.set(Memory, ["ai", "policy", "allowScouting"], allowed);
+			AIInterface.setAuthorityValue("allowScouting", allowed, "HUMAN_CONSOLE", "HUMAN", "ai.scouting console command");
 			return `[AI] Scouting policy ${allowed ? "enabled" : "disabled"} by human operator.`;
 		};
 
@@ -119,7 +119,7 @@
 			AIInterface.initMemory();
 			if (!_.isBoolean(allowed))
 				return `[AI] Error: automatic scouting policy must be true or false.`;
-			_.set(Memory, ["ai", "policy", "autoScouting"], allowed);
+			AIInterface.setAuthorityValue("autoScouting", allowed, "HUMAN_CONSOLE", "HUMAN", "ai.autoScouting console command");
 			return `[AI] Automatic scouting ${allowed ? "enabled" : "disabled"} by human operator.`;
 		};
 
@@ -130,7 +130,7 @@
 				return AIInterface.consoleRemoteOps();
 			if (!_.isBoolean(allowed))
 				return `[AI] Error: remote maintenance policy must be true or false.`;
-			_.set(Memory, ["ai", "policy", "allowRemoteMaintenance"], allowed);
+			AIInterface.setAuthorityValue("allowRemoteMaintenance", allowed, "HUMAN_CONSOLE", "HUMAN", "ai.remoteOps console command");
 			return `[AI] Existing remote maintenance ${allowed ? "enabled" : "disabled"} by human operator.`;
 		};
 
@@ -139,7 +139,7 @@
 			AIInterface.initMemory();
 			if (!_.isBoolean(allowed))
 				return `[AI] Error: automatic remote maintenance policy must be true or false.`;
-			_.set(Memory, ["ai", "policy", "autoRemoteMaintenance"], allowed);
+			AIInterface.setAuthorityValue("autoRemoteMaintenance", allowed, "HUMAN_CONSOLE", "HUMAN", "ai.autoRemoteOps console command");
 			return `[AI] Automatic existing-remote maintenance ${allowed ? "enabled" : "disabled"} by human operator.`;
 		};
 
@@ -149,32 +149,32 @@
 		help_ai.push('ai.newRemotes(true|false) - Allow or deny new remote establishment');
 		ai.newRemotes = function (allowed) {
 			if (!_.isBoolean(allowed)) return "[AI] Error: new remote policy must be true or false.";
-			_.set(Memory, ["ai", "policy", "allowNewRemotes"], allowed);
-			if (!allowed) _.set(Memory, ["ai", "policy", "autoNewRemotes"], false);
+			AIInterface.setAuthorityValue("allowNewRemotes", allowed, "HUMAN_CONSOLE", "HUMAN", "ai.newRemotes console command");
+			if (!allowed) AIInterface.setAuthorityValue("autoNewRemotes", false, "HUMAN_CONSOLE", "HUMAN", "ai.newRemotes disabled");
 			return `[AI] New remote establishment ${allowed ? "enabled" : "disabled"} by human operator.`;
 		};
 
 		help_ai.push('ai.autoNewRemotes(true|false) - Allow one-at-a-time strategist remote expansion');
 		ai.autoNewRemotes = function (allowed) {
 			if (!_.isBoolean(allowed)) return "[AI] Error: automatic new remote policy must be true or false.";
-			_.set(Memory, ["ai", "policy", "allowNewRemotes"], allowed);
-			_.set(Memory, ["ai", "policy", "autoNewRemotes"], allowed);
+			AIInterface.setAuthorityValue("allowNewRemotes", allowed, "HUMAN_CONSOLE", "HUMAN", "ai.autoNewRemotes console command");
+			AIInterface.setAuthorityValue("autoNewRemotes", allowed, "HUMAN_CONSOLE", "HUMAN", "ai.autoNewRemotes console command");
 			return `[AI] Automatic new remote establishment ${allowed ? "enabled" : "disabled"} by human operator.`;
 		};
 
 		help_ai.push('ai.colonization(true|false) - Allow or deny guarded manual colonization');
 		ai.colonization = function (allowed) {
 			if (!_.isBoolean(allowed)) return "[AI] Error: colonization policy must be true or false.";
-			_.set(Memory, ["ai", "policy", "allowColonization"], allowed);
-			_.set(Memory, ["ai", "policy", "autoColonization"], false);
+			AIInterface.setAuthorityValue("allowColonization", allowed, "HUMAN_CONSOLE", "HUMAN", "ai.colonization console command");
+			AIInterface.setAuthorityValue("autoColonization", false, "HUMAN_CONSOLE", "HUMAN", "manual colonization never enables autonomy");
 			return `[AI] Colonization ${allowed ? "enabled" : "disabled"} by human operator.`;
 		};
 
 		help_ai.push('ai.autoColonization(true|false) - Allow one-at-a-time automatic permanent colonization');
 		ai.autoColonization = function (allowed) {
 			if (!_.isBoolean(allowed)) return "[AI] Error: automatic colonization policy must be true or false.";
-			_.set(Memory, ["ai", "policy", "allowColonization"], allowed);
-			_.set(Memory, ["ai", "policy", "autoColonization"], allowed);
+			AIInterface.setAuthorityValue("allowColonization", allowed, "HUMAN_CONSOLE", "HUMAN", "ai.autoColonization console command");
+			AIInterface.setAuthorityValue("autoColonization", allowed, "HUMAN_CONSOLE", "HUMAN", "ai.autoColonization console command");
 			return `[AI] Automatic permanent colonization ${allowed ? "enabled" : "disabled"} by human operator.`;
 		};
 

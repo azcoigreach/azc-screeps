@@ -141,13 +141,13 @@ Population_Mining = {
          burrower: { level: 5, amount: 1, body: "burrower_at" },
          carrier: { level: 4, amount: 2, body: "carrier_at" },
          multirole: { level: 4, amount: 1, body: "worker_at" },
-         reserver: { level: 4, amount: 2, body: "reserver_at" }
+         reserver: { level: 5, amount: 1, body: "reserver_at" }
      },
      6: {
          burrower: { level: 6, amount: 1, body: "burrower_at" },
          carrier: { level: 5, amount: 2, body: "carrier_at" },
          multirole: { level: 4, amount: 1, body: "worker_at" },
-         reserver: { level: 4, amount: 2, body: "reserver_at" }
+         reserver: { level: 5, amount: 1, body: "reserver_at" }
      },
      7: {
          burrower: { level: 7, amount: 1, body: "burrower_at" },
@@ -185,13 +185,13 @@ Population_Mining = {
          burrower: { level: 5, amount: 1, body: "burrower_at" },
          carrier: { level: 4, amount: 3, body: "carrier_at" },
          multirole: { level: 4, amount: 1, body: "worker_at" },
-         reserver: { level: 4, amount: 2, body: "reserver_at" }
+         reserver: { level: 5, amount: 1, body: "reserver_at" }
      },
      6: {
          burrower: { level: 6, amount: 1, body: "burrower_at" },
          carrier: { level: 5, amount: 3, body: "carrier_at" },
          multirole: { level: 4, amount: 1, body: "worker_at" },
-         reserver: { level: 4, amount: 2, body: "reserver_at" }
+         reserver: { level: 5, amount: 1, body: "reserver_at" }
      },
      7: {
          burrower: { level: 7, amount: 1, body: "burrower_at" },

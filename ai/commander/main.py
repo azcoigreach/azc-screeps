@@ -62,6 +62,10 @@ def parser() -> argparse.ArgumentParser:
     start_remote = commands.add_parser("start-remote", help="queue guarded START_REMOTE_MINING")
     start_remote.add_argument("target")
     start_remote.add_argument("origin")
+    pause_remote = commands.add_parser("pause-remote", help="temporarily pause remote mining while preserving configuration")
+    pause_remote.add_argument("room")
+    resume_remote = commands.add_parser("resume-remote", help="resume a preserved paused remote")
+    resume_remote.add_argument("room")
     colonize = commands.add_parser("colonize", help="queue guarded COLONIZE_ROOM (human authority still required)")
     colonize.add_argument("target")
     colonize.add_argument("origin")
@@ -137,6 +141,7 @@ def display_status(transport: CommanderTransport) -> str:
             f"Existing remote maintenance: {'ON' if execution.autoRemoteMaintenance else 'OFF'}",
             f"New remote establishment: {'ON' if execution.autoNewRemotes else 'OFF'}",
             f"Permanent colonization: {'AUTO' if execution.autoColonization else 'MANUAL' if execution.colonization else 'OFF'}",
+            f"Temporary remote pausing: {'AUTO' if execution.autoRemotePausing else 'MANUAL' if execution.remotePausing else 'OFF'}",
             f"Remote abandonment: {'ON' if execution.remoteAbandonment else 'OFF / HUMAN GATED'}",
             f"Offensive combat: {'ON' if execution.offensiveCombat else 'OFF'}",
             f"Market authority: {'ON' if execution.market else 'OFF'}",
@@ -381,6 +386,7 @@ def show_remotes(history: HistoryStore, telemetry: Telemetry) -> None:
             f"({remote.population.aliveTotal}/{remote.population.desiredTotal}, "
             f"queued {remote.population.queuedTotal})"
         )
+        print(f"Lifecycle: {remote.lifecycleState}; stop-loss {remote.stopLoss.state}; paused={'yes' if remote.paused else 'no'}")
         reservation = remote.reservation
         print(
             f"Reservation: {reservation.relation} "
@@ -626,6 +632,24 @@ def main(argv: list[str] | None = None) -> int:
                     "START_REMOTE_MINING", {"target": args.target, "origin": args.origin},
                     reason=f"Human-authorized Phase 5 remote establishment for {args.target}",
                 )
+            elif args.command in {"pause-remote", "resume-remote"}:
+                action = "PAUSE_REMOTE_MINING" if args.command == "pause-remote" else "RESUME_REMOTE_MINING"
+                baseline = remote_snapshot(health.telemetry, args.room) if health.telemetry else None
+                order = transport.send_safe_command(
+                    action, {"room": args.room},
+                    reason=(f"Human-authorized temporary remote load shedding for {args.room}"
+                        if action == "PAUSE_REMOTE_MINING" else f"Human-authorized remote recovery for {args.room}"),
+                )
+                if baseline is not None:
+                    baseline["empireLoad"] = health.telemetry.empireLoad
+                    baseline["drawdownRanking"] = health.telemetry.remoteDrawdownRanking
+                    history.create_operation(
+                        f"op-{order.id}", order.id, "empire load management", args.room, action,
+                        f"Temporary reversible remote lifecycle action for {args.room}", None,
+                        health.telemetry.tick, baseline,
+                        "home and aggregate spawn pressure should improve" if action == "PAUSE_REMOTE_MINING" else "remote should safely return to operation",
+                        health.telemetry.tick + (2000 if action == "PAUSE_REMOTE_MINING" else 3000),
+                    )
             elif args.command == "colonize":
                 order = transport.send_safe_command(
                     "COLONIZE_ROOM",

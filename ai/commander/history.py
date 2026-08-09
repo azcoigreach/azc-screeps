@@ -724,6 +724,40 @@ class HistoryStore:
             result.append(item)
         return result
 
+    def reconcile_operations(self, tick: int) -> int:
+        """Close impossible operation states from the durable command ledger."""
+        rows = self.connection.execute(
+            """
+            SELECT o.operation_id, o.command_id, o.created_tick, o.executed_tick,
+                   c.state AS command_state, c.expires_tick, c.acknowledgement_json
+            FROM operations o LEFT JOIN commands c ON c.command_id = o.command_id
+            WHERE o.outcome IS NULL
+            """
+        ).fetchall()
+        closed = 0
+        for row in rows:
+            state = row["command_state"]
+            outcome = reason = None
+            if state is None and tick - int(row["created_tick"]) > 2000:
+                outcome, reason = "INCONCLUSIVE", "Operation has no corresponding durable command ledger entry."
+            elif state in {"expired"} or (state in {"queued", "sent"} and row["expires_tick"] is not None and int(row["expires_tick"]) < tick):
+                outcome, reason = "EXPIRED", "Command expired before deterministic execution acknowledgement."
+                if state in {"queued", "sent"}:
+                    self.connection.execute("UPDATE commands SET state = ?, updated_at = ? WHERE command_id = ?", ("expired", utc_now(), row["command_id"]))
+            elif state in {"failed", "rejected"}:
+                outcome, reason = "FAILED", f"Command ledger entered terminal state {state}."
+            elif state == "suppressed":
+                outcome, reason = "CANCELLED", "Command was intentionally suppressed before execution."
+            elif state == "completed" and row["executed_tick"] is None:
+                ack = json.loads(row["acknowledgement_json"] or "{}")
+                executed = int(ack.get("completedTick") or ack.get("tick") or tick)
+                self.mark_operation_executed(row["command_id"], executed)
+            if outcome:
+                self.complete_operation(row["operation_id"], tick, outcome, {"commandState": state}, reason)
+                closed += 1
+        self.connection.commit()
+        return closed
+
     def complete_operation(
         self,
         operation_id: str,
@@ -780,7 +814,7 @@ class HistoryStore:
     def _journal_observation_changes(self, previous: dict[str, Any] | None, telemetry: Telemetry) -> None:
         current = telemetry.model_dump(by_alias=True)
         self._journal_phase6_changes(previous, current, telemetry.tick, telemetry.shard)
-        if previous is None or previous["telemetry"].get("schemaVersion") not in (3, 4, 5, 6):
+        if previous is None or previous["telemetry"].get("schemaVersion") not in (3, 4, 5, 6, 7):
             rooms = ", ".join(sorted(telemetry.colonies)) or "no owned rooms"
             self.append_journal(
                 telemetry.tick,

@@ -632,7 +632,7 @@ test("combat math uses tower falloff, active boosted parts, safe mode, and stale
 	delete global.BOOSTS;
 });
 
-test("telemetry schema v6 reports identity, capabilities, defense, territory, and exact byte size", function () {
+test("telemetry schema v7 reports identity, capabilities, defense, territory, load, and exact byte size", function () {
 	reset();
 	let structures = [
 		{ structureType: "spawn", my: true, spawning: null },
@@ -662,7 +662,7 @@ test("telemetry schema v6 reports identity, capabilities, defense, territory, an
 	Memory.rooms.W1N1 = { defense: { hostiles: [{ id: "enemy" }] } };
 	let serialized = AIObserver.serialize();
 	let snapshot = JSON.parse(serialized);
-	assert.strictEqual(snapshot.schemaVersion, 6);
+	assert.strictEqual(snapshot.schemaVersion, 7);
 	assert.strictEqual(snapshot.empire.player, "tester");
 	assert.strictEqual(snapshot.colonies.W1N1.controller.rcl, 5);
 	assert.strictEqual(snapshot.colonies.W1N1.energy.storageEnergy, 240000);
@@ -678,6 +678,7 @@ test("telemetry schema v6 reports identity, capabilities, defense, territory, an
 	assert.deepStrictEqual(snapshot.authority.execution, {
 		scouting: false, autoScouting: false, expansion: false,
 		remoteMaintenance: false, autoRemoteMaintenance: false, remoteMiningChanges: false,
+		remotePausing: true, autoRemotePausing: false,
 		newRemotes: false, autoNewRemotes: false, colonization: false,
 		autoColonization: false, remoteAbandonment: false,
 		market: false, production: false, offensiveCombat: false
@@ -1420,6 +1421,75 @@ test("status acknowledgements serialize to segment 92", function () {
 	assert.strictEqual(Memory.ai.orders.totals.completed, 1);
 	assert.deepStrictEqual(status.orders.activeOrders, []);
 	assert.strictEqual(status.orders.recentResults[0].id, "status-1");
+});
+
+test("human authority changes are attributed and colonization autonomy stays off", function () {
+	reset();
+	require("../definitions_console_commands");
+	Console.Init();
+	ai.colonization(true);
+	ai.autoColonization(false);
+	let changes = Memory.ai.authorityAudit.filter(function (entry) {
+		return entry.authority === "allowColonization" || entry.authority === "autoColonization";
+	});
+	assert.ok(changes.some(function (entry) { return entry.source === "HUMAN_CONSOLE" && entry.actor === "HUMAN"; }));
+	assert.strictEqual(Memory.ai.policy.autoColonization, false);
+});
+
+test("temporary remote pause and resume preserve configuration", function () {
+	reset();
+	configureExecution();
+	Memory.sites.mining.W1N2 = {
+		colony: "W1N1", can_mine: true, list_route: ["W1N1", "W1N2"],
+		survey: { source_amount: 2 }, custom_marker: "preserve"
+	};
+	Memory.ai.remoteObjectives.W1N2 = { reservation: { expiresTick: 3000 } };
+	putInbox(order("pause-remote-1", "PAUSE_REMOTE_MINING", { parameters: { room: "W1N2" } }));
+	assert.strictEqual(Memory.sites.mining.W1N2.ai_paused, true);
+	assert.strictEqual(Memory.sites.mining.W1N2.custom_marker, "preserve");
+	assert.strictEqual(Memory.ai.remoteObjectives.W1N2, undefined);
+	Game.time++;
+	putInbox(order("resume-remote-1", "RESUME_REMOTE_MINING", { parameters: { room: "W1N2" } }));
+	assert.strictEqual(Memory.sites.mining.W1N2.ai_paused, false);
+	assert.strictEqual(Memory.sites.mining.W1N2.custom_marker, "preserve");
+	assert.strictEqual(Memory.sites.mining.W1N2.ai_pause.state, "REACTIVATING");
+});
+
+test("empire load marks severe home shortage critical and ranks failed remote first", function () {
+	reset();
+	AIInterface.initMemory();
+	Memory.ai.establishments.failed = { target: "W1N3", state: "FAILED" };
+	let role = function (desired, alive) { return { desired: desired, alive: alive, spawning: 0 }; };
+	let colonies = { W1N1: {
+		population: { desiredTotal: 16, aliveTotal: 3, oldestWaitingTicks: 500, roles: { worker: role(4, 1), carrier: role(2, 1), burrower: role(2, 1) } },
+		spawning: { spawns: 1, busy: 1, queueDepth: 5 }
+	} };
+	let remote = function (room, health, losses) { return {
+		room: room, paused: false, health: health, lifecycleState: health,
+		population: { desiredTotal: 8, assignedTotal: 2, roles: { reserver: role(1, 0) } },
+		reservation: { reserverPresent: 0, reserverSpawning: 0, reserverQueued: 0 },
+		losses: { creepLossesTotal: losses }, mining: { energyWaiting: 2500 }, route: { length: 2 },
+		delivery: { energyDeliveredTotal: 1000 }
+	};
+	};
+	let load = AIObserver._empireLoad(colonies, [remote("W1N2", "DEGRADED", 2), remote("W1N3", "FAILING", 10)]);
+	assert.strictEqual(load.state, "CRITICAL");
+	assert.strictEqual(load.growthVeto, true);
+	assert.strictEqual(load.remoteRanking[0].room, "W1N3");
+	assert.strictEqual(load.remoteRanking[0].recommendation, "PAUSE");
+});
+
+test("frontier exploration extends one bounded layer beyond known territory", function () {
+	reset();
+	AIInterface.initMemory();
+	Game.map.getRoomLinearDistance = function (from, to) { return from === to ? 0 : ({ W1N2: 1, W1N3: 2 }[to] || 3); };
+	Game.map.describeExits = function (room) {
+		if (room === "W1N1") return { 3: "W1N2" };
+		if (room === "W1N2") return { 3: "W1N3" };
+		return {};
+	};
+	let frontier = AIObserver._frontierRooms(["W1N1"], ["W1N1", "W1N2"], { W1N1: {}, W1N2: {} });
+	assert.ok(frontier.all.includes("W1N3"));
 });
 
 test("existing main loop runs with AI disabled", function () {
