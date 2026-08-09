@@ -635,7 +635,7 @@ test("combat math uses tower falloff, active boosted parts, safe mode, and stale
 	delete global.BOOSTS;
 });
 
-test("telemetry schema v7 reports identity, capabilities, defense, territory, load, and exact byte size", function () {
+test("telemetry schema v8 reports identity, capabilities, defense, territory, load, and exact byte size", function () {
 	reset();
 	let structures = [
 		{ structureType: "spawn", my: true, spawning: null },
@@ -665,7 +665,7 @@ test("telemetry schema v7 reports identity, capabilities, defense, territory, lo
 	Memory.rooms.W1N1 = { defense: { hostiles: [{ id: "enemy" }] } };
 	let serialized = AIObserver.serialize();
 	let snapshot = JSON.parse(serialized);
-	assert.strictEqual(snapshot.schemaVersion, 7);
+	assert.strictEqual(snapshot.schemaVersion, 8);
 	assert.strictEqual(snapshot.empire.player, "tester");
 	assert.strictEqual(snapshot.colonies.W1N1.controller.rcl, 5);
 	assert.strictEqual(snapshot.colonies.W1N1.energy.storageEnergy, 240000);
