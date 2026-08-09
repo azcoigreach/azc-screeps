@@ -580,13 +580,24 @@ global.AIObserver = {
 			let minimum = _.get(Memory, ["ai", "policy", "remotePauseMinimumTicks"], 5000);
 			let stableTicks = _.get(Memory, ["ai", "policy", "remoteRecoveryStableTicks"], 3000);
 			let minimumPopulation = _.get(Memory, ["ai", "policy", "remoteRecoveryPopulationSatisfaction"], 85);
+			let replacementGraceTicks = _.get(Memory, ["ai", "policy", "remoteRecoveryReplacementGraceTicks"], 200);
 			let load = _.get(Memory, ["ai", "strategy", "empireLoad", "state"], "CRITICAL");
 			let population = _.get(Memory, ["ai", "strategy", "empireLoad", "homePopulation", "satisfaction"], 0);
-			let recovering = _.includes(["HEALTHY", "STRAINED"], load) && population >= minimumPopulation;
-			if (recovering && pause.recoverySinceTick == null) pause.recoverySinceTick = Game.time;
-			if (!recovering) pause.recoverySinceTick = null;
+			let nativeRecovery = _.get(Memory, ["rooms", _.get(site, "colony"), "population_recovery"], {});
+			let stableLoad = _.includes(["HEALTHY", "STRAINED"], load);
+			let fullyRecovering = stableLoad && population >= minimumPopulation;
+			let replacementCovered = stableLoad && _.get(nativeRecovery, "replacementCovered", false) === true;
+			let recoveryEvidence = fullyRecovering || replacementCovered;
+			if (recoveryEvidence) {
+				if (pause.recoverySinceTick == null) pause.recoverySinceTick = Game.time;
+				pause.recoveryUnstableSinceTick = null;
+			} else {
+				if (pause.recoveryUnstableSinceTick == null) pause.recoveryUnstableSinceTick = Game.time;
+				if (Game.time - pause.recoveryUnstableSinceTick >= replacementGraceTicks)
+					pause.recoverySinceTick = null;
+			}
 			site.ai_pause = pause;
-			if (Game.time - _.get(pause, "pausedTick", Game.time) >= minimum && pause.recoverySinceTick != null
+			if (fullyRecovering && Game.time - _.get(pause, "pausedTick", Game.time) >= minimum && pause.recoverySinceTick != null
 				&& Game.time - pause.recoverySinceTick >= stableTicks)
 				return "RECOVERY_CANDIDATE";
 			return "PAUSED";
@@ -678,9 +689,15 @@ global.AIObserver = {
 					active: true,
 					enteredTick: _.get(recovery, "enteredTick", null),
 					stableSinceTick: _.get(recovery, "stableSinceTick", null),
+					stableRequiredTicks: _.get(Memory, ["ai", "policy", "remoteRecoveryStableTicks"], 3000),
+					unstableSinceTick: _.get(recovery, "unstableSinceTick", null),
+					replacementSinceTick: _.get(recovery, "replacementSinceTick", null),
 					reason: _.get(recovery, "reason", null),
 					satisfaction: _.get(recovery, "satisfaction", null),
 					criticalSatisfaction: _.get(recovery, "criticalSatisfaction", null),
+					replacementCoverageSatisfaction: _.get(recovery, "replacementCoverageSatisfaction", null),
+					replacementCovered: _.get(recovery, "replacementCovered", false) === true,
+					replacementGraceTicks: _.get(recovery, "replacementGraceTicks", null),
 					updatedTick: _.get(recovery, "updatedTick", null)
 				};
 			}

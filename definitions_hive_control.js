@@ -926,12 +926,17 @@
 		let local = _.get(Memory, ["ai", "metrics", "population", "colonies", roomName], {});
 		let localExpected = _.get(local, "expected", {});
 		let localActual = _.get(local, "actual", {});
+		let localRequested = _.get(local, "requested", {});
 		let desired = _.sum(_.values(localExpected));
+		let replacementCoverageSatisfaction = criticalSatisfaction;
 		if (desired > 0) {
 			let available = _.sum(_.map(localExpected, (amount, role) =>
 				Math.min(amount, _.get(localActual, role, 0))));
+			let covered = _.sum(_.map(localExpected, (amount, role) =>
+				Math.min(amount, _.get(localActual, role, 0) + _.get(localRequested, role, 0))));
 			satisfaction = Math.round(available * 10000 / desired) / 100;
 			criticalSatisfaction = satisfaction;
+			replacementCoverageSatisfaction = Math.round(covered * 10000 / desired) / 100;
 		}
 		let path = ["rooms", roomName, "population_recovery"];
 		let recovery = _.get(Memory, path, {});
@@ -943,24 +948,56 @@
 			recovery.active = true;
 			recovery.enteredTick = _.get(recovery, "enteredTick", Game.time);
 			recovery.stableSinceTick = null;
+			recovery.unstableSinceTick = Game.time;
+			recovery.replacementSinceTick = null;
+			recovery.replacementCovered = false;
 			recovery.reason = `EMPIRE_LOAD_${loadState}`;
 		}
 		if (recovery.active === true && !overloaded) {
 			let minimum = _.get(Memory, ["ai", "policy", "remoteRecoveryPopulationSatisfaction"], 85);
 			let stableTicks = _.get(Memory, ["ai", "policy", "remoteRecoveryStableTicks"], 3000);
-			let recovered = satisfaction >= minimum && criticalSatisfaction >= 100
-				&& _.includes(["HEALTHY", "STRAINED"], loadState);
-			if (recovered && recovery.stableSinceTick == null) recovery.stableSinceTick = Game.time;
-			if (!recovered) recovery.stableSinceTick = null;
-			if (recovered && Game.time - recovery.stableSinceTick >= stableTicks) {
+			let replacementGraceTicks = _.get(Memory, ["ai", "policy", "remoteRecoveryReplacementGraceTicks"], 200);
+			let stableLoad = _.includes(["HEALTHY", "STRAINED"], loadState);
+			let fullyStaffed = satisfaction >= minimum && criticalSatisfaction >= 100 && stableLoad;
+			// A queued replacement is normal steady-state operation, not a new
+			// collapse. Count bounded, role-matched home requests as temporary
+			// coverage so routine creep turnover cannot erase a long stability run.
+			let replacementCandidate = !fullyStaffed
+				&& replacementCoverageSatisfaction >= 100 && stableLoad;
+			if (replacementCandidate && recovery.replacementSinceTick == null)
+				recovery.replacementSinceTick = Game.time;
+			if (!replacementCandidate) recovery.replacementSinceTick = null;
+			let replacementCovered = replacementCandidate
+				&& Game.time - recovery.replacementSinceTick < replacementGraceTicks;
+			let recovered = fullyStaffed || replacementCovered;
+			if (recovered) {
+				if (recovery.stableSinceTick == null) recovery.stableSinceTick = Game.time;
+				recovery.unstableSinceTick = null;
+			} else {
+				if (recovery.unstableSinceTick == null) {
+					let replacementSinceTick = _.get(recovery, "replacementSinceTick");
+					recovery.unstableSinceTick = replacementSinceTick == null ? Game.time : replacementSinceTick;
+				}
+				// Brief uncovered gaps can occur between a creep expiring and the
+				// population producer publishing its request. Preserve the stability
+				// clock through that bounded gap, but reset it for sustained shortage.
+				if (Game.time - recovery.unstableSinceTick >= replacementGraceTicks)
+					recovery.stableSinceTick = null;
+			}
+			// Never release the latch during a replacement gap. The grace only
+			// preserves already-earned stability until full staffing returns.
+			if (fullyStaffed && Game.time - recovery.stableSinceTick >= stableTicks) {
 				recovery.active = false;
 				recovery.completedTick = Game.time;
 				recovery.reason = "HOME_RECOVERED";
 			}
+			recovery.replacementCovered = !fullyStaffed && replacementCovered;
+			recovery.replacementGraceTicks = replacementGraceTicks;
 		}
 		recovery.loadState = loadState;
 		recovery.satisfaction = satisfaction;
 		recovery.criticalSatisfaction = criticalSatisfaction;
+		recovery.replacementCoverageSatisfaction = replacementCoverageSatisfaction;
 		recovery.updatedTick = Game.time;
 		_.set(Memory, path, recovery);
 		return recovery;

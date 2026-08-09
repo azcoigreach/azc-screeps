@@ -43,10 +43,21 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
     )
     scheduler_recovery = load.get("schedulerRecovery") or {}
     recovery_rooms = scheduler_recovery.get("rooms") or {}
-    recovery_details = ", ".join(
-        f"{room} {state.get('satisfaction', 'unknown')}%"
-        for room, state in sorted(recovery_rooms.items())
-    )
+    recovery_parts = []
+    for room, state in sorted(recovery_rooms.items()):
+        details = [f"{room} {state.get('satisfaction', 'unknown')}%"]
+        stable_since = state.get("stableSinceTick")
+        stable_required = state.get("stableRequiredTicks")
+        if isinstance(stable_since, int) and isinstance(stable_required, int):
+            details.append(f"stable {max(0, telemetry.tick - stable_since)}/{stable_required} ticks")
+        if state.get("replacementCovered"):
+            details.append("routine replacement covered")
+        unstable_since = state.get("unstableSinceTick")
+        grace = state.get("replacementGraceTicks")
+        if isinstance(unstable_since, int) and isinstance(grace, int):
+            details.append(f"uncovered {max(0, telemetry.tick - unstable_since)}/{grace} ticks")
+        recovery_parts.append("; ".join(details))
+    recovery_details = ", ".join(recovery_parts)
     lines.append(
         "Native scheduler recovery: "
         f"{'ACTIVE' if scheduler_recovery.get('active') else 'INACTIVE'}"

@@ -1088,6 +1088,80 @@ test("home recovery latch requires stable staffing before releasing remote work"
 	assert.strictEqual(Control.homeRecoveryState("W1N1").active, false);
 });
 
+test("home recovery stability survives a queued routine replacement", function () {
+	reset({ time: 2000 });
+	AIInterface.initMemory();
+	Memory.ai.policy.remoteRecoveryStableTicks = 10;
+	Memory.ai.policy.remoteRecoveryReplacementGraceTicks = 5;
+	_.set(Memory, ["ai", "strategy", "empireLoad"], {
+		state: "CRITICAL", homePopulation: { satisfaction: 20, criticalSatisfaction: 50 }
+	});
+	assert.strictEqual(Control.homeRecoveryState("W1N1").active, true);
+
+	Game.time = 2010;
+	_.set(Memory, ["ai", "strategy", "empireLoad"], {
+		state: "STRAINED", homePopulation: { satisfaction: 100, criticalSatisfaction: 100 }
+	});
+	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1"], {
+		expected: { worker: 2, upgrader: 1 }, actual: { worker: 2, upgrader: 1 }, requested: {}
+	});
+	let recovery = Control.homeRecoveryState("W1N1");
+	assert.strictEqual(recovery.stableSinceTick, 2010);
+
+	Game.time = 2015;
+	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1", "actual", "upgrader"], 0);
+	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1", "requested", "upgrader"], 1);
+	recovery = Control.homeRecoveryState("W1N1");
+	assert.strictEqual(recovery.active, true);
+	assert.strictEqual(recovery.stableSinceTick, 2010);
+	assert.strictEqual(recovery.replacementCovered, true);
+	assert.strictEqual(recovery.replacementCoverageSatisfaction, 100);
+
+	Game.time = 2021;
+	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1", "actual", "upgrader"], 1);
+	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1", "requested"], {});
+	recovery = Control.homeRecoveryState("W1N1");
+	assert.strictEqual(recovery.active, false);
+});
+
+test("home recovery resets stability after a sustained uncovered shortage", function () {
+	reset({ time: 2000 });
+	AIInterface.initMemory();
+	Memory.ai.policy.remoteRecoveryStableTicks = 10;
+	Memory.ai.policy.remoteRecoveryReplacementGraceTicks = 5;
+	_.set(Memory, ["ai", "strategy", "empireLoad"], {
+		state: "CRITICAL", homePopulation: { satisfaction: 20, criticalSatisfaction: 50 }
+	});
+	assert.strictEqual(Control.homeRecoveryState("W1N1").active, true);
+
+	Game.time = 2010;
+	_.set(Memory, ["ai", "strategy", "empireLoad"], {
+		state: "STRAINED", homePopulation: { satisfaction: 100, criticalSatisfaction: 100 }
+	});
+	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1"], {
+		expected: { worker: 2, upgrader: 1 }, actual: { worker: 2, upgrader: 1 }, requested: {}
+	});
+	assert.strictEqual(Control.homeRecoveryState("W1N1").stableSinceTick, 2010);
+
+	Game.time = 2012;
+	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1", "actual"], { worker: 1, upgrader: 1 });
+	let recovery = Control.homeRecoveryState("W1N1");
+	assert.strictEqual(recovery.stableSinceTick, 2010);
+	assert.strictEqual(recovery.unstableSinceTick, 2012);
+
+	Game.time = 2017;
+	recovery = Control.homeRecoveryState("W1N1");
+	assert.strictEqual(recovery.active, true);
+	assert.strictEqual(recovery.stableSinceTick, null);
+
+	Game.time = 2018;
+	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1", "actual"], { worker: 2, upgrader: 1 });
+	recovery = Control.homeRecoveryState("W1N1");
+	assert.strictEqual(recovery.stableSinceTick, 2018);
+	Game.time = 2028;
+	assert.strictEqual(Control.homeRecoveryState("W1N1").active, false);
+});
+
 test("active home recovery bypasses the randomized spawn pulse", function () {
 	reset({ time: 2000 });
 	AIInterface.initMemory();
@@ -1612,6 +1686,40 @@ test("failed establishment preserves its original remote pause identity", functi
 	Game.time = 9100;
 	AIObserver._updateEstablishments();
 	assert.strictEqual(Memory.sites.mining.W1N2.ai_pause.pausedTick, 8000);
+});
+
+test("paused remote recovery tolerates normal home replacement but not sustained shortage", function () {
+	reset({ time: 9000 });
+	AIInterface.initMemory();
+	Memory.ai.policy.remoteRecoveryStableTicks = 10;
+	Memory.ai.policy.remoteRecoveryReplacementGraceTicks = 5;
+	let site = {
+		colony: "W1N1", ai_paused: true,
+		ai_pause: { state: "PAUSED", pausedTick: 3000, recoverySinceTick: null }
+	};
+	_.set(Memory, ["ai", "strategy", "empireLoad"], {
+		state: "STRAINED", homePopulation: { satisfaction: 100 }
+	});
+	assert.strictEqual(AIObserver._remoteLifecycle({ room: "W1N2", health: "FAILING" }, site), "PAUSED");
+	assert.strictEqual(site.ai_pause.recoverySinceTick, 9000);
+
+	Game.time = 9006;
+	_.set(Memory, ["ai", "strategy", "empireLoad", "homePopulation", "satisfaction"], 80);
+	_.set(Memory, ["rooms", "W1N1", "population_recovery", "replacementCovered"], true);
+	assert.strictEqual(AIObserver._remoteLifecycle({ room: "W1N2", health: "FAILING" }, site), "PAUSED");
+	assert.strictEqual(site.ai_pause.recoverySinceTick, 9000);
+
+	Game.time = 9011;
+	_.set(Memory, ["ai", "strategy", "empireLoad", "homePopulation", "satisfaction"], 100);
+	_.set(Memory, ["rooms", "W1N1", "population_recovery", "replacementCovered"], false);
+	assert.strictEqual(AIObserver._remoteLifecycle({ room: "W1N2", health: "FAILING" }, site), "RECOVERY_CANDIDATE");
+
+	Game.time = 9012;
+	_.set(Memory, ["ai", "strategy", "empireLoad", "homePopulation", "satisfaction"], 80);
+	assert.strictEqual(AIObserver._remoteLifecycle({ room: "W1N2", health: "FAILING" }, site), "PAUSED");
+	Game.time = 9017;
+	assert.strictEqual(AIObserver._remoteLifecycle({ room: "W1N2", health: "FAILING" }, site), "PAUSED");
+	assert.strictEqual(site.ai_pause.recoverySinceTick, null);
 });
 
 test("frontier exploration extends one bounded layer beyond known territory", function () {

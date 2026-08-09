@@ -91,7 +91,11 @@ class AutonomyReportTests(unittest.TestCase):
         payload["authority"]["execution"]["autoRemoteMaintenance"] = True
         payload["empireLoad"] = {
             "state": "STRAINED", "growthVeto": False,
-            "schedulerRecovery": {"active": True, "rooms": {"W1N1": {}}},
+            "schedulerRecovery": {"active": True, "rooms": {"W1N1": {
+                "satisfaction": 92.31, "stableSinceTick": payload["tick"] - 500,
+                "stableRequiredTicks": 3000, "replacementCovered": True,
+                "replacementGraceTicks": 200,
+            }}},
             "homePopulation": {"satisfaction": 100, "criticalSatisfaction": 100},
             "spawnPressure": {"queueDepth": 0},
         }
@@ -104,6 +108,8 @@ class AutonomyReportTests(unittest.TestCase):
         self.assertIsNone(AutonomyController(self.history, transport).run(telemetry))
         self.assertEqual(transport.sent, [])
         self.assertIn("Native scheduler recovery: ACTIVE", build_report(self.history, telemetry))
+        self.assertIn("stable 500/3000 ticks", build_report(self.history, telemetry))
+        self.assertIn("routine replacement covered", build_report(self.history, telemetry))
 
     def test_critical_recovery_allows_only_held_reservation_inside_lead_window(self) -> None:
         payload = telemetry_payload()
