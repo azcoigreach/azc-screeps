@@ -824,7 +824,19 @@
 
 			let prunedRemoteOvershoot = request._remote_pruned > 0 && creeps.length === 0 && remoteCount === 0;
 
-			if (canSpawnMore && request.active < desiredActive && !pendingSpawn) {
+			let recovery = this.homeRecoveryState(rmColony);
+			let recoverySuppressed = request.ai_managed === true && recovery.active
+				&& request.active < desiredActive && !pendingSpawn;
+			if (recoverySuppressed) {
+				request.recovery_suppressed = true;
+				request.recovery_suppressed_tick = Game.time;
+				request.recovery_suppressed_reason = recovery.reason;
+			} else {
+				delete request.recovery_suppressed;
+				delete request.recovery_suppressed_reason;
+			}
+
+			if (canSpawnMore && request.active < desiredActive && !pendingSpawn && !recoverySuppressed) {
 				let priority = _.get(request, ["custom", "priority"], 22);
 				let level = _.get(request, ["custom", "level"], 1);
 				let bodyName = _.get(request, ["custom", "body"], "scout");
@@ -901,6 +913,74 @@
 			return req.ai_managed === true && Game.time - _.get(req, "terminal_tick", Game.time) <= 100;
 		});
 		_.set(Memory, ["rooms", rmColony, "scout_requests"], requests);
+	},
+
+	homeRecoveryState: function (roomName) {
+		let load = _.get(Memory, ["ai", "strategy", "empireLoad"], {});
+		let loadState = _.get(load, "state", "HEALTHY");
+		let population = _.get(load, "homePopulation", {});
+		let satisfaction = _.get(population, "satisfaction", 100);
+		let criticalSatisfaction = _.get(population, "criticalSatisfaction", 100);
+		// Prefer the current colony's deterministic target when available so one
+		// recovering room does not unnecessarily suppress every healthy colony.
+		let local = _.get(Memory, ["ai", "metrics", "population", "colonies", roomName], {});
+		let localExpected = _.get(local, "expected", {});
+		let localActual = _.get(local, "actual", {});
+		let desired = _.sum(_.values(localExpected));
+		if (desired > 0) {
+			let available = _.sum(_.map(localExpected, (amount, role) =>
+				Math.min(amount, _.get(localActual, role, 0))));
+			satisfaction = Math.round(available * 10000 / desired) / 100;
+			criticalSatisfaction = satisfaction;
+		}
+		let path = ["rooms", roomName, "population_recovery"];
+		let recovery = _.get(Memory, path, {});
+		if (!_.isObject(recovery) || _.isArray(recovery)) recovery = {};
+
+		let overloaded = _.includes(["OVEREXTENDED", "CRITICAL"], loadState)
+			&& (desired <= 0 || satisfaction < 85);
+		if (overloaded) {
+			recovery.active = true;
+			recovery.enteredTick = _.get(recovery, "enteredTick", Game.time);
+			recovery.stableSinceTick = null;
+			recovery.reason = `EMPIRE_LOAD_${loadState}`;
+		}
+		if (recovery.active === true && !overloaded) {
+			let minimum = _.get(Memory, ["ai", "policy", "remoteRecoveryPopulationSatisfaction"], 85);
+			let stableTicks = _.get(Memory, ["ai", "policy", "remoteRecoveryStableTicks"], 3000);
+			let recovered = satisfaction >= minimum && criticalSatisfaction >= 100
+				&& _.includes(["HEALTHY", "STRAINED"], loadState);
+			if (recovered && recovery.stableSinceTick == null) recovery.stableSinceTick = Game.time;
+			if (!recovered) recovery.stableSinceTick = null;
+			if (recovered && Game.time - recovery.stableSinceTick >= stableTicks) {
+				recovery.active = false;
+				recovery.completedTick = Game.time;
+				recovery.reason = "HOME_RECOVERED";
+			}
+		}
+		recovery.loadState = loadState;
+		recovery.satisfaction = satisfaction;
+		recovery.criticalSatisfaction = criticalSatisfaction;
+		recovery.updatedTick = Game.time;
+		_.set(Memory, path, recovery);
+		return recovery;
+	},
+
+	spawnRequestClass: function (request) {
+		let args = _.get(request, "args", {});
+		let colony = _.get(request, "room");
+		let target = _.get(args, "room", colony);
+		let role = _.get(args, "role", _.get(request, "role", "unknown"));
+		let remote = target !== colony;
+		let homeEconomy = !remote && _.includes([
+			"worker", "upgrader", "harvester", "miner", "burrower",
+			"carrier", "hauler", "multirole"
+		], role);
+		return {
+			colony: colony, target: target, role: role, remote: remote,
+			homeEconomy: homeEconomy,
+			remoteContinuity: remote && _.get(args, "remote_continuity_critical", false) === true
+		};
 	},
 
 	// Reusable inter-shard mission framework helpers
@@ -1536,7 +1616,21 @@
 		if (base < 10)
 			return base;
 		let age = Math.max(0, Game.time - _.get(wait, "firstSeenTick", Game.time));
-		return Math.max(10, base - Math.floor(age / 200) * 2);
+		let aged = base - Math.floor(age / 200) * 2;
+		let requestClass = this.spawnRequestClass(request);
+		let recovery = this.homeRecoveryState(requestClass.colony);
+		if (recovery.active === true) {
+			// Active defense remains in priorities 0-9. Home economy owns the next
+			// deterministic band; an already-held reservation may be preserved just
+			// below it. Ordinary remote work can never age into or tie that band.
+			if (requestClass.homeEconomy)
+				return 10;
+			if (requestClass.remoteContinuity)
+				return 11;
+			if (requestClass.remote)
+				return Math.max(12, aged);
+		}
+		return Math.max(10, aged);
 	},
 
 	processSpawnRenewing: function () {

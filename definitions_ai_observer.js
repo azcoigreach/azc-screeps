@@ -768,6 +768,11 @@ global.AIObserver = {
 			if (!site) {
 				operation.state = "FAILED";
 				operation.failureReason = "remote configuration disappeared";
+			} else if (_.get(site, "ai_paused", false) === true && operation.failureReason) {
+				// A failed establishment cannot return to RESERVING merely because the
+				// paused target is no longer visible. Preserve its terminal truth while
+				// the reversible remote configuration remains suspended.
+				operation.state = "FAILED";
 			} else if (_.get(site, "route_failure", false)) {
 				operation.state = "FAILED";
 				operation.failureReason = "deterministic route failure";

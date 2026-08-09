@@ -61,7 +61,7 @@ class AutonomyController:
             if order:
                 return order
         if authority.execution.autoRemoteMaintenance:
-            order = self._remote_maintenance(telemetry)
+            order = self._remote_maintenance(telemetry, load_state)
             if order:
                 return order
         if authority.execution.autoColonization:
@@ -126,7 +126,9 @@ class AutonomyController:
         )
         return order
 
-    def _remote_maintenance(self, telemetry: Telemetry) -> StrategicOrder | None:
+    def _remote_maintenance(
+        self, telemetry: Telemetry, load_state: str = "HEALTHY"
+    ) -> StrategicOrder | None:
         severity = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
         options: list[tuple[int, str, Any]] = []
         for remote in telemetry.operations.remoteMining:
@@ -135,8 +137,22 @@ class AutonomyController:
             for diagnostic in remote.diagnostics:
                 action = DIAGNOSTIC_ACTIONS.get(diagnostic.diagnostic)
                 objective = ACTION_OBJECTIVES.get(action or "")
+                recovery_essential = True
+                if load_state in {"OVEREXTENDED", "CRITICAL"}:
+                    continuity = remote.reservation.continuity or {}
+                    ticks = remote.reservation.ticksToEnd
+                    lead = int(continuity.get("leadTicks") or 0)
+                    recovery_essential = (
+                        action == "ENSURE_REMOTE_RESERVATION"
+                        and remote.reservation.relation == "SELF"
+                        and ticks is not None
+                        and ticks > 0
+                        and lead > 0
+                        and ticks <= lead
+                    )
                 if (
                     action
+                    and recovery_essential
                     and objective not in remote.objectives
                     and self._cooled_down(
                         action, remote.room, telemetry.tick,

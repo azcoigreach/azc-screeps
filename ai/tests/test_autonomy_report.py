@@ -67,6 +67,48 @@ class AutonomyReportTests(unittest.TestCase):
         self.assertIsNone(AutonomyController(self.history, transport).run(telemetry))
         self.assertEqual(transport.sent, [])
 
+    def test_critical_recovery_suppresses_routine_remote_maintenance(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"]["autoRemoteMaintenance"] = True
+        payload["empireLoad"] = {
+            "state": "CRITICAL", "growthVeto": True,
+            "homePopulation": {"satisfaction": 12.5, "criticalSatisfaction": 50},
+            "spawnPressure": {"queueDepth": 4},
+        }
+        remote = payload["operations"]["remoteMining"][0]
+        remote["diagnostics"] = [{
+            "diagnostic": "HAULER_SHORTAGE", "severity": "HIGH", "evidence": {}
+        }]
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        self.assertIsNone(AutonomyController(self.history, transport).run(telemetry))
+        self.assertEqual(transport.sent, [])
+
+    def test_critical_recovery_allows_only_held_reservation_inside_lead_window(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"]["autoRemoteMaintenance"] = True
+        payload["empireLoad"] = {
+            "state": "CRITICAL", "growthVeto": True,
+            "homePopulation": {"satisfaction": 12.5, "criticalSatisfaction": 50},
+            "spawnPressure": {"queueDepth": 4},
+        }
+        remote = payload["operations"]["remoteMining"][0]
+        remote["reservation"].update({
+            "relation": "SELF", "ticksToEnd": 100,
+            "continuity": {"leadTicks": 236},
+        })
+        remote["diagnostics"] = [{
+            "diagnostic": "RESERVATION_EXPIRING", "severity": "HIGH",
+            "evidence": {"ticksToEnd": 100},
+        }]
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        order = AutonomyController(self.history, transport).run(telemetry)
+        self.assertIsNotNone(order)
+        self.assertEqual(order.action, "ENSURE_REMOTE_RESERVATION")
+
     def test_critical_empire_pauses_only_top_ranked_remote(self) -> None:
         payload = telemetry_payload()
         payload["authority"]["mode"] = "execute"

@@ -1041,6 +1041,70 @@ test("spawn demand aging bounds starvation without outranking emergency requests
 	assert.strictEqual(Control.effectiveSpawnPriority(emergency, { firstSeenTick: 0 }), 3);
 });
 
+test("critical recovery makes real home requests outrank aged remote demand", function () {
+	reset({ time: 2000 });
+	AIInterface.initMemory();
+	_.set(Memory, ["ai", "strategy", "empireLoad"], {
+		state: "CRITICAL",
+		homePopulation: { satisfaction: 12.5, criticalSatisfaction: 56.25 }
+	});
+	let worker = { room: "W1N1", priority: 23, args: { room: "W1N1", role: "worker" } };
+	let upgrader = { room: "W1N1", priority: 20, args: { room: "W1N1", role: "upgrader" } };
+	let remote = {
+		room: "W1N1", priority: 13,
+		args: { room: "W1N2", colony: "W1N1", role: "reserver" }
+	};
+	let continuity = _.cloneDeep(remote);
+	continuity.args.remote_continuity_critical = true;
+	let wait = { firstSeenTick: 1 };
+	assert.strictEqual(Control.effectiveSpawnPriority(worker, wait), 10);
+	assert.strictEqual(Control.effectiveSpawnPriority(upgrader, wait), 10);
+	assert.strictEqual(Control.effectiveSpawnPriority(continuity, wait), 11);
+	assert.strictEqual(Control.effectiveSpawnPriority(remote, wait), 12);
+	let ordered = [remote, worker, continuity, upgrader].sort((a, b) =>
+		Control.effectiveSpawnPriority(a, wait) - Control.effectiveSpawnPriority(b, wait));
+	assert.ok(_.includes(["worker", "upgrader"], ordered[0].args.role));
+});
+
+test("home recovery latch requires stable staffing before releasing remote work", function () {
+	reset({ time: 2000 });
+	AIInterface.initMemory();
+	Memory.ai.policy.remoteRecoveryStableTicks = 10;
+	_.set(Memory, ["ai", "strategy", "empireLoad"], {
+		state: "CRITICAL",
+		homePopulation: { satisfaction: 20, criticalSatisfaction: 50 }
+	});
+	assert.strictEqual(Control.homeRecoveryState("W1N1").active, true);
+	Game.time = 2010;
+	_.set(Memory, ["ai", "strategy", "empireLoad"], {
+		state: "STRAINED",
+		homePopulation: { satisfaction: 90, criticalSatisfaction: 100 }
+	});
+	assert.strictEqual(Control.homeRecoveryState("W1N1").active, true);
+	Game.time = 2021;
+	assert.strictEqual(Control.homeRecoveryState("W1N1").active, false);
+});
+
+test("critical recovery defers unspawned AI scouts", function () {
+	reset({ time: 2000 });
+	AIInterface.initMemory();
+	_.set(Memory, ["ai", "strategy", "empireLoad"], {
+		state: "CRITICAL",
+		homePopulation: { satisfaction: 12.5, criticalSatisfaction: 50 }
+	});
+	Memory.hive = { spawn_requests: [] };
+	Memory.shard = { spawn_requests: [] };
+	Memory.rooms.W1N1 = { scout_requests: [{
+		id: "ai-scout:test", ai_managed: true, count: 1, respawn: false,
+		wait_for_full_rally: false, status: "QUEUED", creeps: [],
+		dest_pos: { x: 25, y: 25, roomName: "W1N2" },
+		custom: { priority: 14, level: 1, body: "scout" }
+	}] };
+	Control.runScoutRequests("W1N1");
+	assert.strictEqual(Memory.hive.spawn_requests.length, 0);
+	assert.strictEqual(Memory.rooms.W1N1.scout_requests[0].recovery_suppressed, true);
+});
+
 test("remote health exposes deterministic backlog, infrastructure, staffing, reservation, and safety diagnostics", function () {
 	reset();
 	AIInterface.initMemory();

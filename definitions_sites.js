@@ -751,6 +751,14 @@
 				let logisticsObjective = _.get(Memory, ["ai", "remoteObjectives", rmHarvest, "logistics"]);
 				let convertingToColony = _.get(Memory, ["sites", "mining", rmHarvest, "ai_converting_to_colony"], false) === true
 					|| _.get(Game, ["rooms", rmHarvest, "controller", "my"], false) === true;
+				let recovery = Control.homeRecoveryState(rmColony);
+				let suppressRemoteEconomy = rmColony != rmHarvest && recovery.active === true;
+				if (rmColony != rmHarvest) {
+					_.set(Memory, ["sites", "mining", rmHarvest, "recovery_suppression"], {
+						active: suppressRemoteEconomy, tick: Game.time,
+						reason: suppressRemoteEconomy ? recovery.reason : null
+					});
+				}
 
 				// If the colony is not safe (under siege?) pause spawning remote mining; frees colony spawns to make soldiers
 				if (rmColony != rmHarvest && !is_safe_colony)
@@ -758,6 +766,8 @@
 
 				// Is the room visible? If not, only spawn a scout to check the room out!
 				if (rmColony != rmHarvest && !is_visible) {
+					if (suppressRemoteEconomy)
+						return;
 					let lScout = _.filter(listCreeps, c => c.memory.role == "scout");
 
 					if (lScout.length < 1) {
@@ -867,10 +877,14 @@
 				// A strategic objective never specifies bodies or raw amounts. AZC
 				// deterministically converts a confirmed backlog into one bounded
 				// hauling slot and lets the normal population manager implement it.
-				if (logisticsObjective && _.get(logisticsObjective, "expiresTick", 0) >= Game.time && totalBacklog >= 2000) {
+				if (logisticsObjective && _.get(logisticsObjective, "expiresTick", 0) >= Game.time
+					&& totalBacklog >= 2000 && !suppressRemoteEconomy) {
 					_.set(popTarget, ["carrier", "amount"], _.get(popTarget, ["carrier", "amount"], 0) + 1);
 					logisticsObjective.appliedTick = Game.time;
 					logisticsObjective.evidence = { energyBacklog: totalBacklog };
+				} else if (logisticsObjective && suppressRemoteEconomy) {
+					logisticsObjective.suppressedTick = Game.time;
+					logisticsObjective.suppressedReason = recovery.reason;
 				}
 
 				// Tally population levels for level scaling
@@ -925,7 +939,8 @@
 					});
 				}
 
-				if (_.get(popActual, "multirole", 0) < _.get(popTarget, ["multirole", "amount"], 0)) {
+				if (!suppressRemoteEconomy
+					&& _.get(popActual, "multirole", 0) < _.get(popTarget, ["multirole", "amount"], 0)) {
 					Memory["shard"]["spawn_requests"].push({
 						room: rmColony, listRooms: listSpawnRooms,
 						priority: 19,
@@ -946,10 +961,20 @@
 						reserveWarning = Math.max(reserveWarning, reservePlan.leadTicks);
 						_.set(Memory, ["sites", "mining", rmHarvest, "continuity", "reserver"], reservePlan);
 					}
-					if (reservationObjective && _.get(reservationObjective, "expiresTick", 0) >= Game.time)
-						reservationObjective.appliedTick = Game.time;
+					let reservationHeld = reservation != null && _.get(reservation, "username") == getUsername()
+						&& _.get(reservation, "ticksToEnd", 0) > 0;
 					let replacementReserver = reservePlan && reservePlan.continuityAtRisk && reservePlan.spawning < 1;
+					let preserveHeldReservation = replacementReserver && reservationHeld;
+					if (reservationObjective && _.get(reservationObjective, "expiresTick", 0) >= Game.time) {
+						if (!suppressRemoteEconomy || preserveHeldReservation)
+							reservationObjective.appliedTick = Game.time;
+						else {
+							reservationObjective.suppressedTick = Game.time;
+							reservationObjective.suppressedReason = recovery.reason;
+						}
+					}
 					if (!convertingToColony
+						&& (!suppressRemoteEconomy || preserveHeldReservation)
 						&& (_.get(popActual, "reserver", 0) < _.get(popTarget, ["reserver", "amount"], 0) || replacementReserver)
 						&& Game.rooms[rmHarvest] != null && Game.rooms[rmHarvest].controller != null
 						&& (Game.rooms[rmHarvest].controller.reservation == null
@@ -962,11 +987,14 @@
 							level: _.get(popTarget, ["reserver", "level"], 1),
 							scale: _.get(popTarget, ["reserver", "scale"], true),
 							body: _.get(popTarget, ["reserver", "body"], "reserver"),
-							name: null, args: { role: "reserver", room: rmHarvest, colony: rmColony }
+							name: null, args: {
+								role: "reserver", room: rmHarvest, colony: rmColony,
+								remote_continuity_critical: preserveHeldReservation
+							}
 						});
 					}
 
-					if (can_mine) {
+					if (can_mine && !suppressRemoteEconomy) {
 						if (_.get(popActual, "burrower", 0) < _.get(popTarget, ["burrower", "amount"], 0)) {
 							Memory["shard"]["spawn_requests"].push({
 								room: rmColony, listRooms: listSpawnRooms,
