@@ -41,6 +41,16 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
         f"Empire load: {load.get('state', 'UNKNOWN')}; growth veto "
         f"{'ON' if load.get('growthVeto') else 'OFF'}; reasons {load.get('reasons') or 'none'}."
     )
+    home_load = load.get("homePopulation", {})
+    spawn_load = load.get("spawnPressure", {})
+    remote_load = load.get("remotePressure", {})
+    lines.append(
+        f"Load metrics: home {home_load.get('alive', 'unknown')}/{home_load.get('desired', 'unknown')} "
+        f"({home_load.get('satisfaction', 'unknown')}%); critical roles {home_load.get('criticalAvailable', 'unknown')}/"
+        f"{home_load.get('criticalDesired', 'unknown')}; spawn queue {spawn_load.get('queueDepth', 'unknown')}, "
+        f"oldest home wait {spawn_load.get('oldestHomeDemandTicks', 'unknown')}; active remote demand "
+        f"{remote_load.get('available', 'unknown')}/{remote_load.get('desired', 'unknown')}."
+    )
     for room, colony in telemetry.colonies.items():
         lines.append(
             f"- {room}: RCL {colony.controller.rcl} ({colony.controller.progressPercent:.1f}%); "
@@ -66,10 +76,13 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
     if telemetry.remoteDrawdownRanking:
         lines.extend(["", "Remote drawdown ranking"])
         for index, item in enumerate(telemetry.remoteDrawdownRanking, 1):
+            value = economics.get(item.get("room"), {}).get("value", {})
+            net = value.get("components", {}).get("estimatedNetValuePer1000")
             lines.append(
                 f"{index}. {item.get('room')}: score {item.get('score')}; {item.get('health')}; "
                 f"staffing deficit {item.get('staffingDeficit')}; spawn burden {item.get('spawnBurden')}; "
-                f"establishment failed {item.get('establishmentFailed')}; recommendation {item.get('recommendation')}."
+                f"estimated net/1k {net if net is not None else 'unknown'}; establishment failed "
+                f"{item.get('establishmentFailed')}; recommendation {item.get('recommendation')}."
             )
     lines.extend(["", "Territorial intelligence"])
     lines.append(
