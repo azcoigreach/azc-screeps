@@ -1345,7 +1345,7 @@
 			listRooms is an array of room names that would be acceptable to spawn the request (user defined)
 		*/
 
-		if (!isPulse_Spawn())
+		if (!this.shouldRunSpawnScheduler())
 			return;
 
 		// Master shard (shard0) processes cross-shard spawn requests
@@ -1599,6 +1599,15 @@
 		}
 
 		Stats_CPU.End("Hive", "processSpawnRequests");
+	},
+
+	shouldRunSpawnScheduler: function () {
+		if (isPulse_Spawn())
+			return true;
+		return _.some(_.values(_.get(Game, "rooms", {})), room => {
+			return _.get(room, ["controller", "my"], false) === true
+				&& _.get(Memory, ["rooms", room.name, "population_recovery", "active"], false) === true;
+		});
 	},
 
 	spawnRequestKey: function (request) {

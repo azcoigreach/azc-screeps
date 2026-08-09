@@ -26,7 +26,10 @@
 				}
 				Stats_CPU.End(rmColony, "Colony-surveyRoom");
 
-				if (isPulse_Spawn()) {
+				// A critically understaffed home cannot leave an idle spawn waiting for
+				// the normal 29-60 tick population pulse. Recovery is deliberately the
+				// only fast path; healthy colonies retain the CPU-saving cadence.
+				if (isPulse_Spawn() || Control.homeRecoveryState(rmColony).active === true) {
 					Stats_CPU.Start(rmColony, "Colony-runPopulation");
 					this.runPopulation(rmColony, listCreeps, listSpawnRooms);
 					Stats_CPU.End(rmColony, "Colony-runPopulation");
@@ -623,7 +626,11 @@
 				}
 				Stats_CPU.End(rmColony, `Mining-${rmHarvest}-surveyRoom`);
 
-				if (isPulse_Spawn()) {
+				// Local mining is part of the home economy and must participate in the
+				// recovery fast path. Remote producers remain pulse-bound (and their
+				// ordinary economy demand is suppressed by runPopulation below).
+				if (isPulse_Spawn() || (rmColony == rmHarvest
+					&& Control.homeRecoveryState(rmColony).active === true)) {
 					Stats_CPU.Start(rmColony, `Mining-${rmHarvest}-runPopulation`);
 					this.runPopulation(rmColony, rmHarvest, listCreeps, listSpawnRooms, hasKeepers);
 					Stats_CPU.End(rmColony, `Mining-${rmHarvest}-runPopulation`);

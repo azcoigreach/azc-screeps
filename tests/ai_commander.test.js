@@ -41,6 +41,9 @@ global.console = {
 	}
 };
 global.isPulse_Mid = function () { return true; };
+global.isPulse_Spawn = function () {
+	return _.get(Memory, ["shard", "pulses", "spawn", "active"], true);
+};
 global.Creep_Body = {
 	getBody: function (name) {
 		return name === "reserver_at" ? new Array(12).fill("move")
@@ -1083,6 +1086,19 @@ test("home recovery latch requires stable staffing before releasing remote work"
 	assert.strictEqual(Control.homeRecoveryState("W1N1").active, true);
 	Game.time = 2021;
 	assert.strictEqual(Control.homeRecoveryState("W1N1").active, false);
+});
+
+test("active home recovery bypasses the randomized spawn pulse", function () {
+	reset({ time: 2000 });
+	AIInterface.initMemory();
+	Memory.shard = { pulses: { spawn: { active: false } } };
+	Game.rooms.W1N1 = { name: "W1N1", controller: { my: true } };
+	_.set(Memory, ["rooms", "W1N1", "population_recovery", "active"], true);
+	assert.strictEqual(Control.shouldRunSpawnScheduler(), true);
+	Memory.rooms.W1N1.population_recovery.active = false;
+	assert.strictEqual(Control.shouldRunSpawnScheduler(), false);
+	Memory.shard.pulses.spawn.active = true;
+	assert.strictEqual(Control.shouldRunSpawnScheduler(), true);
 });
 
 test("critical recovery defers unspawned AI scouts", function () {
