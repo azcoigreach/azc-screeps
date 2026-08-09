@@ -758,6 +758,33 @@ class HistoryStore:
         self.connection.commit()
         return closed
 
+    def record_existing_remote_pauses(self, telemetry: Telemetry) -> None:
+        """Adopt game-side/legacy pauses into the durable human journal once."""
+        for remote in telemetry.operations.remoteMining:
+            if not remote.paused:
+                continue
+            pause = remote.pause or {}
+            paused_tick = int(pause.get("pausedTick") or telemetry.tick)
+            ranking = next(
+                (item for item in telemetry.remoteDrawdownRanking if item.get("room") == remote.room),
+                {},
+            )
+            self.append_journal(
+                paused_tick,
+                "remote_paused",
+                f"Remote {remote.room} temporarily suspended",
+                (
+                    f"The empire became overextended while supporting its remote portfolio. "
+                    f"{remote.room} was suspended by {pause.get('source', 'the deterministic game-side stop-loss')} "
+                    f"because {pause.get('reason', 'its operating result failed deterministic criteria')}. "
+                    f"The pause releases ordinary remote spawn demand while preserving configuration, route data, "
+                    f"intelligence, infrastructure knowledge, and the option to reactivate after stable home recovery."
+                ),
+                {"room": remote.room, "pause": pause, "empireLoad": telemetry.empireLoad, "ranking": ranking},
+                dedupe_key=f"remote-pause:{remote.room}:{paused_tick}",
+            )
+        self.connection.commit()
+
     def complete_operation(
         self,
         operation_id: str,

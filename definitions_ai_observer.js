@@ -550,6 +550,13 @@ global.AIObserver = {
 	_remoteLifecycle: function (remote, site) {
 		if (_.get(site, "ai_paused", false) === true) {
 			let pause = _.get(site, "ai_pause", {});
+			if (pause.pausedTick == null) {
+				let establishment = _.find(_.values(_.get(Memory, ["ai", "establishments"], {})), operation => _.get(operation, "target") === remote.room);
+				pause.state = "PAUSED";
+				pause.pausedTick = _.get(establishment, "updatedTick", Game.time);
+				pause.reason = _.get(establishment, "failureReason", "pre-Phase-6.5 remote pause migrated from existing Memory");
+				pause.source = establishment ? "ESTABLISHMENT_STOP_LOSS" : "LEGACY_MEMORY_MIGRATION";
+			}
 			let minimum = _.get(Memory, ["ai", "policy", "remotePauseMinimumTicks"], 5000);
 			let stableTicks = _.get(Memory, ["ai", "policy", "remoteRecoveryStableTicks"], 3000);
 			let minimumPopulation = _.get(Memory, ["ai", "policy", "remoteRecoveryPopulationSatisfaction"], 85);
@@ -745,11 +752,13 @@ global.AIObserver = {
 				operation.state = "FAILED";
 				operation.failureReason = "deterministic route failure";
 				site.ai_paused = true;
+				site.ai_pause = { state: "PAUSED", pausedTick: Game.time, reason: operation.failureReason, source: "ESTABLISHMENT_STOP_LOSS", recoverySinceTick: null };
 			} else if (_.get(intel, ["controller", "ownerRelation"]) !== "NEUTRAL"
 				&& _.get(intel, ["controller", "ownerRelation"]) !== "SELF") {
 				operation.state = "FAILED";
 				operation.failureReason = "target controller became foreign-owned";
 				site.ai_paused = true;
+				site.ai_pause = { state: "PAUSED", pausedTick: Game.time, reason: operation.failureReason, source: "ESTABLISHMENT_STOP_LOSS", recoverySinceTick: null };
 			} else if (!room) operation.state = "RESERVING";
 			else {
 				let population = _.filter(_.get(Game, "creeps", {}), creep => _.get(creep, ["memory", "room"]) === operation.target);
@@ -764,6 +773,7 @@ global.AIObserver = {
 					operation.state = "FAILED";
 					operation.failureReason = "delivery never began within the startup stop-loss window";
 					site.ai_paused = true;
+					site.ai_pause = { state: "PAUSED", pausedTick: Game.time, reason: operation.failureReason, source: "ESTABLISHMENT_STOP_LOSS", recoverySinceTick: null };
 				} else operation.state = "RESERVING";
 				operation.actualDelivered = Math.max(0, delivered);
 			}
