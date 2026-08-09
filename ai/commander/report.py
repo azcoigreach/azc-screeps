@@ -65,6 +65,7 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
         gross = components.get("grossEnergyPer1000")
         net = components.get("estimatedNetValuePer1000")
         continuity = remote.reservation.continuity or {}
+        lifecycle = remote.reservation.lifecycle
         lines.append(
             f"- {remote.room}: {remote.health}; value {value['quality']} "
             f"(confidence {value['confidence']:.2f}); gross/1k "
@@ -72,6 +73,13 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
             f"{net if net is not None else 'unknown'}; reservation {remote.reservation.ticksToEnd or 0} "
             f"(lead {continuity.get('leadTicks', 'unknown')}); "
             f"stop-loss {remote.stopLoss.state}."
+        )
+        lines.append(
+            f"  reserver lifecycle desired/requested/spawned/en-route/arrived="
+            f"{lifecycle.get('desired', 0)}/{lifecycle.get('requested', 0)}/{lifecycle.get('spawned', 0)}/"
+            f"{lifecycle.get('enRoute', 0)}/{lifecycle.get('arrived', 0)}; active CLAIM parts "
+            f"{lifecycle.get('activeClaimParts', 0)}; minimum TTL {lifecycle.get('minimumTtl', 'none')}; "
+            f"last result {lifecycle.get('lastExecution') or 'none'}."
         )
     if telemetry.remoteDrawdownRanking:
         lines.extend(["", "Remote drawdown ranking"])

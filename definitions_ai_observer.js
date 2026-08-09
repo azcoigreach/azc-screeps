@@ -475,6 +475,14 @@ global.AIObserver = {
 				? "FAILED"
 				: (route.length > 0 ? "CONFIGURED" : (_.get(intel, "routeStatus") === "no_path" ? "FAILED" : "DIRECT"));
 			let population = this._populationSummary(roomName, colony, expected);
+			let reserverCreeps = _.filter(_.get(Game, "creeps", {}), creep => {
+				return _.get(creep, ["memory", "role"]) === "reserver"
+					&& _.get(creep, ["memory", "room"]) === roomName
+					&& _.get(creep, ["memory", "colony"]) === colony;
+			});
+			let reserverClaimParts = _.sum(_.map(reserverCreeps, creep => _.filter(_.get(creep, "body", []), part => {
+				return _.get(part, "type") === (typeof CLAIM !== "undefined" ? CLAIM : "claim") && _.get(part, "hits", 100) > 0;
+			}).length));
 
 			let remote = {
 				room: roomName,
@@ -501,7 +509,19 @@ global.AIObserver = {
 					reserverPresent: _.get(population, ["roles", "reserver", "alive"], 0),
 					reserverSpawning: _.get(population, ["roles", "reserver", "spawning"], 0),
 					reserverQueued: _.get(population, ["roles", "reserver", "queued"], 0),
-					continuity: _.get(site, ["continuity", "reserver"], null)
+					continuity: _.get(site, ["continuity", "reserver"], null),
+					lifecycle: {
+						desired: _.get(population, ["roles", "reserver", "desired"], 0),
+						requested: _.get(population, ["roles", "reserver", "queued"], 0),
+						queued: _.get(population, ["roles", "reserver", "queued"], 0),
+						spawned: reserverCreeps.length,
+						spawning: _.filter(reserverCreeps, creep => _.get(creep, "spawning", false) === true).length,
+						enRoute: _.filter(reserverCreeps, creep => _.get(creep, ["room", "name"]) !== roomName).length,
+						arrived: _.filter(reserverCreeps, creep => _.get(creep, ["room", "name"]) === roomName).length,
+						minimumTtl: reserverCreeps.length > 0 ? _.min(_.map(reserverCreeps, creep => _.get(creep, "ticksToLive", 0) || 0)) : null,
+						activeClaimParts: reserverClaimParts,
+						lastExecution: _.cloneDeep(_.get(site, ["continuity", "reserverExecution"], null))
+					}
 				},
 				continuity: _.get(site, "continuity", {}),
 				population: population,

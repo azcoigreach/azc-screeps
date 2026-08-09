@@ -296,6 +296,7 @@ class ReservationState(StrictModel):
     reserverSpawning: int
     reserverQueued: int
     continuity: dict[str, Any] | None = None
+    lifecycle: dict[str, Any] = Field(default_factory=dict)
 
 
 class RemoteMiningState(StrictModel):

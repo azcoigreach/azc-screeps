@@ -2042,8 +2042,16 @@
 			creep.travel(creep.room.controller)
 			return;
 		} else if (result == ERR_NO_BODYPART) {
+			_.set(Memory, ["sites", "mining", creep.room.name, "continuity", "reserverExecution"], {
+				creep: creep.name, tick: Game.time, result: "ERR_NO_BODYPART", ttl: _.get(creep, "ticksToLive", null), claimParts: 0
+			});
 			return;		// Reservers and colonizers with no "claim" parts prevent null body spawn locking
 		} else if (result == OK) {
+			let claimParts = _.filter(_.get(creep, "body", []), part => _.get(part, "type") === CLAIM && _.get(part, "hits", 0) > 0).length;
+			_.set(Memory, ["sites", "mining", creep.room.name, "continuity", "reserverExecution"], {
+				creep: creep.name, tick: Game.time, result: "OK", ttl: _.get(creep, "ticksToLive", null),
+				claimParts: claimParts, reservationTicks: _.get(creep, ["room", "controller", "reservation", "ticksToEnd"], null)
+			});
 			if (Game.time % 50 == 0) {
 				let room_sign = _.get(Memory, ["hive", "signs", creep.room.name]);
 				let default_sign = _.get(Memory, ["hive", "signs", "default"]);
