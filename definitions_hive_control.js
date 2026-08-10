@@ -1639,12 +1639,18 @@
 	},
 
 	shouldRunSpawnScheduler: function () {
-		if (isPulse_Spawn())
-			return true;
-		return _.some(_.values(_.get(Game, "rooms", {})), room => {
-			return _.get(room, ["controller", "my"], false) === true
-				&& _.get(Memory, ["rooms", room.name, "population_recovery", "active"], false) === true;
+		let recoveryActive = false;
+		_.each(_.values(_.get(Game, "rooms", {})), room => {
+			if (_.get(room, ["controller", "my"], false) !== true
+				|| _.get(Memory, ["rooms", room.name, "population_recovery", "active"], false) !== true)
+				return;
+			// Recovery is a scheduler state machine, not a side effect of having a
+			// request in the queue. Advance it on every recovery wake so an empty,
+			// fully staffed queue can still earn and complete the stability window.
+			let recovery = this.homeRecoveryState(room.name);
+			if (_.get(recovery, "active", false) === true) recoveryActive = true;
 		});
+		return isPulse_Spawn() || recoveryActive;
 	},
 
 	spawnRequestKey: function (request) {

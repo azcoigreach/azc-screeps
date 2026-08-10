@@ -1177,6 +1177,27 @@ test("active home recovery bypasses the randomized spawn pulse", function () {
 	assert.strictEqual(Control.shouldRunSpawnScheduler(), true);
 });
 
+test("quiet scheduler advances and releases a fully staffed recovery latch", function () {
+	reset({ time: 5000 });
+	AIInterface.initMemory();
+	Memory.shard = { pulses: { spawn: { active: false } } };
+	Game.rooms.W1N1 = { name: "W1N1", controller: { my: true } };
+	_.set(Memory, ["ai", "strategy", "empireLoad"], {
+		state: "STRAINED", homePopulation: { satisfaction: 100, criticalSatisfaction: 100 }
+	});
+	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1"], {
+		expected: { worker: 1, upgrader: 1 },
+		actual: { worker: 1, upgrader: 1 }, requested: {}
+	});
+	_.set(Memory, ["rooms", "W1N1", "population_recovery"], {
+		active: true, enteredTick: 1000, stableSinceTick: 2000,
+		unstableSinceTick: null, reason: "EMPIRE_LOAD_CRITICAL"
+	});
+	assert.strictEqual(Control.shouldRunSpawnScheduler(), false);
+	assert.strictEqual(Memory.rooms.W1N1.population_recovery.active, false);
+	assert.strictEqual(Memory.rooms.W1N1.population_recovery.reason, "HOME_RECOVERED");
+});
+
 test("critical recovery defers unspawned AI scouts", function () {
 	reset({ time: 2000 });
 	AIInterface.initMemory();
