@@ -69,6 +69,13 @@ class AutonomyController:
             order = self._resume_remote(telemetry)
             if order:
                 return order
+        # A fully validated, explicitly automatic major operation must not be
+        # starved by the indefinitely replenishable scouting and maintenance
+        # queues. Blocked plans simply fall through to routine work.
+        if authority.execution.autoColonization and not growth_blocked(telemetry):
+            order = self._colonization(telemetry)
+            if order:
+                return order
         if (
             authority.execution.autoRemoteAbandonment
             and not recovering
@@ -85,12 +92,6 @@ class AutonomyController:
                 return order
         if authority.execution.autoRemoteMaintenance:
             order = self._remote_maintenance(telemetry, recovering=recovering)
-            if order:
-                return order
-        if authority.execution.autoColonization:
-            if growth_blocked(telemetry):
-                return None
-            order = self._colonization(telemetry)
             if order:
                 return order
         if authority.execution.autoNewRemotes:

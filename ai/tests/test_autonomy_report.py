@@ -325,7 +325,13 @@ class AutonomyReportTests(unittest.TestCase):
     def test_auto_colonization_selects_only_an_authoritatively_ready_plan(self) -> None:
         payload = telemetry_payload()
         payload["authority"]["mode"] = "execute"
-        payload["authority"]["execution"].update({"colonization": True, "autoColonization": True})
+        payload["authority"]["execution"].update({
+            "colonization": True, "autoColonization": True,
+            "autoScouting": True, "autoRemoteMaintenance": True,
+        })
+        payload["operations"]["remoteMining"][0]["diagnostics"] = [{
+            "diagnostic": "HAULER_SHORTAGE", "severity": "HIGH", "evidence": {}
+        }]
         layout = {"name": "def_hor", "origin": {"x": 20, "y": 20}, "score": 90}
         candidate = payload["expansionCandidates"][0]
         candidate.update({
