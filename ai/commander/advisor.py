@@ -47,8 +47,10 @@ ENSURE_REMOTE_INFRASTRUCTURE, and REBALANCE_REMOTE_LOGISTICS require execute mod
 and allowRemoteMaintenance; automatic dispatch additionally requires
 autoRemoteMaintenance. START_REMOTE_MINING requires execute mode, autoNewRemotes,
 and an eligible remoteCandidates entry with the exact target and origin. The
-deterministic validator is authoritative. Stopping remotes, markets, production,
-automatic claiming, arbitrary Memory, and offensive combat remain forbidden.
+deterministic validator is authoritative. STOP_REMOTE_MINING is reserved for the
+deterministic guarded stop-loss controller or an explicit human CLI request; never
+place it in executable_actions. Markets, production, automatic claiming,
+arbitrary Memory, and offensive combat remain forbidden.
 
 Game.map.getRoomStatus-derived protection telemetry is authoritative. During a
 novice or respawn period, use currentState.empire.protection.rules as the

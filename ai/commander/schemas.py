@@ -377,6 +377,11 @@ class StopLossState(StrictModel):
     badWindows: int = 0
     evidence: list[str] = Field(default_factory=list)
     evaluatedTick: int = 0
+    suppressed: bool = False
+    autoEligibilitySinceTick: int | None = None
+    autoEligibilityRequiredTicks: int = 3000
+    autoEligible: bool = False
+    autoEligibilityEvidence: list[str] = Field(default_factory=list)
 
 
 class CombatOperation(StrictModel):
@@ -621,12 +626,13 @@ class ExecutionAuthority(StrictModel):
     autoRemoteMaintenance: bool
     remotePausing: bool = True
     autoRemotePausing: bool = False
+    remoteAbandonment: bool = False
+    autoRemoteAbandonment: bool = False
     remoteMiningChanges: bool
     newRemotes: bool = False
     autoNewRemotes: bool = False
     colonization: bool = False
     autoColonization: bool = False
-    remoteAbandonment: bool = False
     market: bool
     production: bool
     offensiveCombat: bool
@@ -637,7 +643,7 @@ class AuthorityState(StrictModel):
     allowedActions: list[Literal[
         "NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SET_OPERATIONAL_AUTHORITY", "SET_EXECUTION_MODE", "SCOUT_ROOM", "REASSESS_REMOTE",
         "ENSURE_REMOTE_RESERVATION", "ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS",
-        "PAUSE_REMOTE_MINING", "RESUME_REMOTE_MINING", "START_REMOTE_MINING", "COLONIZE_ROOM"
+        "PAUSE_REMOTE_MINING", "RESUME_REMOTE_MINING", "START_REMOTE_MINING", "STOP_REMOTE_MINING", "COLONIZE_ROOM"
     ]]
     execution: ExecutionAuthority
     matrix: dict[str, dict[str, bool]]
@@ -742,7 +748,7 @@ class StrategicOrder(StrictModel):
     action: Literal[
         "NOOP", "REQUEST_STATUS", "SET_EXPLANATION", "SET_OPERATIONAL_AUTHORITY", "SET_EXECUTION_MODE", "SCOUT_ROOM", "REASSESS_REMOTE",
         "ENSURE_REMOTE_RESERVATION", "ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS",
-        "PAUSE_REMOTE_MINING", "RESUME_REMOTE_MINING", "START_REMOTE_MINING", "COLONIZE_ROOM"
+        "PAUSE_REMOTE_MINING", "RESUME_REMOTE_MINING", "STOP_REMOTE_MINING", "START_REMOTE_MINING", "COLONIZE_ROOM"
     ]
     parameters: dict[str, Any]
     reason: str

@@ -5,12 +5,13 @@ Segments 90 and 92, stores bounded strategic history in SQLite, maintains a
 heartbeat through Segment 91, and requests structured OpenAI advisories.
 Deterministic Phase 5 policy can continuously maintain existing remotes and map
 territory; a separately authorized model proposal may select one prevalidated new
-remote. Phase 6 ranks permanent-colony candidates, validates AZC blueprint
+remote. A separately authorized deterministic stop-loss controller can archive
+and remove one persistently failing remote at a time. Phase 6 ranks permanent-colony candidates, validates AZC blueprint
 origins, models remote-to-colony conversion costs, chooses a healthy origin,
 and tracks colonization through claim, spawn, local economy, and independent
 spawning. Automatic colonization is implemented but defaults off; the first live
-claim remains human-gated. Arbitrary state writes, abandonment, markets,
-production, and offensive combat remain unavailable.
+claim remains human-gated. Arbitrary state writes, markets, production, and
+offensive combat remain unavailable.
 
 The commander is protection-aware. `status`, `intel`, `candidates`, and periodic
 reports distinguish global GCL slots from the current Novice/Respawn-region claim

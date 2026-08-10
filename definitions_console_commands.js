@@ -162,6 +162,28 @@
 			return `[AI] Automatic new remote establishment ${allowed ? "enabled" : "disabled"} by human operator.`;
 		};
 
+		help_ai.push('ai.remoteAbandonment(true|false) - Allow or deny guarded remote abandonment');
+		ai.remoteAbandonment = function (allowed) {
+			if (!_.isBoolean(allowed)) return "[AI] Error: remote abandonment policy must be true or false.";
+			AIInterface.setAuthorityValue("allowRemoteAbandonment", allowed, "HUMAN_CONSOLE", "HUMAN", "ai.remoteAbandonment console command");
+			if (!allowed) AIInterface.setAuthorityValue("autoRemoteAbandonment", false, "HUMAN_CONSOLE", "HUMAN", "ai.remoteAbandonment disabled");
+			return `[AI] Guarded remote abandonment ${allowed ? "enabled" : "disabled"} by human operator.`;
+		};
+
+		help_ai.push('ai.autoRemoteAbandonment(true|false) - Allow sustained stop-loss evidence to archive one remote at a time');
+		ai.autoRemoteAbandonment = function (allowed) {
+			if (!_.isBoolean(allowed)) return "[AI] Error: automatic remote abandonment policy must be true or false.";
+			AIInterface.setAuthorityValue("allowRemoteAbandonment", allowed, "HUMAN_CONSOLE", "HUMAN", "ai.autoRemoteAbandonment console command");
+			AIInterface.setAuthorityValue("autoRemoteAbandonment", allowed, "HUMAN_CONSOLE", "HUMAN", "ai.autoRemoteAbandonment console command");
+			return `[AI] Automatic guarded remote abandonment ${allowed ? "enabled" : "disabled"} by human operator.`;
+		};
+
+		help_ai.push('ai.abandonedRemotes() - Show archived remote configurations available for recovery');
+		ai.abandonedRemotes = function () {
+			AIInterface.initMemory();
+			return JSON.stringify(_.get(Memory, ["ai", "abandonedRemotes"], {}), null, 2);
+		};
+
 		help_ai.push('ai.colonization(true|false) - Allow or deny guarded manual colonization');
 		ai.colonization = function (allowed) {
 			if (!_.isBoolean(allowed)) return "[AI] Error: colonization policy must be true or false.";

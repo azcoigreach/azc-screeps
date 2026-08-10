@@ -35,6 +35,7 @@ global.AIInterface = {
 		REBALANCE_REMOTE_LOGISTICS: true,
 		PAUSE_REMOTE_MINING: true,
 		RESUME_REMOTE_MINING: true,
+		STOP_REMOTE_MINING: true,
 		START_REMOTE_MINING: true,
 		COLONIZE_ROOM: true
 	},
@@ -70,6 +71,10 @@ global.AIInterface = {
 		this._default(["ai", "policy", "autoRemoteMaintenance"], false, _.isBoolean);
 		this._default(["ai", "policy", "allowRemotePausing"], true, _.isBoolean);
 		this._default(["ai", "policy", "autoRemotePausing"], false, _.isBoolean);
+		this._default(["ai", "policy", "allowRemoteAbandonment"], false, _.isBoolean);
+		this._default(["ai", "policy", "autoRemoteAbandonment"], false, _.isBoolean);
+		this._default(["ai", "policy", "autoAbandonEvidenceTicks"], 3000, value => this._isInteger(value) && value >= 1000);
+		this._default(["ai", "policy", "abandonedRemoteArchiveLimit"], 20, value => this._isInteger(value) && value >= 5 && value <= 100);
 		this._default(["ai", "policy", "allowNewRemotes"], false, _.isBoolean);
 		this._default(["ai", "policy", "autoNewRemotes"], false, _.isBoolean);
 		this._default(["ai", "policy", "allowColonization"], false, _.isBoolean);
@@ -299,9 +304,9 @@ global.AIInterface = {
 				return "explanation must be a non-empty string of at most 2000 characters";
 		}
 		if (order.action === "SET_OPERATIONAL_AUTHORITY") {
-			let allowedKeys = ["scouting", "remoteMaintenance", "newRemotes", "colonization"];
+			let allowedKeys = ["scouting", "remoteMaintenance", "newRemotes", "colonization", "remoteAbandonment"];
 			if (!_.has(order.parameters, "scouting") || !_.has(order.parameters, "remoteMaintenance") || _.some(keys, key => !_.includes(allowedKeys, key)))
-				return "SET_OPERATIONAL_AUTHORITY requires scouting and remoteMaintenance, with optional newRemotes and colonization";
+				return "SET_OPERATIONAL_AUTHORITY requires scouting and remoteMaintenance, with optional newRemotes, colonization, and remoteAbandonment";
 			if (!_.includes(["OFF", "MANUAL", "AUTO"], order.parameters.scouting))
 				return "scouting authority must be OFF, MANUAL, or AUTO";
 			if (!_.includes(["OFF", "MANUAL", "AUTO"], order.parameters.remoteMaintenance))
@@ -310,6 +315,8 @@ global.AIInterface = {
 				return "newRemotes authority must be OFF, MANUAL, or AUTO";
 			if (_.has(order.parameters, "colonization") && !_.includes(["OFF", "MANUAL", "AUTO"], order.parameters.colonization))
 				return "colonization authority must be OFF, MANUAL, or AUTO";
+			if (_.has(order.parameters, "remoteAbandonment") && !_.includes(["OFF", "MANUAL", "AUTO"], order.parameters.remoteAbandonment))
+				return "remoteAbandonment authority must be OFF, MANUAL, or AUTO";
 		}
 		if (order.action === "SET_EXECUTION_MODE") {
 			if (keys.length !== 1 || !_.has(order.parameters, "mode"))
@@ -343,7 +350,7 @@ global.AIInterface = {
 			if (!colony || _.get(colony, ["controller", "my"], false) !== true)
 				return `${order.action} remote colony is not owned and visible`;
 		}
-		if (_.includes(["PAUSE_REMOTE_MINING", "RESUME_REMOTE_MINING"], order.action)) {
+		if (_.includes(["PAUSE_REMOTE_MINING", "RESUME_REMOTE_MINING", "STOP_REMOTE_MINING"], order.action)) {
 			if (keys.length !== 1 || !_.has(order.parameters, "room") || !this._isRoomName(order.parameters.room))
 				return `${order.action} requires one valid remote room`;
 			let site = _.get(Memory, ["sites", "mining", order.parameters.room]);
@@ -353,6 +360,13 @@ global.AIInterface = {
 				return `${order.parameters.room} is already paused`;
 			if (order.action === "RESUME_REMOTE_MINING" && _.get(site, "ai_paused", false) !== true)
 				return `${order.parameters.room} is not paused`;
+			if (order.action === "STOP_REMOTE_MINING") {
+				let activeColonization = _.has(Memory, ["sites", "colonization", order.parameters.room])
+					|| _.some(_.values(_.get(Memory, ["ai", "colonizations"], {})), operation =>
+						_.get(operation, "target") === order.parameters.room
+						&& !_.includes(["SUCCESS", "FAILED"], _.get(operation, "state")));
+				if (activeColonization) return `${order.parameters.room} is an active colonization target`;
+			}
 		}
 		if (_.includes(["START_REMOTE_MINING", "COLONIZE_ROOM"], order.action)) {
 			let expectedKeys = order.action === "START_REMOTE_MINING" ? ["origin", "target"] : ["origin", "target", "layout"];
@@ -578,6 +592,9 @@ global.AIInterface = {
 		if (_.includes(["PAUSE_REMOTE_MINING", "RESUME_REMOTE_MINING"], order.action)
 			&& !_.get(Memory, ["ai", "policy", "allowRemotePausing"], true))
 			return "Temporary remote load shedding is not authorized by policy";
+		if (order.action === "STOP_REMOTE_MINING"
+			&& !_.get(Memory, ["ai", "policy", "allowRemoteAbandonment"], false))
+			return "Remote abandonment is not authorized by policy";
 		if (order.action === "START_REMOTE_MINING" && !_.get(Memory, ["ai", "policy", "allowNewRemotes"], false))
 			return "New remote establishment is not authorized by policy";
 		let duplicateRemoteStart = order.action === "START_REMOTE_MINING" && _.has(Memory, ["sites", "mining", _.get(order, ["parameters", "target"])]);
@@ -612,6 +629,7 @@ global.AIInterface = {
 			let remotes = order.parameters.remoteMaintenance;
 			let newRemotes = _.get(order.parameters, "newRemotes", "OFF");
 			let colonization = _.get(order.parameters, "colonization", "OFF");
+			let abandonment = _.get(order.parameters, "remoteAbandonment", "OFF");
 			let reason = _.get(order, "reason", "Commander authority order");
 			this.setAuthorityValue("allowScouting", scouting !== "OFF", "COMMANDER_ORDER", "COMMANDER", reason);
 			this.setAuthorityValue("autoScouting", scouting === "AUTO", "COMMANDER_ORDER", "COMMANDER", reason);
@@ -621,7 +639,9 @@ global.AIInterface = {
 			this.setAuthorityValue("autoNewRemotes", newRemotes === "AUTO", "COMMANDER_ORDER", "COMMANDER", reason);
 			this.setAuthorityValue("allowColonization", colonization !== "OFF", "COMMANDER_ORDER", "COMMANDER", reason);
 			this.setAuthorityValue("autoColonization", colonization === "AUTO", "COMMANDER_ORDER", "COMMANDER", reason);
-			return `Operational authority set: scouting=${scouting}, remoteMaintenance=${remotes}, newRemotes=${newRemotes}, colonization=${colonization}`;
+			this.setAuthorityValue("allowRemoteAbandonment", abandonment !== "OFF", "COMMANDER_ORDER", "COMMANDER", reason);
+			this.setAuthorityValue("autoRemoteAbandonment", abandonment === "AUTO", "COMMANDER_ORDER", "COMMANDER", reason);
+			return `Operational authority set: scouting=${scouting}, remoteMaintenance=${remotes}, newRemotes=${newRemotes}, colonization=${colonization}, remoteAbandonment=${abandonment}`;
 		}
 		if (order.action === "SET_EXECUTION_MODE") {
 			this.setAuthorityValue("mode", order.parameters.mode, "COMMANDER_ORDER", "COMMANDER", _.get(order, "reason"));
@@ -638,6 +658,8 @@ global.AIInterface = {
 			return this._pauseRemoteMining(order);
 		if (order.action === "RESUME_REMOTE_MINING")
 			return this._resumeRemoteMining(order);
+		if (order.action === "STOP_REMOTE_MINING")
+			return this._stopRemoteMining(order);
 		if (order.action === "START_REMOTE_MINING")
 			return this._startRemoteMining(order);
 		if (order.action === "COLONIZE_ROOM")
@@ -670,10 +692,47 @@ global.AIInterface = {
 		return `Remote mining in ${roomName} resumed from preserved configuration`;
 	},
 
+	_stopRemoteMining: function (order) {
+		let roomName = order.parameters.room;
+		let site = _.get(Memory, ["sites", "mining", roomName]);
+		let archive = {
+			room: roomName,
+			colony: _.get(site, "colony", null),
+			abandonedTick: Game.time,
+			orderId: order.id,
+			reason: _.get(order, "reason", "remote stop-loss abandonment"),
+			site: _.cloneDeep(site),
+			objectives: _.cloneDeep(_.get(Memory, ["ai", "remoteObjectives", roomName], null)),
+			metrics: _.cloneDeep(_.get(Memory, ["ai", "metrics", "remotes", roomName], null)),
+			establishment: _.cloneDeep(_.get(Memory, ["ai", "establishments", roomName], null))
+		};
+		_.set(Memory, ["ai", "abandonedRemotes", roomName], archive);
+		let archived = _.get(Memory, ["ai", "abandonedRemotes"], {});
+		let limit = _.get(Memory, ["ai", "policy", "abandonedRemoteArchiveLimit"], 20);
+		let archiveRooms = _.sortBy(_.keys(archived), name => _.get(archived, [name, "abandonedTick"], 0));
+		while (archiveRooms.length > limit) delete archived[archiveRooms.shift()];
+
+		delete Memory.sites.mining[roomName];
+		if (_.has(Memory, ["ai", "remoteObjectives", roomName])) delete Memory.ai.remoteObjectives[roomName];
+		if (_.has(Memory, ["ai", "establishments", roomName])) delete Memory.ai.establishments[roomName];
+		_.each([["shard", "spawn_requests"], ["hive", "spawn_requests"]], path => {
+			let requests = _.get(Memory, path, []);
+			_.set(Memory, path, _.filter(requests, request => _.get(request, ["args", "room"]) !== roomName));
+		});
+		let wait = _.get(Memory, ["shard", "spawn_wait"], {});
+		_.each(_.keys(wait), key => {
+			let parts = key.split("|");
+			if (parts[1] === roomName) delete wait[key];
+		});
+		return `Remote mining in ${roomName} abandoned; configuration archived for recovery`;
+	},
+
 	_startRemoteMining: function (order) {
 		let origin = order.parameters.origin, target = order.parameters.target;
 		if (_.has(Memory, ["sites", "mining", target]))
 			return `Remote ${target} is already configured; no duplicate was created`;
+		if (_.has(Memory, ["ai", "metrics", "remotes", target, "stopLoss"]))
+			delete Memory.ai.metrics.remotes[target].stopLoss;
 		let eligibility = this._strategicEligibility(order.action, order.parameters);
 		if (!eligibility.valid) throw new Error(eligibility.reason);
 		let active = _.filter(_.values(_.get(Memory, ["ai", "establishments"], {})), operation =>
@@ -1184,6 +1243,7 @@ global.AIInterface = {
 			`Scouting: ${policy.allowScouting ? (policy.autoScouting ? "AUTO" : "allowed") : "disabled"}`,
 			`Existing Remote Maintenance: ${policy.allowRemoteMaintenance ? (policy.autoRemoteMaintenance ? "AUTO" : "allowed") : "disabled"}`,
 			`New Remote Establishment: ${policy.allowNewRemotes ? (policy.autoNewRemotes ? "AUTO" : "allowed") : "disabled"}`,
+			`Remote Abandonment: ${policy.allowRemoteAbandonment ? (policy.autoRemoteAbandonment ? "AUTO" : "manual only") : "disabled"}`,
 			`Colonization: ${policy.allowColonization ? (policy.autoColonization ? "AUTO" : "allowed") : "disabled"}`,
 			`Offensive Combat: disabled`
 		];
@@ -1220,7 +1280,7 @@ global.AIInterface = {
 			`PAUSE_REMOTE_MINING: ${policy.allowRemotePausing ? (policy.autoRemotePausing ? "AUTO" : "MANUAL") : "DISABLED"}`,
 			`RESUME_REMOTE_MINING: ${policy.allowRemotePausing ? (policy.autoRemotePausing ? "AUTO" : "MANUAL") : "DISABLED"}`,
 			`START_REMOTE_MINING: ${policy.allowNewRemotes ? (policy.autoNewRemotes ? "AUTO" : "MANUAL") : "DISABLED"}`,
-			"STOP_REMOTE_MINING: UNSUPPORTED / HUMAN GATED",
+			`STOP_REMOTE_MINING: ${policy.allowRemoteAbandonment ? (policy.autoRemoteAbandonment ? "AUTO" : "MANUAL") : "DISABLED"}`,
 			`COLONIZE_ROOM: ${policy.allowColonization ? (policy.autoColonization ? "AUTO" : "MANUAL") : "DISABLED"}`,
 			"ATTACK_ROOM: DISABLED", "MARKET: DISABLED", "PRODUCTION: DISABLED"
 		].join("\n");
@@ -1231,6 +1291,7 @@ global.AIInterface = {
 		return JSON.stringify({
 			activeOrders: _.get(Memory, ["ai", "orders", "active"], []),
 			remoteObjectives: _.get(Memory, ["ai", "remoteObjectives"], {}),
+			abandonedRemotes: _.get(Memory, ["ai", "abandonedRemotes"], {}),
 			scoutHistory: _.get(Memory, ["ai", "scoutHistory"], []).slice(-10)
 		}, null, 2);
 	},

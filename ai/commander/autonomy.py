@@ -42,6 +42,7 @@ class AutonomyController:
 
     ROUTINE_COOLDOWN = 500
     SCOUT_COOLDOWN = 250
+    ABANDON_COOLDOWN = 5000
 
     def __init__(self, history: HistoryStore, transport: CommanderTransport) -> None:
         self.history = history
@@ -66,6 +67,14 @@ class AutonomyController:
             and current_load in {"HEALTHY", "STRAINED"}
         ):
             order = self._resume_remote(telemetry)
+            if order:
+                return order
+        if (
+            authority.execution.autoRemoteAbandonment
+            and not recovering
+            and current_load in {"HEALTHY", "STRAINED"}
+        ):
+            order = self._abandon_remote(telemetry)
             if order:
                 return order
         # Frontier scouting gets a bounded opportunity ahead of routine repairs,
@@ -267,6 +276,36 @@ class AutonomyController:
         return self.transport.send_safe_command(
             "RESUME_REMOTE_MINING", {"room": remote.room},
             reason=f"Stable home recovery permits hysteretic reactivation of {remote.room}",
+        )
+
+    def _abandon_remote(self, telemetry: Telemetry) -> StrategicOrder | None:
+        converting = {
+            operation.target for operation in telemetry.operations.colonizations
+            if operation.target is not None and operation.state not in {"SUCCESS", "FAILED"}
+        }
+        candidates = [
+            remote for remote in telemetry.operations.remoteMining
+            if remote.active and not remote.paused and remote.room not in converting
+            and remote.stopLoss.state == "ABANDON_RECOMMENDED"
+            and remote.stopLoss.autoEligible
+            and bool(remote.stopLoss.autoEligibilityEvidence)
+        ]
+        if not candidates or not self._cooled_down(
+            "STOP_REMOTE_MINING", "*", telemetry.tick, self.ABANDON_COOLDOWN
+        ):
+            return None
+        ranking = {item["room"]: item for item in self.drawdown_ranking(telemetry)}
+        remote = sorted(
+            candidates,
+            key=lambda item: (
+                -float(ranking.get(item.room, {}).get("score") or 0), item.room
+            ),
+        )[0]
+        evidence = ", ".join(remote.stopLoss.autoEligibilityEvidence)
+        return self.transport.send_safe_command(
+            "STOP_REMOTE_MINING", {"room": remote.room},
+            reason=(f"Automatic guarded abandonment after sustained post-recovery stop-loss evidence: "
+                    f"{evidence}; bad windows {remote.stopLoss.badWindows}"),
         )
 
     def _new_remote(self, telemetry: Telemetry) -> StrategicOrder | None:

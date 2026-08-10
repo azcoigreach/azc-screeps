@@ -178,14 +178,14 @@ class CommanderTransport:
             if set(params) != {"explanation"} or not isinstance(explanation, str) or not 1 <= len(explanation) <= 2000:
                 raise TransportError("SET_EXPLANATION requires a 1-2000 character explanation")
         if action == "SET_OPERATIONAL_AUTHORITY":
-            allowed = {"scouting", "remoteMaintenance", "newRemotes", "colonization"}
+            allowed = {"scouting", "remoteMaintenance", "newRemotes", "colonization", "remoteAbandonment"}
             if not {"scouting", "remoteMaintenance"}.issubset(params) or not set(params).issubset(allowed):
-                raise TransportError("SET_OPERATIONAL_AUTHORITY requires scouting and remoteMaintenance with optional newRemotes and colonization")
+                raise TransportError("SET_OPERATIONAL_AUTHORITY requires scouting and remoteMaintenance with optional newRemotes, colonization, and remoteAbandonment")
             if params["scouting"] not in {"OFF", "MANUAL", "AUTO"}:
                 raise TransportError("scouting authority must be OFF, MANUAL, or AUTO")
             if params["remoteMaintenance"] not in {"OFF", "MANUAL", "AUTO"}:
                 raise TransportError("remoteMaintenance authority must be OFF, MANUAL, or AUTO")
-            for field in ("newRemotes", "colonization"):
+            for field in ("newRemotes", "colonization", "remoteAbandonment"):
                 if field in params and params[field] not in {"OFF", "MANUAL", "AUTO"}:
                     raise TransportError(f"{field} authority must be OFF, MANUAL, or AUTO")
         if action == "SET_EXECUTION_MODE":
@@ -199,7 +199,7 @@ class CommanderTransport:
         if action in {
             "REASSESS_REMOTE", "ENSURE_REMOTE_RESERVATION",
             "ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS",
-            "PAUSE_REMOTE_MINING", "RESUME_REMOTE_MINING",
+            "PAUSE_REMOTE_MINING", "RESUME_REMOTE_MINING", "STOP_REMOTE_MINING",
         }:
             room = params.get("room")
             if set(params) != {"room"} or not self._room_name(room):

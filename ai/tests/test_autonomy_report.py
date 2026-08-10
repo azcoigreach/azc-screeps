@@ -156,6 +156,58 @@ class AutonomyReportTests(unittest.TestCase):
         self.assertEqual(len(transport.sent), 1)
         self.assertEqual(self.history.recent_operations()[0]["action"], "PAUSE_REMOTE_MINING")
 
+    def test_auto_abandonment_requires_fresh_unsuppressed_stop_loss_evidence(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"]["remoteAbandonment"] = True
+        payload["authority"]["execution"]["autoRemoteAbandonment"] = True
+        payload["authority"]["execution"]["autoScouting"] = False
+        payload["authority"]["execution"]["autoRemoteMaintenance"] = False
+        remote = payload["operations"]["remoteMining"][0]
+        remote["health"] = "FAILING"
+        remote["lifecycleState"] = "ABANDON_RECOMMENDED"
+        remote["stopLoss"].update({
+            "state": "ABANDON_RECOMMENDED", "badWindows": 4,
+            "autoEligibilitySinceTick": payload["tick"] - 3000,
+            "autoEligibilityRequiredTicks": 3000,
+            "autoEligible": True,
+            "autoEligibilityEvidence": ["delivery_near_zero"],
+        })
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        order = AutonomyController(self.history, transport).run(telemetry)
+        self.assertIsNotNone(order)
+        self.assertEqual(order.action, "STOP_REMOTE_MINING")
+        self.assertEqual(order.parameters, {"room": "W1N2"})
+
+        recovery_payload = telemetry_payload()
+        recovery_payload["authority"]["mode"] = "execute"
+        recovery_payload["authority"]["execution"].update({
+            "remoteAbandonment": True, "autoRemoteAbandonment": True,
+        })
+        recovery_remote = recovery_payload["operations"]["remoteMining"][0]
+        recovery_remote["lifecycleState"] = "ABANDON_RECOMMENDED"
+        recovery_remote["stopLoss"].update({
+            "state": "ABANDON_RECOMMENDED", "badWindows": 4,
+            "autoEligible": True,
+            "autoEligibilityEvidence": ["delivery_near_zero"],
+        })
+        recovery_payload["empireLoad"] = {
+            "state": "HEALTHY", "growthVeto": False,
+            "schedulerRecovery": {"active": True, "rooms": {}},
+            "homePopulation": {"satisfaction": 100, "criticalSatisfaction": 100},
+            "spawnPressure": {"queueDepth": 0},
+        }
+        recovery = Telemetry.model_validate(recovery_payload)
+        other_history = HistoryStore(Path(self.temp.name) / "recovery-abandon.db")
+        try:
+            blocked = AutonomyController(
+                other_history, FakeTransport(other_history, recovery.tick)
+            ).run(recovery)
+            self.assertIsNone(blocked)
+        finally:
+            other_history.close()
+
     def test_autonomous_scouting_is_bounded_and_resolves_unknown_intel(self) -> None:
         payload = telemetry_payload()
         payload["authority"]["mode"] = "execute"

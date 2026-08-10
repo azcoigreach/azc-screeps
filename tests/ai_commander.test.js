@@ -286,7 +286,7 @@ test("malformed JSON does not throw", function () {
 test("unsupported actions are rejected", function () {
 	reset();
 	configureExecution();
-	putInbox(order("unsupported-1", "STOP_REMOTE_MINING"));
+	putInbox(order("unsupported-1", "ATTACK_ROOM"));
 	assert.strictEqual(Memory.ai.orders.rejected[0].reason, "Unsupported action");
 	assert.strictEqual(Memory.ai.orders.completed.length, 0);
 });
@@ -343,12 +343,14 @@ test("narrow operational authority changes are validated and work in observe mod
 	AIInterface.initMemory();
 	Memory.ai.enabled = true;
 	putInbox(order("authority-1", "SET_OPERATIONAL_AUTHORITY", {
-		parameters: { scouting: "AUTO", remoteMaintenance: "MANUAL" }
+		parameters: { scouting: "AUTO", remoteMaintenance: "MANUAL", remoteAbandonment: "AUTO" }
 	}));
 	assert.strictEqual(Memory.ai.policy.allowScouting, true);
 	assert.strictEqual(Memory.ai.policy.autoScouting, true);
 	assert.strictEqual(Memory.ai.policy.allowRemoteMaintenance, true);
 	assert.strictEqual(Memory.ai.policy.autoRemoteMaintenance, false);
+	assert.strictEqual(Memory.ai.policy.allowRemoteAbandonment, true);
+	assert.strictEqual(Memory.ai.policy.autoRemoteAbandonment, true);
 	assert.strictEqual(Memory.ai.orders.completed[0].action, "SET_OPERATIONAL_AUTHORITY");
 
 	RawMemory.segments[91] = "";
@@ -683,7 +685,7 @@ test("telemetry schema v8 reports identity, capabilities, defense, territory, lo
 		remoteMaintenance: false, autoRemoteMaintenance: false, remoteMiningChanges: false,
 		remotePausing: true, autoRemotePausing: false,
 		newRemotes: false, autoNewRemotes: false, colonization: false,
-		autoColonization: false, remoteAbandonment: false,
+		autoColonization: false, remoteAbandonment: false, autoRemoteAbandonment: false,
 		market: false, production: false, offensiveCombat: false
 	});
 });
@@ -1285,6 +1287,86 @@ test("remote maintenance actions require authority and delegate only existing-re
 	RawMemory.segments[91] = "";
 	putInbox(order("remote-bad-1", "REASSESS_REMOTE", { parameters: { room: "W9N9" } }));
 	assert.ok(Memory.ai.orders.rejected[0].reason.indexOf("not an existing remote") >= 0);
+});
+
+test("STOP_REMOTE_MINING is authority-gated and archives configuration before removal", function () {
+	reset();
+	configureExecution();
+	Game.rooms.W1N1 = { name: "W1N1", controller: { my: true } };
+	Memory.sites.mining.W1N2 = { colony: "W1N1", can_mine: true, custom: { keep: "recoverable" } };
+	Memory.ai.remoteObjectives.W1N2 = { logistics: { orderId: "old" } };
+	Memory.ai.establishments.W1N2 = { target: "W1N2", state: "FAILED" };
+	Memory.ai.metrics.remotes = { W1N2: { energyDeliveredTotal: 1234 } };
+	Memory.ai.intelligence.rooms.W1N2 = { room: "W1N2", lastSeenTick: Game.time };
+	Memory.hive = { spawn_requests: [
+		{ args: { room: "W1N2", role: "carrier" } },
+		{ args: { room: "W2N2", role: "carrier" } }
+	] };
+	Memory.shard = {
+		spawn_requests: [
+			{ args: { room: "W1N2", role: "burrower" } },
+			{ args: { room: "W2N2", role: "burrower" } }
+		],
+		spawn_wait: {
+			"W1N1|W1N2|carrier|": { firstSeenTick: 1 },
+			"W1N1|W2N2|carrier|": { firstSeenTick: 1 }
+		}
+	};
+	putInbox(order("abandon-denied", "STOP_REMOTE_MINING", { parameters: { room: "W1N2" } }));
+	assert.strictEqual(Memory.ai.orders.rejected[0].reason, "Remote abandonment is not authorized by policy");
+	assert.ok(Memory.sites.mining.W1N2);
+
+	Game.time++;
+	Memory.ai.policy.allowRemoteAbandonment = true;
+	RawMemory.segments[91] = "";
+	putInbox(order("abandon-ok", "STOP_REMOTE_MINING", { parameters: { room: "W1N2" } }));
+	assert.strictEqual(Memory.sites.mining.W1N2, undefined);
+	assert.strictEqual(Memory.ai.abandonedRemotes.W1N2.site.custom.keep, "recoverable");
+	assert.strictEqual(Memory.ai.abandonedRemotes.W1N2.metrics.energyDeliveredTotal, 1234);
+	assert.strictEqual(Memory.ai.remoteObjectives.W1N2, undefined);
+	assert.strictEqual(Memory.ai.establishments.W1N2, undefined);
+	assert.strictEqual(Memory.hive.spawn_requests.length, 1);
+	assert.strictEqual(Memory.shard.spawn_requests.length, 1);
+	assert.strictEqual(Memory.shard.spawn_wait["W1N1|W1N2|carrier|"], undefined);
+	assert.ok(Memory.shard.spawn_wait["W1N1|W2N2|carrier|"]);
+	assert.ok(Memory.ai.intelligence.rooms.W1N2);
+	assert.ok(_.last(Memory.ai.orders.completed).message.includes("archived for recovery"));
+});
+
+test("automatic abandonment evidence resets during recovery and manual pause", function () {
+	reset({ time: 10000 });
+	AIInterface.initMemory();
+	Memory.ai.policy.autoAbandonEvidenceTicks = 3000;
+	Memory.ai.metrics.remotes = { W1N2: { stopLoss: {
+		badWindows: 3, state: "ABANDON_RECOMMENDED", evaluatedTick: 9000,
+		autoEligibilitySinceTick: 7000
+	} } };
+	let remote = {
+		room: "W1N2", colony: "W1N1", active: true, paused: false, health: "FAILING",
+		reasons: ["LOW_DELIVERY"]
+	};
+	Memory.rooms.W1N1 = { population_recovery: { active: true } };
+	let result = AIObserver._stopLoss(remote);
+	assert.strictEqual(result.suppressed, true);
+	assert.strictEqual(result.autoEligibilitySinceTick, null);
+	assert.strictEqual(result.autoEligible, false);
+
+	Memory.rooms.W1N1.population_recovery.active = false;
+	Game.time = 11000;
+	result = AIObserver._stopLoss(remote);
+	assert.strictEqual(result.autoEligibilitySinceTick, 11000);
+	assert.strictEqual(result.autoEligible, false);
+	Game.time = 14000;
+	result = AIObserver._stopLoss(remote);
+	assert.strictEqual(result.autoEligible, true);
+	assert.deepStrictEqual(result.autoEligibilityEvidence, ["delivery_near_zero"]);
+
+	remote.paused = true;
+	Game.time++;
+	result = AIObserver._stopLoss(remote);
+	assert.strictEqual(result.suppressed, true);
+	assert.strictEqual(result.autoEligibilitySinceTick, null);
+	assert.strictEqual(result.autoEligible, false);
 });
 
 function configureStrategicCandidate(target) {

@@ -291,6 +291,10 @@ class TransportHistoryTests(unittest.TestCase):
             transport.send_safe_command("ATTACK_ROOM", reason="forbidden")
         with self.assertRaises(TransportError):
             transport.send_safe_command("SET_EXPLANATION", {"explanation": ""}, reason="invalid")
+        stop = transport.send_safe_command(
+            "STOP_REMOTE_MINING", {"room": "W1N2"}, reason="guarded stop-loss"
+        )
+        self.assertEqual(stop.action, "STOP_REMOTE_MINING")
 
     def test_new_remote_and_colonization_commands_have_narrow_parameters(self) -> None:
         fake = FakeScreepsClient(json.dumps(telemetry_payload()), json.dumps(status_payload()))
@@ -331,10 +335,11 @@ class TransportHistoryTests(unittest.TestCase):
         transport.poll()
         command = transport.send_safe_command(
             "SET_OPERATIONAL_AUTHORITY",
-            {"scouting": "AUTO", "remoteMaintenance": "OFF"},
+            {"scouting": "AUTO", "remoteMaintenance": "OFF", "remoteAbandonment": "AUTO"},
             reason="human policy change",
         )
         self.assertEqual(command.parameters["scouting"], "AUTO")
+        self.assertEqual(command.parameters["remoteAbandonment"], "AUTO")
         self.history.update_command(command.id, "completed")
         with self.assertRaisesRegex(TransportError, "OFF, MANUAL, or AUTO"):
             transport.send_safe_command(

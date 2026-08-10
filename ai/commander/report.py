@@ -33,7 +33,8 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
         f"remote maintenance {'AUTO' if telemetry.authority.execution.autoRemoteMaintenance else 'MANUAL' if telemetry.authority.execution.remoteMaintenance else 'OFF'}; "
         f"new remotes {'AUTO' if telemetry.authority.execution.autoNewRemotes else 'MANUAL' if telemetry.authority.execution.newRemotes else 'OFF'}; "
         f"colonization {'AUTO' if telemetry.authority.execution.autoColonization else 'MANUAL' if telemetry.authority.execution.colonization else 'OFF'}; "
-        "remote abandonment OFF; offensive combat OFF.", "",
+        f"remote abandonment {'AUTO' if telemetry.authority.execution.autoRemoteAbandonment else 'MANUAL' if telemetry.authority.execution.remoteAbandonment else 'OFF'}; "
+        "offensive combat OFF.", "",
         "Population and energy",
     ]
     load = telemetry.empireLoad

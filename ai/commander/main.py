@@ -54,6 +54,7 @@ def parser() -> argparse.ArgumentParser:
     authority.add_argument("--remotes", choices=("OFF", "MANUAL", "AUTO"), required=True)
     authority.add_argument("--new-remotes", choices=("OFF", "MANUAL", "AUTO"), default="OFF")
     authority.add_argument("--colonization", choices=("OFF", "MANUAL", "AUTO"), default="OFF")
+    authority.add_argument("--abandonment", choices=("OFF", "MANUAL", "AUTO"), default="OFF")
     mode = commands.add_parser("set-mode", help="set observe or execute mode through the audited inbox")
     mode.add_argument("mode", choices=("observe", "execute"))
     scout = commands.add_parser("scout", help="queue the guarded SCOUT_ROOM action")
@@ -66,6 +67,8 @@ def parser() -> argparse.ArgumentParser:
     pause_remote.add_argument("room")
     resume_remote = commands.add_parser("resume-remote", help="resume a preserved paused remote")
     resume_remote.add_argument("room")
+    abandon_remote = commands.add_parser("abandon-remote", help="archive and remove one remote configuration")
+    abandon_remote.add_argument("room")
     colonize = commands.add_parser("colonize", help="queue guarded COLONIZE_ROOM (human authority still required)")
     colonize.add_argument("target")
     colonize.add_argument("origin")
@@ -142,7 +145,7 @@ def display_status(transport: CommanderTransport) -> str:
             f"New remote establishment: {'ON' if execution.autoNewRemotes else 'OFF'}",
             f"Permanent colonization: {'AUTO' if execution.autoColonization else 'MANUAL' if execution.colonization else 'OFF'}",
             f"Temporary remote pausing: {'AUTO' if execution.autoRemotePausing else 'MANUAL' if execution.remotePausing else 'OFF'}",
-            f"Remote abandonment: {'ON' if execution.remoteAbandonment else 'OFF / HUMAN GATED'}",
+            f"Remote abandonment: {'AUTO' if execution.autoRemoteAbandonment else 'MANUAL' if execution.remoteAbandonment else 'OFF'}",
             f"Offensive combat: {'ON' if execution.offensiveCombat else 'OFF'}",
             f"Market authority: {'ON' if execution.market else 'OFF'}",
             f"Production authority: {'ON' if execution.production else 'OFF'}",
@@ -387,6 +390,15 @@ def show_remotes(history: HistoryStore, telemetry: Telemetry) -> None:
             f"queued {remote.population.queuedTotal})"
         )
         print(f"Lifecycle: {remote.lifecycleState}; stop-loss {remote.stopLoss.state}; paused={'yes' if remote.paused else 'no'}")
+        if remote.stopLoss.autoEligibilitySinceTick is not None:
+            elapsed = max(0, telemetry.tick - remote.stopLoss.autoEligibilitySinceTick)
+            print(
+                f"Auto-abandon evidence: {elapsed}/{remote.stopLoss.autoEligibilityRequiredTicks} ticks; "
+                f"eligible={'yes' if remote.stopLoss.autoEligible else 'no'}; "
+                f"signals={remote.stopLoss.autoEligibilityEvidence or 'none'}"
+            )
+        elif remote.stopLoss.suppressed:
+            print("Auto-abandon evidence: suppressed by recovery or manual pause")
         reservation = remote.reservation
         print(
             f"Reservation: {reservation.relation} "
@@ -613,7 +625,8 @@ def main(argv: list[str] | None = None) -> int:
                 order = transport.send_safe_command(
                     "SET_OPERATIONAL_AUTHORITY",
                     {"scouting": args.scouting, "remoteMaintenance": args.remotes,
-                     "newRemotes": args.new_remotes, "colonization": args.colonization},
+                     "newRemotes": args.new_remotes, "colonization": args.colonization,
+                     "remoteAbandonment": args.abandonment},
                     reason="Human operator set narrow Phase 5 authority through the CLI",
                 )
             elif args.command == "set-mode":
@@ -650,6 +663,11 @@ def main(argv: list[str] | None = None) -> int:
                         "home and aggregate spawn pressure should improve" if action == "PAUSE_REMOTE_MINING" else "remote should safely return to operation",
                         health.telemetry.tick + (2000 if action == "PAUSE_REMOTE_MINING" else 3000),
                     )
+            elif args.command == "abandon-remote":
+                order = transport.send_safe_command(
+                    "STOP_REMOTE_MINING", {"room": args.room},
+                    reason=f"Human-authorized guarded remote abandonment for {args.room}",
+                )
             elif args.command == "colonize":
                 order = transport.send_safe_command(
                     "COLONIZE_ROOM",

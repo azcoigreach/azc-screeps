@@ -114,6 +114,14 @@ def telemetry_payload(tick: int = 12345) -> dict:
             "reasons": [],
             "diagnostics": [],
             "objectives": [],
+            "stopLoss": {
+                "state": "ACTIVE", "badWindows": 0, "evidence": [],
+                "evaluatedTick": tick, "suppressed": False,
+                "autoEligibilitySinceTick": None,
+                "autoEligibilityRequiredTicks": 3000,
+                "autoEligible": False, "autoEligibilityEvidence": [],
+            },
+            "lifecycleState": "ACTIVE",
         }
 
     return {
@@ -317,7 +325,15 @@ def telemetry_payload(tick: int = 12345) -> dict:
                 "expansion": False,
                 "remoteMaintenance": False,
                 "autoRemoteMaintenance": False,
+                "remotePausing": True,
+                "autoRemotePausing": False,
+                "remoteAbandonment": False,
+                "autoRemoteAbandonment": False,
                 "remoteMiningChanges": False,
+                "newRemotes": False,
+                "autoNewRemotes": False,
+                "colonization": False,
+                "autoColonization": False,
                 "market": False,
                 "production": False,
                 "offensiveCombat": False,

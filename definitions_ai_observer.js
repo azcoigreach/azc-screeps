@@ -100,7 +100,7 @@ global.AIObserver = {
 					"REASSESS_REMOTE", "ENSURE_REMOTE_RESERVATION",
 					"ENSURE_REMOTE_INFRASTRUCTURE", "REBALANCE_REMOTE_LOGISTICS",
 					"PAUSE_REMOTE_MINING", "RESUME_REMOTE_MINING",
-					"START_REMOTE_MINING", "COLONIZE_ROOM"
+					"START_REMOTE_MINING", "STOP_REMOTE_MINING", "COLONIZE_ROOM"
 				],
 				execution: {
 					scouting: _.get(Memory, ["ai", "policy", "allowScouting"], false) === true,
@@ -110,12 +110,13 @@ global.AIObserver = {
 					autoRemoteMaintenance: _.get(Memory, ["ai", "policy", "autoRemoteMaintenance"], false) === true,
 					remotePausing: _.get(Memory, ["ai", "policy", "allowRemotePausing"], true) === true,
 					autoRemotePausing: _.get(Memory, ["ai", "policy", "autoRemotePausing"], false) === true,
+					remoteAbandonment: _.get(Memory, ["ai", "policy", "allowRemoteAbandonment"], false) === true,
+					autoRemoteAbandonment: _.get(Memory, ["ai", "policy", "autoRemoteAbandonment"], false) === true,
 					remoteMiningChanges: _.get(Memory, ["ai", "policy", "allowNewRemotes"], false) === true,
 					newRemotes: _.get(Memory, ["ai", "policy", "allowNewRemotes"], false) === true,
 					autoNewRemotes: _.get(Memory, ["ai", "policy", "autoNewRemotes"], false) === true,
 					colonization: _.get(Memory, ["ai", "policy", "allowColonization"], false) === true,
 					autoColonization: _.get(Memory, ["ai", "policy", "autoColonization"], false) === true,
-					remoteAbandonment: false,
 					market: false,
 					production: false,
 					offensiveCombat: false
@@ -131,7 +132,7 @@ global.AIObserver = {
 					PAUSE_REMOTE_MINING: { allowed: _.get(Memory, ["ai", "policy", "allowRemotePausing"], true) === true, automatic: _.get(Memory, ["ai", "policy", "autoRemotePausing"], false) === true },
 					RESUME_REMOTE_MINING: { allowed: _.get(Memory, ["ai", "policy", "allowRemotePausing"], true) === true, automatic: _.get(Memory, ["ai", "policy", "autoRemotePausing"], false) === true },
 					START_REMOTE_MINING: { allowed: _.get(Memory, ["ai", "policy", "allowNewRemotes"], false) === true, automatic: _.get(Memory, ["ai", "policy", "autoNewRemotes"], false) === true },
-					STOP_REMOTE_MINING: { allowed: false, automatic: false },
+					STOP_REMOTE_MINING: { allowed: _.get(Memory, ["ai", "policy", "allowRemoteAbandonment"], false) === true, automatic: _.get(Memory, ["ai", "policy", "autoRemoteAbandonment"], false) === true },
 					COLONIZE_ROOM: { allowed: _.get(Memory, ["ai", "policy", "allowColonization"], false) === true, automatic: _.get(Memory, ["ai", "policy", "autoColonization"], false) === true },
 					ATTACK_ROOM: { allowed: false, automatic: false }
 				}
@@ -794,10 +795,29 @@ global.AIObserver = {
 		let bad = remote.health === "FAILING" || remote.health === "UNSAFE" || _.includes(remote.reasons, "ROUTE_FAILURE") || _.includes(evidence, "establishment_failed");
 		let recovered = remote.health === "HEALTHY" && evidence.length === 0;
 		let pulse = Game.time - _.get(previous, "evaluatedTick", 0) >= 1000;
+		let nativeRecoveryActive = _.get(Memory, ["rooms", remote.colony, "population_recovery", "active"], false) === true;
+		let suppressed = remote.paused === true || nativeRecoveryActive;
 		let badWindows = _.get(previous, "badWindows", 0);
-		if (pulse) badWindows = bad ? badWindows + 1 : (recovered ? Math.max(0, badWindows - 1) : badWindows);
+		if (pulse && !suppressed) badWindows = bad ? badWindows + 1 : (recovered ? Math.max(0, badWindows - 1) : badWindows);
 		let state = badWindows >= 3 ? "ABANDON_RECOMMENDED" : (badWindows >= 2 ? "PAUSE_RECOMMENDED" : (badWindows >= 1 ? "PROBATION" : (evidence.length ? "WATCH" : "ACTIVE")));
-		let result = { state: state, badWindows: badWindows, evidence: evidence, evaluatedTick: pulse ? Game.time : _.get(previous, "evaluatedTick", Game.time) };
+		let strongEvidence = _.filter(evidence, item => _.includes([
+			"persistent_path_failure", "delivery_near_zero", "high_creep_losses", "establishment_failed"
+		], item));
+		let candidate = !suppressed && remote.active === true && state === "ABANDON_RECOMMENDED" && strongEvidence.length > 0;
+		let previousEligibilityTick = _.get(previous, "autoEligibilitySinceTick");
+		let eligibleSinceTick = candidate
+			? (_.isNumber(previousEligibilityTick) ? previousEligibilityTick : Game.time)
+			: null;
+		let requiredTicks = _.get(Memory, ["ai", "policy", "autoAbandonEvidenceTicks"], 3000);
+		let result = {
+			state: state, badWindows: badWindows, evidence: evidence,
+			evaluatedTick: pulse && !suppressed ? Game.time : _.get(previous, "evaluatedTick", Game.time),
+			suppressed: suppressed,
+			autoEligibilitySinceTick: eligibleSinceTick,
+			autoEligibilityRequiredTicks: requiredTicks,
+			autoEligible: candidate && Game.time - eligibleSinceTick >= requiredTicks,
+			autoEligibilityEvidence: strongEvidence
+		};
 		_.set(Memory, key, result);
 		return result;
 	},

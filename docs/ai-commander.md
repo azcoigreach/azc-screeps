@@ -18,6 +18,8 @@ Memory.ai.policy.allowNewRemotes = false;
 Memory.ai.policy.autoNewRemotes = false;
 Memory.ai.policy.allowColonization = false;
 Memory.ai.policy.autoColonization = false;
+Memory.ai.policy.allowRemoteAbandonment = false;
+Memory.ai.policy.autoRemoteAbandonment = false;
 ```
 
 `START_REMOTE_MINING` accepts only an owned origin and neutral target. It requires
@@ -33,8 +35,15 @@ API. It additionally requires a GCL slot, fresh neutral/self-reserved intel,
 protection-aware route, a layout selected from cached terrain-valid `def_hor`,
 `def_vert`, or `def_comp` origins, a healthy origin, energy reserve, candidate
 score, concurrency slot, and elapsed retry/cascade cooldown. Automatic claiming
-remains off. `STOP_REMOTE_MINING` remains human-gated; stop-loss recommendations
-never delete configuration.
+remains off. `STOP_REMOTE_MINING` is separately authorized and defaults off.
+When AUTO is enabled, only the deterministic controller can dispatch it: the
+remote must be active and unpaused, outside colonization, at
+`ABANDON_RECOMMENDED`, and show a strong route, delivery, loss, or failed-startup
+signal continuously for another 3,000 ticks after recovery suppression ends.
+Home recovery and manual pause reset that timer. Execution archives the full
+site, metrics, objectives, and establishment record before removing the active
+configuration, retains intelligence, clears stale spawn demand, and allows at
+most one abandonment per 5,000 ticks.
 
 ## Phase 6 permanent colonization
 
@@ -171,6 +180,9 @@ Useful Phase 5 controls:
 ```javascript
 ai.newRemotes(true|false)
 ai.autoNewRemotes(true|false)
+ai.remoteAbandonment(true|false)
+ai.autoRemoteAbandonment(true|false)
+ai.abandonedRemotes()
 ai.colonization(true|false)
 ai.roomPolicy("W38N10", "PRIORITIZE"|"EXCLUDE"|"NO_REMOTE"|"NO_COLONY"|"NONE")
 ```
@@ -178,15 +190,17 @@ ai.roomPolicy("W38N10", "PRIORITIZE"|"EXCLUDE"|"NO_REMOTE"|"NO_COLONY"|"NONE")
 ```bash
 python -m commander.main candidates
 python -m commander.main report --hours 24
-python -m commander.main set-authority --scouting AUTO --remotes AUTO --new-remotes OFF --colonization OFF
+python -m commander.main set-authority --scouting AUTO --remotes AUTO --new-remotes OFF --colonization OFF --abandonment AUTO
+python -m commander.main abandon-remote W38N10
 python -m commander.main start-remote W38N10 W37N11
 python -m commander.main colonize W38N10 W37N11 def_hor 20 20
 ```
 
 For the live gate, run maintenance and bounded radius-two scouting first, review
 candidate rankings and an advisory, then enable new-remotes for exactly one
-operation. Disable it again after dispatch. Keep colonization, abandonment,
-combat, market, and production authority off.
+operation. Disable it again after dispatch. Keep colonization, combat, market,
+and production authority off. Enable abandonment only after reviewing `remotes`
+and verifying that post-recovery evidence timers begin at zero.
 
 ## Phase 4 architecture
 
@@ -201,8 +215,9 @@ deliberately split:
 | Human operator | Enable the interface, choose observe/execute mode, grant automatic authority, and roll back. |
 
 The strategist cannot execute JavaScript, write arbitrary Memory, choose raw
-construction coordinates, claim, attack, trade, alter production, or add/delete
-remote configurations.
+construction coordinates, claim, attack, trade, alter production, or directly
+add/delete remote configurations. New starts and guarded stops pass through
+separately authorized deterministic controllers.
 
 ```text
 Segment 90 telemetry -> strict Python validation -> SQLite trends/economics
@@ -244,17 +259,18 @@ is also true.
 | `NOOP` | `{}` | observe or execute | No game-state operation. |
 | `REQUEST_STATUS` | `{}` | observe or execute | Publishes normal status. |
 | `SET_EXPLANATION` | explanation only | observe or execute | Stores user-visible prose. |
-| `SET_OPERATIONAL_AUTHORITY` | two `OFF`/`MANUAL`/`AUTO` values | observe or execute | Applies only the scouting and existing-remote policy switches. |
+| `SET_OPERATIONAL_AUTHORITY` | scoped `OFF`/`MANUAL`/`AUTO` values | observe or execute | Applies scouting, maintenance, new-remote, colonization, and abandonment switches. |
 | `SET_EXECUTION_MODE` | `observe` or `execute` | observe or execute | Mirrors the human `ai.mode()` switch through the audited inbox. |
 | `SCOUT_ROOM` | room + owned origin | execute + scouting | Queues one bounded AZC scout. |
 | `REASSESS_REMOTE` | existing remote | execute + remote maintenance | Forces the normal remote survey path. |
 | `ENSURE_REMOTE_RESERVATION` | existing remote | execute + remote maintenance | Gives the normal reserver controller a bounded objective. |
 | `ENSURE_REMOTE_INFRASTRUCTURE` | existing remote | execute + remote maintenance | Forces the existing deterministic source-container placement check. |
 | `REBALANCE_REMOTE_LOGISTICS` | existing remote | execute + remote maintenance | Lets AZC translate confirmed backlog into one bounded hauling slot. |
+| `STOP_REMOTE_MINING` | existing remote | execute + abandonment | Archives then removes one remote configuration after guarded validation. |
 
 Phase 4 prepared these actions without accepting them. Phase 5 accepts guarded
-`START_REMOTE_MINING` and human-authorized `COLONIZE_ROOM`; `STOP_REMOTE_MINING`
-and `ATTACK_ROOM` remain unavailable.
+`START_REMOTE_MINING`, guarded `STOP_REMOTE_MINING`, and human-authorized
+`COLONIZE_ROOM`; `ATTACK_ROOM` remains unavailable.
 
 ## Memory Segments and fail-closed behavior
 
@@ -457,6 +473,9 @@ ai.operations()
 ai.remoteOps()                 // report
 ai.remoteOps(true|false)       // allow manual remote objectives
 ai.autoRemoteOps(true|false)   // allow strategist dispatch
+ai.remoteAbandonment(true|false)
+ai.autoRemoteAbandonment(true|false)
+ai.abandonedRemotes()
 ai.scouting(true|false)
 ai.autoScouting(true|false)
 ai.colonization(true|false)       // manual colonization authority
@@ -479,13 +498,14 @@ From `ai/`:
 .venv/bin/python -m commander.main advise
 .venv/bin/python -m commander.main journal --last 20
 .venv/bin/python -m commander.main cost
-.venv/bin/python -m commander.main set-authority --scouting AUTO --remotes OFF
+.venv/bin/python -m commander.main set-authority --scouting AUTO --remotes OFF --abandonment AUTO
 .venv/bin/python -m commander.main set-mode execute
 .venv/bin/python -m commander.main scout W38N10 W37N11
 .venv/bin/python -m commander.main reassess-remote W37N12
 .venv/bin/python -m commander.main ensure-remote-reservation W37N12
 .venv/bin/python -m commander.main ensure-remote-infrastructure W37N12
 .venv/bin/python -m commander.main rebalance-remote-logistics W37N12
+.venv/bin/python -m commander.main abandon-remote W37N12
 .venv/bin/python -m commander.main candidates
 .venv/bin/python -m commander.main report --hours 24
 .venv/bin/python -m commander.main colonize TARGET ORIGIN LAYOUT X Y
