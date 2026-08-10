@@ -1749,6 +1749,45 @@ test("intentional remote drawdown blocks growth without deadlocking home recover
 	assert.strictEqual(load.schedulerRecovery.active, false);
 });
 
+test("small satisfied RCL colony does not relatch recovery at the bootstrap floor", function () {
+	reset({ time: 5000 });
+	AIInterface.initMemory();
+	let role = function (desired, alive) {
+		return { desired: desired, alive: alive, spawning: 0 };
+	};
+	let colonies = { W1N1: {
+		population: {
+			desiredTotal: 2, aliveTotal: 3, oldestWaitingTicks: 0,
+			roles: { worker: role(1, 2), upgrader: role(1, 1) }
+		},
+		spawning: { spawns: 1, busy: 1, queueDepth: 0 }
+	} };
+	let remotes = [{
+		room: "W1N2", paused: false, health: "FAILING", lifecycleState: "FAILING",
+		population: { desiredTotal: 6, assignedTotal: 0, roles: {} },
+		reservation: { reserverPresent: 0, reserverSpawning: 0, reserverQueued: 0 },
+		losses: { creepLossesTotal: 0 }, mining: { energyWaiting: 0 },
+		route: { length: 1 }, delivery: { energyDeliveredTotal: 0 }
+	}];
+	let load = AIObserver._empireLoad(colonies, remotes);
+	assert.strictEqual(load.state, "STRAINED");
+	assert.strictEqual(_.includes(load.reasons, "HOME_POPULATION_CRITICAL"), false);
+	assert.ok(_.includes(load.reasons, "REMOTE_STAFFING_DEFICIT"));
+
+	_.set(Memory, ["ai", "strategy", "empireLoad"], load);
+	Memory.ai.metrics.population = { colonies: { W1N1: {
+		expected: { worker: 1, upgrader: 1 },
+		actual: { worker: 2, upgrader: 1 }, requested: {}
+	} } };
+	Memory.rooms.W1N1 = { population_recovery: {
+		active: true, enteredTick: 1000, stableSinceTick: 2000,
+		unstableSinceTick: null, reason: "EMPIRE_LOAD_CRITICAL"
+	} };
+	let recovery = Control.homeRecoveryState("W1N1");
+	assert.strictEqual(recovery.active, false);
+	assert.strictEqual(recovery.reason, "HOME_RECOVERED");
+});
+
 test("failed establishment preserves its original remote pause identity", function () {
 	reset({ time: 9000 });
 	AIInterface.initMemory();

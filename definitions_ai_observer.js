@@ -641,7 +641,9 @@ global.AIObserver = {
 		let remotePressureHigh = remoteDeficit > Math.max(3, alive);
 		let state = "HEALTHY";
 		let reasons = [];
-		if (satisfaction < 0.35 || criticalSatisfaction < 0.5 || (desired > 0 && alive <= Math.max(1, spawns * 3))) {
+		let bootstrapFloor = Math.max(1, spawns * 3);
+		let belowBootstrapFloor = desired > bootstrapFloor && alive <= bootstrapFloor;
+		if (satisfaction < 0.35 || criticalSatisfaction < 0.5 || belowBootstrapFloor) {
 			state = "CRITICAL";
 			reasons.push("HOME_POPULATION_CRITICAL");
 		} else if (satisfaction < 0.65 || criticalSatisfaction < 0.75 || queue >= Math.max(4, spawns * 3)) {
