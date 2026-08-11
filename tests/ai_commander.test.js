@@ -1992,6 +1992,23 @@ test("failed establishment preserves its original remote pause identity", functi
 	assert.strictEqual(Memory.sites.mining.W1N2.ai_pause.pausedTick, 8000);
 });
 
+test("invisible legacy establishment recovers active state from durable delivery", function () {
+	reset({ time: 9000 });
+	AIInterface.initMemory();
+	Memory.sites.mining.W1N2 = { colony: "W1N1", can_mine: true };
+	Memory.ai.establishments = {
+		"establish-1": {
+			target: "W1N2", state: "RESERVING", createdTick: 1000,
+			firstDeliveryTotal: 1000
+		}
+	};
+	_.set(Memory, ["ai", "metrics", "remotes", "W1N2"], { energyDeliveredTotal: 6000 });
+	Memory.ai.intelligence.rooms.W1N2 = { controller: { ownerRelation: "NEUTRAL" } };
+	AIObserver._updateEstablishments();
+	assert.strictEqual(Memory.ai.establishments["establish-1"].state, "ACTIVE");
+	assert.strictEqual(Memory.ai.establishments["establish-1"].actualDelivered, 5000);
+});
+
 test("paused remote recovery tolerates normal home replacement but not sustained shortage", function () {
 	reset({ time: 9000 });
 	AIInterface.initMemory();

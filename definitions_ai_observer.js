@@ -910,9 +910,14 @@ global.AIObserver = {
 				this._pauseFailedEstablishment(site, operation.failureReason);
 			} else if (!room) {
 				// Losing vision does not undo observed delivery and a completed
-				// establishment. Preserve the last productive lifecycle state.
+				// establishment. Preserve the last productive lifecycle state, and
+				// repair legacy RESERVING records when their durable delivery counter
+				// proves that the remote had already become productive.
+				let delivered = _.get(metrics, "energyDeliveredTotal", 0)
+					- _.get(operation, "firstDeliveryTotal", 0);
 				if (!_.includes(["ACTIVE", "HEALTHY", "DEGRADED"], operation.state))
-					operation.state = "RESERVING";
+					operation.state = delivered > 0 ? "ACTIVE" : "RESERVING";
+				operation.actualDelivered = Math.max(0, delivered);
 			}
 			else {
 				let population = _.filter(_.get(Game, "creeps", {}), creep => _.get(creep, ["memory", "room"]) === operation.target);
