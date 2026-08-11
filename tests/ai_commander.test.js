@@ -56,6 +56,7 @@ require("../definitions_ai_strategy");
 require("../definitions_ai_observer");
 require("../definitions_ai_interface");
 require("../definitions_hive_control");
+require("../definitions_creep_combat_roles");
 
 function reset(options) {
 	options = options || {};
@@ -1296,6 +1297,83 @@ test("remote population demand is regenerated beyond the spawn pulse", function 
 	let source = fs.readFileSync(path.join(__dirname, "..", "definitions_sites.js"), "utf8");
 	assert.strictEqual(source.indexOf("if (rmColony == rmHarvest || isPulse_Spawn())"), -1);
 	assert.ok(source.indexOf("this.runPopulation(rmColony, rmHarvest, listCreeps, listSpawnRooms, hasKeepers)") >= 0);
+});
+
+test("combat creeps never camp before reaching their assigned room", function () {
+	reset({ time: 2000 });
+	let destinations = [];
+	let creep = {
+		memory: { room: "W1N2", colony: "W1N1" },
+		room: { name: "W1N1" },
+		travelToRoom: function (room, forward) { destinations.push([room, forward]); }
+	};
+	assert.strictEqual(Creep_Roles_Combat.moveToDestination(creep, 10), true);
+	assert.deepStrictEqual(destinations, [["W1N2", true]]);
+});
+
+test("travel replaces a cached path when its destination changes", function () {
+	function MockRoomPosition(x, y, roomName) {
+		this.x = x; this.y = y; this.roomName = roomName;
+	}
+	function MockCreep() {
+		this.fatigue = 0;
+		this.memory = { path: {
+			destination: { x: 25, y: 25, roomName: "W1N1" },
+			path_str: "7", travel_req: 2000, last_room: "W1N1"
+		} };
+		this.room = { name: "W1N1" };
+		this.pos = {
+			getRangeTo: function () { return 10; },
+			findPathTo: function () { return [{ direction: 3 }]; },
+			getTileInDirection: function () {
+				return { isWalkable: function () { return true; }, isValid: function () { return true; } };
+			}
+		};
+		this.move = function (direction) { this.lastMove = direction; return 0; };
+	}
+	let context = {
+		Creep: MockCreep, RoomPosition: MockRoomPosition, _: _,
+		Memory: { hive: { paths: {} } }, Game: { time: 2000 },
+		Control: { moveRequestPath: function () { return 15; }, moveMaxOps: function () { return 2000; }, moveReusePath: function () { return 15; } },
+		OK: 0, ERR_TIRED: -11, ERR_NO_PATH: -2, ERR_BUSY: -4, ERR_NO_BODYPART: -12
+	};
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "overloads_creep_travel.js"), "utf8"), context);
+	let creep = new MockCreep();
+	assert.strictEqual(creep.travel(new MockRoomPosition(49, 20, "W1N1")), 0);
+	assert.strictEqual(creep.memory.path.destination.x, 49);
+	assert.strictEqual(creep.memory.path.destination.y, 20);
+	assert.strictEqual(creep.lastMove, "3");
+});
+
+test("room travel selects an open neighboring exit when the nearest lane is occupied", function () {
+	function MockRoomPosition(x, y, roomName) {
+		this.x = x; this.y = y; this.roomName = roomName;
+	}
+	MockRoomPosition.prototype.isWalkable = function () { return this.y !== 34; };
+	MockRoomPosition.prototype.findClosestByPath = function (positions) { return positions[0] || null; };
+	MockRoomPosition.prototype.findClosestByRange = function (positions) { return positions[0] || null; };
+	function MockCreep() {
+		this.memory = { path: {} };
+		this.room = { name: "W37N11" };
+		this.pos = new MockRoomPosition(48, 34, "W37N11");
+	}
+	let context = {
+		Creep: MockCreep, RoomPosition: MockRoomPosition, _: _,
+		Memory: { hive: { paths: { exits_auto: { rooms: { W37N11: [
+			{ x: 49, y: 34, roomName: "W37N11" },
+			{ x: 49, y: 35, roomName: "W37N11" }
+		] } } } } },
+		Game: { map: { describeExits: function () { return { 3: "W36N11" }; } } },
+		Room: { Terrain: function () {} }, TERRAIN_MASK_WALL: 1,
+		OK: 0, ERR_TIRED: -11, ERR_NO_PATH: -2, ERR_BUSY: -4, ERR_NO_BODYPART: -12
+	};
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "overloads_creep_travel.js"), "utf8"), context);
+	let creep = new MockCreep();
+	let selected = null;
+	creep.travel = function (pos) { selected = pos; return 0; };
+	assert.strictEqual(creep.travelToExitTile("W36N11"), 0);
+	assert.strictEqual(selected.x, 49);
+	assert.strictEqual(selected.y, 35);
 });
 
 test("quiet scheduler advances and releases a fully staffed recovery latch", function () {

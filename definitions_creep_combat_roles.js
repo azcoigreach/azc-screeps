@@ -56,8 +56,10 @@
 		if (creep.memory.room != null && _.get(creep, ["memory", "target", "id"]) == null
 			&& creep.room.name != creep.memory.room) {
 			creep.travelToRoom(creep.memory.room, true);
-			// Evaluates for targets in this room every evaluate_targets ticks...
-			return (recheck_targets == null || Game.time % recheck_targets != 0);
+			// Do not fall through to target-room camping while travelling. The old
+			// periodic recheck let an empty transit room replace the exit path with a
+			// camp path, so remote defenders could orbit their colony indefinitely.
+			return true;
 		}
 		return false;
 	},

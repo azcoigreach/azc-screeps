@@ -24,10 +24,20 @@
 	if (this.pos.getRangeTo(pos_dest) == 0)
 		return OK;
 
+	let cachedDestination = _.get(this, ["memory", "path", "destination"]);
+	let sameDestination = cachedDestination != null
+		&& _.get(cachedDestination, "x") === pos_dest.x
+		&& _.get(cachedDestination, "y") === pos_dest.y
+		&& _.get(cachedDestination, "roomName") === pos_dest.roomName;
+	if (!sameDestination)
+		this.travelClear();
+
 	// Only request a new path every X ticks (different from reusePath... this may be different task even)
-	// If we do not have a cached path, force recompute immediately so we do not spin on null.
+	// A cached path is reusable only when it was built for this exact destination.
+	// If we do not have a matching cached path, recompute immediately.
 	let hasCachedPath = _.isString(_.get(this, ["memory", "path", "path_str"])) && _.get(this, ["memory", "path", "path_str"]).length > 0;
-	if (hasCachedPath && _.get(this, ["memory", "path", "travel_req"], 0) > (Game.time - Control.moveRequestPath(this)))
+	if (sameDestination && hasCachedPath
+		&& _.get(this, ["memory", "path", "travel_req"], 0) > (Game.time - Control.moveRequestPath(this)))
 		return this.travelByPath();
 	else
 		_.set(this, ["memory", "path", "travel_req"], Game.time);
@@ -35,7 +45,7 @@
 	if (_.get(this, ["memory", "path", "path_str"]) == null
 		|| typeof (_.get(this, ["memory", "path", "path_str"])) != "string"
 		|| _.get(this, ["memory", "path", "path_str"]).length == 0
-		|| _.get(this, ["memory", "path", "destination"]) != pos_dest) {
+		|| !sameDestination) {
 		_.set(this, ["memory", "path", "destination"], pos_dest);
 
 		let path_array;
@@ -461,13 +471,22 @@ Creep.prototype.travelToExitTile = function travelToExitTile(target_name) {
 			if (!exit_tiles || exit_tiles.length === 0)
 				return ERR_NO_PATH;
 
-			let tile = null;
+			let directional_tiles = null;
 			switch (i) {
-				case '1': tile = _.head(_.sortBy(_.filter(exit_tiles, t => { return t.y == 0; }), t => { return this.pos.getRangeTo(t.x, t.y); })); break;
-				case '3': tile = _.head(_.sortBy(_.filter(exit_tiles, t => { return t.x == 49; }), t => { return this.pos.getRangeTo(t.x, t.y); })); break;
-				case '5': tile = _.head(_.sortBy(_.filter(exit_tiles, t => { return t.y == 49; }), t => { return this.pos.getRangeTo(t.x, t.y); })); break;
-				case '7': tile = _.head(_.sortBy(_.filter(exit_tiles, t => { return t.x == 0; }), t => { return this.pos.getRangeTo(t.x, t.y); })); break;
+				case '1': directional_tiles = _.filter(exit_tiles, t => { return t.y == 0; }); break;
+				case '3': directional_tiles = _.filter(exit_tiles, t => { return t.x == 49; }); break;
+				case '5': directional_tiles = _.filter(exit_tiles, t => { return t.y == 49; }); break;
+				case '7': directional_tiles = _.filter(exit_tiles, t => { return t.x == 0; }); break;
 			}
+			let positions = _.map(directional_tiles || [], t => new RoomPosition(t.x, t.y, t.roomName));
+			// Border traffic commonly occupies the geometrically-nearest tile. Pick
+			// the closest reachable open exit first so a miner on one lane cannot
+			// pin every defender and hauler behind it indefinitely.
+			let open_positions = _.filter(positions, pos => pos.isWalkable(true));
+			let candidates = open_positions.length > 0 ? open_positions : positions;
+			let tile = candidates.length > 0 ? this.pos.findClosestByPath(candidates) : null;
+			if (tile == null && candidates.length > 0)
+				tile = this.pos.findClosestByRange(candidates);
 
 			if (tile != null) {
 				if (this.pos.x === tile.x && this.pos.y === tile.y) {
