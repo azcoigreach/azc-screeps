@@ -57,6 +57,7 @@ class AutonomyController:
         if (
             authority.execution.autoRemotePausing
             and current_load in {"OVEREXTENDED", "CRITICAL"}
+            and self._home_distress_requires_drawdown(telemetry)
         ):
             order = self._pause_remote(telemetry)
             if order:
@@ -260,6 +261,23 @@ class AutonomyController:
                 baseline, "home population and spawn pressure should recover", telemetry.tick + 2000,
             )
         return order
+
+    @staticmethod
+    def _home_distress_requires_drawdown(telemetry: Telemetry) -> bool:
+        """Ignore covered turnover; shed load only for severe or sustained distress."""
+        population = telemetry.empireLoad.get("homePopulation", {})
+        spawn = telemetry.empireLoad.get("spawnPressure", {})
+        coverage = float(
+            population.get("coverageSatisfaction")
+            if population.get("coverageSatisfaction") is not None
+            else population.get("satisfaction") or 0
+        )
+        critical = float(population.get("criticalSatisfaction") or 0)
+        oldest = int(spawn.get("oldestHomeDemandTicks") or 0)
+
+        severe = coverage < 50 or critical < 50
+        sustained = (coverage < 85 or critical < 90) and oldest >= 200
+        return severe or sustained
 
     def _resume_remote(self, telemetry: Telemetry) -> StrategicOrder | None:
         population = telemetry.empireLoad.get("homePopulation", {})

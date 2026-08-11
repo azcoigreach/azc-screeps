@@ -223,8 +223,20 @@ global.AIObserver = {
 		if (!remote || !colony || remote === colony || !_.has(Memory, ["sites", "mining", remote]))
 			return;
 		let path = ["ai", "metrics", "remotes", remote];
-		_.set(Memory, path.concat("creepLossesTotal"), _.get(Memory, path.concat("creepLossesTotal"), 0) + 1);
-		_.set(Memory, path.concat("lastCreepLossTick"), Game.time);
+		let lastTtl = _.get(creepMemory, "_ai_last_ttl");
+		if (_.isNumber(lastTtl) && lastTtl > 100) {
+			// Only unexpected disappearance is an operational loss. Natural expiry
+			// is normal replacement cost and must not poison remote stop-loss data.
+			_.set(Memory, path.concat("unexpectedCreepLossesTotal"),
+				_.get(Memory, path.concat("unexpectedCreepLossesTotal"), 0) + 1);
+			_.set(Memory, path.concat("lastUnexpectedCreepLossTick"), Game.time);
+		} else if (_.isNumber(lastTtl)) {
+			_.set(Memory, path.concat("naturalExpirationsTotal"),
+				_.get(Memory, path.concat("naturalExpirationsTotal"), 0) + 1);
+		} else {
+			_.set(Memory, path.concat("unknownDisappearancesTotal"),
+				_.get(Memory, path.concat("unknownDisappearancesTotal"), 0) + 1);
+		}
 	},
 
 	recordRemoteInterruption: function (roomName) {
@@ -249,6 +261,17 @@ global.AIObserver = {
 			spawns = _.filter(_.get(Game, "spawns", {}), spawn => _.get(spawn, ["room", "name"]) === room.name);
 		let busy = _.filter(spawns, spawn => _.get(spawn, "spawning") != null).length;
 		let queue = this._spawnQueue(room.name);
+		// A remote bootstrap can legitimately publish several requests at once.
+		// Keep that work visible, but do not report it as a home-population queue:
+		// doing so makes normal expansion look like spawn-capacity collapse.
+		let homeQueue = _.filter(queue, request => {
+			let target = _.get(request, ["args", "room"], _.get(request, "room", room.name));
+			return target === room.name;
+		});
+		let remoteQueue = _.filter(queue, request => {
+			let target = _.get(request, ["args", "room"], _.get(request, "room", room.name));
+			return target !== room.name;
+		});
 		let containers = _.filter(structures, structure => structure.structureType === "container");
 		let towers = _.filter(structures, structure => structure.structureType === "tower");
 		let ramparts = _.filter(structures, structure => structure.structureType === "rampart");
@@ -298,6 +321,8 @@ global.AIObserver = {
 				busy: busy,
 				idle: Math.max(0, spawns.length - busy),
 				queueDepth: queue.length,
+				homeQueueDepth: homeQueue.length,
+				remoteQueueDepth: remoteQueue.length,
 				queuedRoles: _.countBy(queue, request => _.get(request, ["args", "role"], _.get(request, "role", "unknown")))
 			},
 			construction: {
@@ -544,8 +569,10 @@ global.AIObserver = {
 					lastDeliveryTick: _.get(metrics, "lastDeliveryTick", null)
 				},
 				losses: {
-					creepLossesTotal: _.get(metrics, "creepLossesTotal", 0),
-					lastCreepLossTick: _.get(metrics, "lastCreepLossTick", null),
+					// The legacy counters included normal TTL expiry. Publish only the
+					// replacement-aware counters so economics and stop-loss start clean.
+					creepLossesTotal: _.get(metrics, "unexpectedCreepLossesTotal", 0),
+					lastCreepLossTick: _.get(metrics, "lastUnexpectedCreepLossTick", null),
 					hostileInterruptionsTotal: _.get(metrics, "hostileInterruptionsTotal", 0),
 					lastInterruptionTick: _.get(metrics, "lastInterruptionTick", null)
 				},
@@ -611,19 +638,26 @@ global.AIObserver = {
 
 	_empireLoad: function (colonies, remotes) {
 		let criticalNames = ["harvester", "miner", "burrower", "carrier", "hauler", "worker", "multirole", "upgrader"];
-		let desired = 0, alive = 0, criticalDesired = 0, criticalAvailable = 0;
-		let spawns = 0, busy = 0, queue = 0, oldest = 0;
+		let desired = 0, alive = 0, covered = 0, criticalDesired = 0, criticalAvailable = 0;
+		let spawns = 0, busy = 0, queue = 0, remoteQueue = 0, oldest = 0;
 		_.each(colonies, colony => {
 			desired += _.get(colony, ["population", "desiredTotal"], 0);
 			alive += _.get(colony, ["population", "aliveTotal"], 0);
+			covered += _.sum(_.map(_.get(colony, ["population", "roles"], {}), role =>
+				Math.min(_.get(role, "desired", 0), _.get(role, "alive", 0)
+					+ _.get(role, "spawning", 0) + _.get(role, "queued", 0))));
 			spawns += _.get(colony, ["spawning", "spawns"], 0);
 			busy += _.get(colony, ["spawning", "busy"], 0);
-			queue += _.get(colony, ["spawning", "queueDepth"], 0);
+			queue += _.get(colony, ["spawning", "homeQueueDepth"],
+				_.get(colony, ["spawning", "queueDepth"], 0));
+			remoteQueue += _.get(colony, ["spawning", "remoteQueueDepth"], 0);
 			oldest = Math.max(oldest, _.get(colony, ["population", "oldestWaitingTicks"], 0));
 			_.each(_.get(colony, ["population", "roles"], {}), (role, name) => {
 				if (_.includes(criticalNames, name)) {
-					criticalDesired += _.get(role, "desired", 0);
-					criticalAvailable += _.get(role, "alive", 0) + _.get(role, "spawning", 0);
+					let roleDesired = _.get(role, "desired", 0);
+					criticalDesired += roleDesired;
+					criticalAvailable += Math.min(roleDesired, _.get(role, "alive", 0)
+						+ _.get(role, "spawning", 0) + _.get(role, "queued", 0));
 				}
 			});
 		});
@@ -635,6 +669,7 @@ global.AIObserver = {
 			- _.get(remote, ["reservation", "reserverSpawning"], 0)
 			- _.get(remote, ["reservation", "reserverQueued"], 0))));
 		let satisfaction = desired > 0 ? alive / desired : 1;
+		let coverageSatisfaction = desired > 0 ? covered / desired : 1;
 		let criticalSatisfaction = criticalDesired > 0 ? criticalAvailable / criticalDesired : 1;
 		let utilization = spawns > 0 ? busy / spawns : 1;
 		let remoteDeficit = Math.max(0, remoteDesired - remoteAvailable);
@@ -642,14 +677,14 @@ global.AIObserver = {
 		let state = "HEALTHY";
 		let reasons = [];
 		let bootstrapFloor = Math.max(1, spawns * 3);
-		let belowBootstrapFloor = desired > bootstrapFloor && alive <= bootstrapFloor;
-		if (satisfaction < 0.35 || criticalSatisfaction < 0.5 || belowBootstrapFloor) {
+		let belowBootstrapFloor = desired > bootstrapFloor && covered <= bootstrapFloor;
+		if (coverageSatisfaction < 0.35 || criticalSatisfaction < 0.5 || belowBootstrapFloor) {
 			state = "CRITICAL";
 			reasons.push("HOME_POPULATION_CRITICAL");
-		} else if (satisfaction < 0.65 || criticalSatisfaction < 0.75 || queue >= Math.max(4, spawns * 3)) {
+		} else if (coverageSatisfaction < 0.65 || criticalSatisfaction < 0.75 || queue >= Math.max(4, spawns * 3)) {
 			state = "OVEREXTENDED";
 			reasons.push("SPAWN_CAPACITY_OVEREXTENDED");
-		} else if (satisfaction < 0.85 || criticalSatisfaction < 0.9 || queue > 0 || utilization >= 0.9) {
+		} else if (coverageSatisfaction < 0.85 || criticalSatisfaction < 0.9 || queue > 0 || utilization >= 0.9) {
 			state = "STRAINED";
 			reasons.push("RECOVERY_IN_PROGRESS");
 		}
@@ -708,10 +743,12 @@ global.AIObserver = {
 		return {
 			state: state, reasons: reasons, evaluatedTick: Game.time,
 			homePopulation: { desired: desired, alive: alive, satisfaction: Math.round(satisfaction * 10000) / 100,
+				covered: covered, coverageSatisfaction: Math.round(coverageSatisfaction * 10000) / 100,
 				criticalDesired: criticalDesired, criticalAvailable: criticalAvailable,
 				criticalSatisfaction: Math.round(criticalSatisfaction * 10000) / 100 },
 			spawnPressure: { spawns: spawns, busy: busy, utilization: Math.round(utilization * 10000) / 100,
-				queueDepth: queue, oldestHomeDemandTicks: oldest },
+				queueDepth: queue + remoteQueue, homeQueueDepth: queue, remoteQueueDepth: remoteQueue,
+				oldestHomeDemandTicks: oldest },
 			remotePressure: { desired: remoteDesired, available: remoteAvailable,
 				staffingDeficit: remoteDeficit, reservationReplacementDemand: reserverDemand },
 			growthVeto: _.includes(["OVEREXTENDED", "CRITICAL"], state)

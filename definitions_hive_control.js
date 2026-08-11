@@ -273,6 +273,14 @@
 
 		let deadCreeps = [];
 		let globalState = this.getGlobalCreepState();
+		// Persist a coarse final TTL sample so cleanup can distinguish routine
+		// expiration from a creep that disappeared unexpectedly.
+		_.each(_.get(Game, "creeps", {}), (creep, name) => {
+			if (_.has(Memory, ["creeps", name]) && _.isNumber(_.get(creep, "ticksToLive"))) {
+				_.set(Memory, ["creeps", name, "_ai_last_ttl"], creep.ticksToLive);
+				_.set(Memory, ["creeps", name, "_ai_last_seen_tick"], Game.time);
+			}
+		});
 
 		if (_.has(Memory, "creeps"))
 			_.each(Object.keys(Memory.creeps), c => {

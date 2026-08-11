@@ -720,13 +720,17 @@ test("observer records exact remote counters and caps persisted intelligence", f
 	reset();
 	AIInterface.initMemory();
 	Memory.sites.mining.W1N2 = { colony: "W1N1" };
-	let creep = { memory: { colony: "W1N1", room: "W1N2" } };
+	let creep = { memory: { colony: "W1N1", room: "W1N2", _ai_last_ttl: 1000 } };
 	AIObserver.recordRemoteDelivery(creep, 275);
 	AIObserver.recordRemoteDelivery(creep, 25);
 	AIObserver.recordRemoteLoss(creep.memory);
+	AIObserver.recordRemoteLoss({ colony: "W1N1", room: "W1N2", _ai_last_ttl: 50 });
+	AIObserver.recordRemoteLoss({ colony: "W1N1", room: "W1N2" });
 	AIObserver.recordRemoteInterruption("W1N2");
 	assert.strictEqual(Memory.ai.metrics.remotes.W1N2.energyDeliveredTotal, 300);
-	assert.strictEqual(Memory.ai.metrics.remotes.W1N2.creepLossesTotal, 1);
+	assert.strictEqual(Memory.ai.metrics.remotes.W1N2.unexpectedCreepLossesTotal, 1);
+	assert.strictEqual(Memory.ai.metrics.remotes.W1N2.naturalExpirationsTotal, 1);
+	assert.strictEqual(Memory.ai.metrics.remotes.W1N2.unknownDisappearancesTotal, 1);
 	assert.strictEqual(Memory.ai.metrics.remotes.W1N2.hostileInterruptionsTotal, 1);
 
 	Memory.ai.intelligence.hostileEvents = [];
@@ -747,7 +751,7 @@ test("remote telemetry reports configuration, staffing, mining, delivery, losses
 	Memory.ai.metrics.population = { remotes: { W1N2: { expected: { remote_miner: 1, remote_hauler: 2 } } } };
 	Memory.ai.metrics.remotes = { W1N2: {
 		energyDeliveredTotal: 42000, lastDeliveryTick: 995,
-		creepLossesTotal: 2, lastCreepLossTick: 900,
+		unexpectedCreepLossesTotal: 2, lastUnexpectedCreepLossTick: 900,
 		hostileInterruptionsTotal: 1, lastInterruptionTick: 850
 	} };
 	Game.rooms.W1N2 = {
@@ -1768,6 +1772,69 @@ test("intentional remote drawdown blocks growth without deadlocking home recover
 	assert.strictEqual(load.growthVeto, true);
 	assert.ok(_.includes(load.reasons, "REMOTE_STAFFING_DEFICIT"));
 	assert.strictEqual(load.schedulerRecovery.active, false);
+});
+
+test("covered home replacement does not trigger critical load or remote drawdown", function () {
+	reset();
+	AIInterface.initMemory();
+	let role = function (desired, alive, spawning, queued) {
+		return { desired: desired, alive: alive, spawning: spawning || 0, queued: queued || 0 };
+	};
+	let colonies = { W1N1: {
+		population: {
+			desiredTotal: 4, aliveTotal: 3, oldestWaitingTicks: 1,
+			roles: { worker: role(3, 2, 1, 0), upgrader: role(1, 1, 0, 0) }
+		},
+		spawning: {
+			spawns: 1, busy: 1, queueDepth: 1,
+			homeQueueDepth: 1, remoteQueueDepth: 0
+		}
+	} };
+	let remotes = [{
+		room: "W1N2", paused: false, health: "DEGRADED", lifecycleState: "DEGRADED",
+		population: { desiredTotal: 6, assignedTotal: 2, roles: {} },
+		reservation: { reserverPresent: 0, reserverSpawning: 0, reserverQueued: 0 },
+		losses: { creepLossesTotal: 0 }, mining: { energyWaiting: 0 },
+		route: { length: 1 }, delivery: { energyDeliveredTotal: 1000 }
+	}];
+	let load = AIObserver._empireLoad(colonies, remotes);
+	assert.strictEqual(load.state, "STRAINED");
+	assert.strictEqual(load.homePopulation.satisfaction, 75);
+	assert.strictEqual(load.homePopulation.coverageSatisfaction, 100);
+	assert.strictEqual(load.homePopulation.criticalSatisfaction, 100);
+	assert.strictEqual(_.includes(load.reasons, "HOME_POPULATION_CRITICAL"), false);
+	assert.strictEqual(_.includes(load.reasons, "SPAWN_CAPACITY_OVEREXTENDED"), false);
+});
+
+test("remote bootstrap queue is not counted as home spawn pressure", function () {
+	reset();
+	AIInterface.initMemory();
+	let role = function (desired, alive) {
+		return { desired: desired, alive: alive, spawning: 0, queued: 0 };
+	};
+	let colonies = { W1N1: {
+		population: {
+			desiredTotal: 4, aliveTotal: 4, oldestWaitingTicks: 0,
+			roles: { worker: role(3, 3), upgrader: role(1, 1) }
+		},
+		spawning: {
+			spawns: 1, busy: 1, queueDepth: 6,
+			homeQueueDepth: 0, remoteQueueDepth: 6
+		}
+	} };
+	let remotes = [{
+		room: "W1N2", paused: false, health: "FAILING", lifecycleState: "FAILING",
+		population: { desiredTotal: 6, assignedTotal: 0, roles: {} },
+		reservation: { reserverPresent: 0, reserverSpawning: 0, reserverQueued: 0 },
+		losses: { creepLossesTotal: 0 }, mining: { energyWaiting: 0 },
+		route: { length: 1 }, delivery: { energyDeliveredTotal: 0 }
+	}];
+	let load = AIObserver._empireLoad(colonies, remotes);
+	assert.strictEqual(load.state, "STRAINED");
+	assert.strictEqual(load.spawnPressure.queueDepth, 6);
+	assert.strictEqual(load.spawnPressure.homeQueueDepth, 0);
+	assert.strictEqual(load.spawnPressure.remoteQueueDepth, 6);
+	assert.strictEqual(_.includes(load.reasons, "SPAWN_CAPACITY_OVEREXTENDED"), false);
 });
 
 test("small satisfied RCL colony does not relatch recovery at the bootstrap floor", function () {

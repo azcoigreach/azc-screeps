@@ -156,6 +156,53 @@ class AutonomyReportTests(unittest.TestCase):
         self.assertEqual(len(transport.sent), 1)
         self.assertEqual(self.history.recent_operations()[0]["action"], "PAUSE_REMOTE_MINING")
 
+    def test_covered_routine_replacement_does_not_pause_remote(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"]["autoRemotePausing"] = True
+        payload["empireLoad"] = {
+            "state": "CRITICAL", "growthVeto": True,
+            "homePopulation": {
+                "satisfaction": 75, "coverageSatisfaction": 100,
+                "criticalSatisfaction": 100,
+            },
+            "spawnPressure": {
+                "queueDepth": 1, "homeQueueDepth": 1,
+                "remoteQueueDepth": 0, "oldestHomeDemandTicks": 1,
+            },
+        }
+        payload["remoteDrawdownRanking"] = [
+            {"room": "W1N2", "score": 90, "health": "FAILING"},
+        ]
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        self.assertIsNone(AutonomyController(self.history, transport).run(telemetry))
+        self.assertEqual(transport.sent, [])
+
+    def test_sustained_uncovered_shortage_still_pauses_remote(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"]["autoRemotePausing"] = True
+        payload["empireLoad"] = {
+            "state": "OVEREXTENDED", "growthVeto": True,
+            "homePopulation": {
+                "satisfaction": 75, "coverageSatisfaction": 75,
+                "criticalSatisfaction": 75,
+            },
+            "spawnPressure": {
+                "queueDepth": 1, "homeQueueDepth": 1,
+                "remoteQueueDepth": 0, "oldestHomeDemandTicks": 250,
+            },
+        }
+        payload["remoteDrawdownRanking"] = [
+            {"room": "W1N2", "score": 90, "health": "FAILING"},
+        ]
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        order = AutonomyController(self.history, transport).run(telemetry)
+        self.assertIsNotNone(order)
+        self.assertEqual(order.action, "PAUSE_REMOTE_MINING")
+
     def test_auto_abandonment_requires_fresh_unsuppressed_stop_loss_evidence(self) -> None:
         payload = telemetry_payload()
         payload["authority"]["mode"] = "execute"
