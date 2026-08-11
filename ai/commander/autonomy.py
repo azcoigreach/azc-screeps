@@ -54,6 +54,7 @@ class AutonomyController:
             return None
         current_load = load_state(telemetry)
         recovering = recovery_active(telemetry)
+        growth_active = self._growth_operation_active(telemetry)
         if (
             authority.execution.autoRemotePausing
             and current_load in {"OVEREXTENDED", "CRITICAL"}
@@ -65,6 +66,7 @@ class AutonomyController:
         if (
             authority.execution.remotePausing
             and not recovering
+            and not growth_active
             and current_load in {"HEALTHY", "STRAINED"}
         ):
             order = self._resume_remote(telemetry)
@@ -73,7 +75,11 @@ class AutonomyController:
         # A fully validated, explicitly automatic major operation must not be
         # starved by the indefinitely replenishable scouting and maintenance
         # queues. Blocked plans simply fall through to routine work.
-        if authority.execution.autoColonization and not growth_blocked(telemetry):
+        if (
+            authority.execution.autoColonization
+            and not growth_active
+            and not growth_blocked(telemetry)
+        ):
             order = self._colonization(telemetry)
             if order:
                 return order
@@ -96,7 +102,7 @@ class AutonomyController:
             if order:
                 return order
         if authority.execution.autoNewRemotes:
-            if growth_blocked(telemetry):
+            if growth_active or growth_blocked(telemetry):
                 return None
             return self._new_remote(telemetry)
         return None
@@ -279,12 +285,36 @@ class AutonomyController:
         sustained = (coverage < 85 or critical < 90) and oldest >= 200
         return severe or sustained
 
+    @staticmethod
+    def _growth_operation_active(telemetry: Telemetry) -> bool:
+        """Serialize remote establishment, reactivation, and colonization."""
+        if any(
+            operation.state not in {"HEALTHY", "DEGRADED", "FAILED"}
+            for operation in telemetry.operations.remoteEstablishments
+        ):
+            return True
+        if any(
+            operation.state not in {"SUCCESS", "FAILED"}
+            for operation in telemetry.operations.colonizations
+        ):
+            return True
+        return any(
+            remote.lifecycleState == "REACTIVATING"
+            for remote in telemetry.operations.remoteMining
+        )
+
     def _resume_remote(self, telemetry: Telemetry) -> StrategicOrder | None:
         population = telemetry.empireLoad.get("homePopulation", {})
         spawn = telemetry.empireLoad.get("spawnPressure", {})
-        if float(population.get("satisfaction") or 0) < 85 or float(population.get("criticalSatisfaction") or 0) < 100:
+        coverage = population.get("coverageSatisfaction")
+        if coverage is None:
+            coverage = population.get("satisfaction")
+        if float(coverage or 0) < 85 or float(population.get("criticalSatisfaction") or 0) < 100:
             return None
-        if int(spawn.get("queueDepth") or 0) > 1:
+        home_queue = spawn.get("homeQueueDepth")
+        if home_queue is None:
+            home_queue = spawn.get("queueDepth")
+        if int(home_queue or 0) > 1:
             return None
         candidates = [remote for remote in telemetry.operations.remoteMining if remote.lifecycleState == "RECOVERY_CANDIDATE"]
         if not candidates:

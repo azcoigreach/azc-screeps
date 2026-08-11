@@ -630,36 +630,56 @@ global.AIObserver = {
 				return "RECOVERY_CANDIDATE";
 			return "PAUSED";
 		}
-		if (_.get(site, ["ai_pause", "state"]) === "REACTIVATING") return "REACTIVATING";
+		if (_.get(site, ["ai_pause", "state"]) === "REACTIVATING") {
+			let roles = _.get(remote, ["population", "roles"], {});
+			let miners = _.get(roles, ["burrower", "alive"], 0) + _.get(roles, ["miner", "alive"], 0);
+			let haulers = _.get(roles, ["carrier", "alive"], 0) + _.get(roles, ["hauler", "alive"], 0);
+			let recentDelivery = _.isNumber(_.get(remote, ["delivery", "lastDeliveryTick"]))
+				&& Game.time - remote.delivery.lastDeliveryTick <= 1500;
+			if (miners < 1 || haulers < 1 || !recentDelivery) return "REACTIVATING";
+			let pause = _.get(site, "ai_pause", {});
+			pause.state = "ACTIVE";
+			pause.reactivatedTick = Game.time;
+			site.ai_pause = pause;
+		}
 		if (_.get(remote, ["stopLoss", "state"]) === "ABANDON_RECOMMENDED") return "ABANDON_RECOMMENDED";
 		if (_.get(remote, ["stopLoss", "state"]) === "PAUSE_RECOMMENDED") return "PAUSE_RECOMMENDED";
 		return remote.health === "FAILING" ? "FAILING" : (remote.health === "DEGRADED" ? "DEGRADED" : "ACTIVE");
 	},
 
 	_empireLoad: function (colonies, remotes) {
-		let criticalNames = ["harvester", "miner", "burrower", "carrier", "hauler", "worker", "multirole", "upgrader"];
+		let criticalNames = ["harvester", "miner", "burrower", "carrier", "hauler", "worker", "multirole"];
 		let desired = 0, alive = 0, covered = 0, criticalDesired = 0, criticalAvailable = 0;
 		let spawns = 0, busy = 0, queue = 0, remoteQueue = 0, oldest = 0;
-		_.each(colonies, colony => {
-			desired += _.get(colony, ["population", "desiredTotal"], 0);
-			alive += _.get(colony, ["population", "aliveTotal"], 0);
-			covered += _.sum(_.map(_.get(colony, ["population", "roles"], {}), role =>
-				Math.min(_.get(role, "desired", 0), _.get(role, "alive", 0)
-					+ _.get(role, "spawning", 0) + _.get(role, "queued", 0))));
+		_.each(colonies, (colony, roomName) => {
+			let populations = [_.get(colony, "population", {})];
+			let localMiningExpected = _.get(Memory,
+				["ai", "metrics", "population", "remotes", roomName, "expected"], {});
+			if (_.sum(_.values(localMiningExpected)) > 0)
+				populations.push(this._populationSummary(roomName, roomName, localMiningExpected));
+			_.each(populations, population => {
+				desired += _.get(population, "desiredTotal", 0);
+				alive += _.get(population, "aliveTotal", 0);
+				covered += _.sum(_.map(_.get(population, "roles", {}), role =>
+					Math.min(_.get(role, "desired", 0), _.get(role, "alive", 0)
+						+ _.get(role, "spawning", 0) + _.get(role, "queued", 0))));
+				oldest = Math.max(oldest, _.get(population, "oldestWaitingTicks", 0));
+				_.each(_.get(population, "roles", {}), (role, name) => {
+					let critical = _.includes(criticalNames, name)
+						|| (name === "upgrader" && _.get(colony, ["controller", "downgradeCritical"], false) === true);
+					if (critical) {
+						let roleDesired = _.get(role, "desired", 0);
+						criticalDesired += roleDesired;
+						criticalAvailable += Math.min(roleDesired, _.get(role, "alive", 0)
+							+ _.get(role, "spawning", 0) + _.get(role, "queued", 0));
+					}
+				});
+			});
 			spawns += _.get(colony, ["spawning", "spawns"], 0);
 			busy += _.get(colony, ["spawning", "busy"], 0);
 			queue += _.get(colony, ["spawning", "homeQueueDepth"],
 				_.get(colony, ["spawning", "queueDepth"], 0));
 			remoteQueue += _.get(colony, ["spawning", "remoteQueueDepth"], 0);
-			oldest = Math.max(oldest, _.get(colony, ["population", "oldestWaitingTicks"], 0));
-			_.each(_.get(colony, ["population", "roles"], {}), (role, name) => {
-				if (_.includes(criticalNames, name)) {
-					let roleDesired = _.get(role, "desired", 0);
-					criticalDesired += roleDesired;
-					criticalAvailable += Math.min(roleDesired, _.get(role, "alive", 0)
-						+ _.get(role, "spawning", 0) + _.get(role, "queued", 0));
-				}
-			});
 		});
 		let remoteDesired = _.sum(_.map(remotes, remote => remote.paused ? 0 : _.get(remote, ["population", "desiredTotal"], 0)));
 		let remoteAvailable = _.sum(_.map(remotes, remote => remote.paused ? 0 : _.get(remote, ["population", "assignedTotal"], 0)));
@@ -677,11 +697,12 @@ global.AIObserver = {
 		let state = "HEALTHY";
 		let reasons = [];
 		let bootstrapFloor = Math.max(1, spawns * 3);
-		let belowBootstrapFloor = desired > bootstrapFloor && covered <= bootstrapFloor;
-		if (coverageSatisfaction < 0.35 || criticalSatisfaction < 0.5 || belowBootstrapFloor) {
+		let belowBootstrapFloor = criticalDesired > bootstrapFloor && criticalAvailable < bootstrapFloor;
+		if (criticalSatisfaction < 0.5 || belowBootstrapFloor) {
 			state = "CRITICAL";
 			reasons.push("HOME_POPULATION_CRITICAL");
-		} else if (coverageSatisfaction < 0.65 || criticalSatisfaction < 0.75 || queue >= Math.max(4, spawns * 3)) {
+		} else if (criticalSatisfaction < 0.65
+			|| (queue >= Math.max(4, spawns * 3) && oldest >= 200)) {
 			state = "OVEREXTENDED";
 			reasons.push("SPAWN_CAPACITY_OVEREXTENDED");
 		} else if (coverageSatisfaction < 0.85 || criticalSatisfaction < 0.9 || queue > 0 || utilization >= 0.9) {
@@ -736,6 +757,8 @@ global.AIObserver = {
 					replacementCoverageSatisfaction: _.get(recovery, "replacementCoverageSatisfaction", null),
 					replacementCovered: _.get(recovery, "replacementCovered", false) === true,
 					replacementGraceTicks: _.get(recovery, "replacementGraceTicks", null),
+					remoteMode: _.get(recovery, "remoteMode", "SUPPRESSED"),
+					remoteContinuityRoom: _.get(recovery, "remoteContinuityRoom", null),
 					updatedTick: _.get(recovery, "updatedTick", null)
 				};
 			}
@@ -768,7 +791,7 @@ global.AIObserver = {
 			add("STALE_INTEL", "MEDIUM", { intelAgeTicks: remote.intelAgeTicks, staleAfterTicks: staleLimit });
 		if (remote.route.status === "FAILED")
 			add("ROUTE_FAILURE", "HIGH", { route: remote.route.rooms, status: remote.route.status });
-		if (!remote.security.isSafe || remote.security.hostileCreeps > 0)
+		if (remote.visible && (!remote.security.isSafe || remote.security.hostileCreeps > 0))
 			add("HOSTILE_INTERRUPTION", "HIGH", { hostileCreeps: remote.security.hostileCreeps });
 		if (remote.visible && remote.mining.expectedSourceContainers > 0
 			&& remote.mining.containers + remote.mining.containerSites < remote.mining.expectedSourceContainers)
@@ -885,7 +908,12 @@ global.AIObserver = {
 				operation.state = "FAILED";
 				operation.failureReason = "target controller became foreign-owned";
 				this._pauseFailedEstablishment(site, operation.failureReason);
-			} else if (!room) operation.state = "RESERVING";
+			} else if (!room) {
+				// Losing vision does not undo observed delivery and a completed
+				// establishment. Preserve the last productive lifecycle state.
+				if (!_.includes(["ACTIVE", "HEALTHY", "DEGRADED"], operation.state))
+					operation.state = "RESERVING";
+			}
 			else {
 				let population = _.filter(_.get(Game, "creeps", {}), creep => _.get(creep, ["memory", "room"]) === operation.target);
 				let hasMiner = _.some(population, creep => _.includes(["burrower", "miner"], _.get(creep, ["memory", "role"])));

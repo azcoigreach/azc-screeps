@@ -1115,8 +1115,8 @@ test("home recovery stability survives a queued routine replacement", function (
 	assert.strictEqual(recovery.stableSinceTick, 2010);
 
 	Game.time = 2015;
-	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1", "actual", "upgrader"], 0);
-	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1", "requested", "upgrader"], 1);
+	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1", "actual", "worker"], 1);
+	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1", "requested", "worker"], 1);
 	recovery = Control.homeRecoveryState("W1N1");
 	assert.strictEqual(recovery.active, true);
 	assert.strictEqual(recovery.stableSinceTick, 2010);
@@ -1124,7 +1124,7 @@ test("home recovery stability survives a queued routine replacement", function (
 	assert.strictEqual(recovery.replacementCoverageSatisfaction, 100);
 
 	Game.time = 2021;
-	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1", "actual", "upgrader"], 1);
+	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1", "actual", "worker"], 2);
 	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1", "requested"], {});
 	recovery = Control.homeRecoveryState("W1N1");
 	assert.strictEqual(recovery.active, false);
@@ -1166,6 +1166,80 @@ test("home recovery resets stability after a sustained uncovered shortage", func
 	assert.strictEqual(recovery.stableSinceTick, 2018);
 	Game.time = 2028;
 	assert.strictEqual(Control.homeRecoveryState("W1N1").active, false);
+});
+
+test("routine upgrader turnover does not activate home recovery", function () {
+	reset({ time: 3000 });
+	AIInterface.initMemory();
+	Memory.ai.policy.remoteRecoveryReplacementGraceTicks = 5;
+	_.set(Memory, ["ai", "strategy", "empireLoad"], { state: "CRITICAL" });
+	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1"], {
+		expected: { worker: 2, upgrader: 3 },
+		actual: { worker: 2, upgrader: 0 }, requested: {}
+	});
+	_.set(Memory, ["ai", "metrics", "population", "remotes", "W1N1"], {
+		expected: { burrower: 2, carrier: 2 },
+		actual: { worker: 2, burrower: 2, carrier: 2 }, requested: {}
+	});
+	let recovery = Control.homeRecoveryState("W1N1");
+	assert.strictEqual(recovery.active, false);
+	assert.strictEqual(recovery.satisfaction, 100);
+	Game.time = 3100;
+	recovery = Control.homeRecoveryState("W1N1");
+	assert.strictEqual(recovery.active, false);
+});
+
+test("moderate essential shortage must persist before recovery activates", function () {
+	reset({ time: 4000 });
+	AIInterface.initMemory();
+	Memory.ai.policy.remoteRecoveryReplacementGraceTicks = 5;
+	_.set(Memory, ["ai", "strategy", "empireLoad"], { state: "OVEREXTENDED" });
+	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1"], {
+		expected: { worker: 4 }, actual: { worker: 3 }, requested: {}
+	});
+	assert.strictEqual(Control.homeRecoveryState("W1N1").active, false);
+	Game.time = 4004;
+	assert.strictEqual(Control.homeRecoveryState("W1N1").active, false);
+	Game.time = 4005;
+	let recovery = Control.homeRecoveryState("W1N1");
+	assert.strictEqual(recovery.active, true);
+	assert.strictEqual(recovery.satisfaction, 75);
+});
+
+test("recovery preserves one bounded productive remote pipeline", function () {
+	reset({ time: 5000 });
+	AIInterface.initMemory();
+	Memory.ai.policy.remoteRecoveryReplacementGraceTicks = 0;
+	Memory.sites.mining = {
+		W1N2: { colony: "W1N1" },
+		W1N3: { colony: "W1N1" }
+	};
+	Memory.ai.metrics.remotes = {
+		W1N2: { energyDeliveredTotal: 12000 },
+		W1N3: { energyDeliveredTotal: 2000 }
+	};
+	_.set(Memory, ["ai", "strategy", "empireLoad"], { state: "OVEREXTENDED" });
+	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1"], {
+		expected: { worker: 4 }, actual: { worker: 3 }, requested: {}
+	});
+	let recovery = Control.homeRecoveryState("W1N1");
+	assert.strictEqual(recovery.active, true);
+	assert.strictEqual(recovery.remoteMode, "CONTINUITY");
+	assert.strictEqual(recovery.remoteContinuityRoom, "W1N2");
+	let target = {
+		burrower: { amount: 2 }, carrier: { amount: 4 }, reserver: { amount: 1 },
+		multirole: { amount: 1 }, soldier: { amount: 2 }
+	};
+	let continuity = Control.limitRemotePopulationForRecovery(target, recovery, "W1N2");
+	let suppressed = Control.limitRemotePopulationForRecovery(target, recovery, "W1N3");
+	assert.strictEqual(continuity.burrower.amount, 1);
+	assert.strictEqual(continuity.carrier.amount, 1);
+	assert.strictEqual(continuity.reserver.amount, 1);
+	assert.strictEqual(continuity.multirole.amount, 0);
+	assert.strictEqual(continuity.soldier.amount, 2);
+	assert.strictEqual(suppressed.burrower.amount, 0);
+	assert.strictEqual(suppressed.carrier.amount, 0);
+	assert.strictEqual(suppressed.soldier.amount, 2);
 });
 
 test("active home recovery bypasses the randomized spawn pulse", function () {
@@ -1289,6 +1363,27 @@ test("remote health distinguishes healthy and stale-intelligence operations", fu
 	remote = AIObserver.buildSnapshot().operations.remoteMining[0];
 	assert.strictEqual(remote.health, "STALE_INTEL");
 	assert.ok(remote.reasons.indexOf("STALE_INTEL") >= 0);
+});
+
+test("remote reactivation completes only after mining and delivery resume", function () {
+	reset({ time: 22000 });
+	AIInterface.initMemory();
+	let site = { ai_pause: { state: "REACTIVATING" } };
+	let remote = {
+		room: "W1N2", health: "HEALTHY", stopLoss: { state: "NORMAL" },
+		population: { roles: {
+			burrower: { alive: 1 }, carrier: { alive: 1 }
+		} },
+		delivery: { lastDeliveryTick: Game.time - 100 }
+	};
+	assert.strictEqual(AIObserver._remoteLifecycle(remote, site), "ACTIVE");
+	assert.strictEqual(site.ai_pause.state, "ACTIVE");
+	assert.strictEqual(site.ai_pause.reactivatedTick, Game.time);
+
+	let incomplete = { ai_pause: { state: "REACTIVATING" } };
+	remote.population.roles.carrier.alive = 0;
+	assert.strictEqual(AIObserver._remoteLifecycle(remote, incomplete), "REACTIVATING");
+	assert.strictEqual(incomplete.ai_pause.state, "REACTIVATING");
 });
 
 test("remote maintenance actions require authority and delegate only existing-remote objectives", function () {

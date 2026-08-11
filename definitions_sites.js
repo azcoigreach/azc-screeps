@@ -260,12 +260,17 @@
 				// Check if room has reached RCL 5+ and should spawn upgraders
 				let roomLevel = Game.rooms[rmColony].controller.level;
 				if (roomLevel >= 5) {
-					// Calculate upgrader amount based on remote mining sources
+					// Additional upgrading is discretionary. Count only remotes that
+					// recently delivered energy, and spend that surplus only after the
+					// origin has reached its strategic storage reserve.
 					let remoteMiningSources = 0;
 					let remote_mining = _.get(Memory, ["sites", "mining"]);
 					if (remote_mining) {
 						let remote_list = _.filter(Object.keys(remote_mining), rem => { 
-							return rem != rmColony && _.get(remote_mining[rem], "colony") == rmColony; 
+							let lastDelivery = _.get(Memory, ["ai", "metrics", "remotes", rem, "lastDeliveryTick"]);
+							return rem != rmColony && _.get(remote_mining[rem], "colony") == rmColony
+								&& _.get(remote_mining[rem], "ai_paused", false) !== true
+								&& _.isNumber(lastDelivery) && Game.time - lastDelivery <= 1500;
 						});
 						_.each(remote_list, rem => { 
 							remoteMiningSources += _.get(Memory, ["sites", "mining", rem, "survey", "source_amount"], 0); 
@@ -275,7 +280,10 @@
 					// Base upgrader amount: 1 for every room level 5+
 					// Additional upgrader for every 2 remote mining sources
 					let baseUpgraders = 1;
-					let additionalUpgraders = Math.floor(remoteMiningSources / 2);
+					let storageEnergy = _.get(Game, ["rooms", rmColony, "storage", "store", RESOURCE_ENERGY], 0);
+					let storageReserve = _.get(Memory, ["ai", "policy", "minimumOriginStorageEnergy"], 250000);
+					let additionalUpgraders = storageEnergy >= storageReserve
+						? Math.floor(remoteMiningSources / 2) : 0;
 					let totalUpgraders = baseUpgraders + additionalUpgraders;
 					_.set(popTarget, ["upgrader", "amount"], totalUpgraders);
 					
@@ -700,18 +708,24 @@
 						return c.isHostile() && (c.hasPart("attack") || c.hasPart("ranged_attack")); 
 					});
 				let was_safe = _.get(Memory, ["sites", "mining", rmHarvest, "defense", "is_safe"], true);
-				let is_safe = visible && dangerous_hostiles.length == 0 && invaderCore == null;
-				_.set(Memory, ["rooms", rmHarvest, "defense", "is_safe"], is_safe);
-				_.set(Memory, ["sites", "mining", rmHarvest, "defense", "is_safe"], is_safe);
-				_.set(Memory, ["sites", "mining", rmHarvest, "defense", "hostiles"], hostiles);
+				let is_safe = visible ? dangerous_hostiles.length == 0 && invaderCore == null : was_safe;
+				// Lack of vision is unknown, not a hostile event. Preserve last-known
+				// safety and mining eligibility until fresh vision proves otherwise.
+				if (visible) {
+					_.set(Memory, ["rooms", rmHarvest, "defense", "is_safe"], is_safe);
+					_.set(Memory, ["sites", "mining", rmHarvest, "defense", "is_safe"], is_safe);
+					_.set(Memory, ["sites", "mining", rmHarvest, "defense", "hostiles"], hostiles);
+				}
 				if (visible && was_safe === true && is_safe === false
 					&& typeof AIObserver !== "undefined" && _.isFunction(_.get(AIObserver, "recordRemoteInterruption")))
 					AIObserver.recordRemoteInterruption(rmHarvest);
 
 				// Can only mine a site/room if it is not reserved, or is reserved by the player
 				let reservation = _.get(Game, ["rooms", rmHarvest, "controller", "reservation"], null);
-				let can_mine = visible && (reservation == null || _.get(reservation, "username", null) == getUsername());
-				_.set(Memory, ["sites", "mining", rmHarvest, "can_mine"], can_mine);
+				let can_mine = visible
+					? (reservation == null || _.get(reservation, "username", null) == getUsername())
+					: _.get(Memory, ["sites", "mining", rmHarvest, "can_mine"], false);
+				if (visible) _.set(Memory, ["sites", "mining", rmHarvest, "can_mine"], can_mine);
 
 				// Tally energy sitting in containers awaiting carriers to take to storage...
 				if (_.get(Game, ["rooms", rmColony, "storage"], null) != null) {
@@ -759,11 +773,15 @@
 				let convertingToColony = _.get(Memory, ["sites", "mining", rmHarvest, "ai_converting_to_colony"], false) === true
 					|| _.get(Game, ["rooms", rmHarvest, "controller", "my"], false) === true;
 				let recovery = Control.homeRecoveryState(rmColony);
-				let suppressRemoteEconomy = rmColony != rmHarvest && recovery.active === true;
+				let recoveryContinuityOnly = rmColony != rmHarvest && recovery.active === true
+					&& recovery.remoteMode === "CONTINUITY" && recovery.remoteContinuityRoom === rmHarvest;
+				let suppressRemoteEconomy = rmColony != rmHarvest && recovery.active === true
+					&& !recoveryContinuityOnly;
 				if (rmColony != rmHarvest) {
 					_.set(Memory, ["sites", "mining", rmHarvest, "recovery_suppression"], {
-						active: suppressRemoteEconomy, tick: Game.time,
-						reason: suppressRemoteEconomy ? recovery.reason : null
+						active: recovery.active === true, tick: Game.time,
+						mode: suppressRemoteEconomy ? "SUPPRESSED" : (recoveryContinuityOnly ? "CONTINUITY" : "NORMAL"),
+						reason: recovery.active === true ? recovery.reason : null
 					});
 				}
 
@@ -893,6 +911,9 @@
 					logisticsObjective.suppressedTick = Game.time;
 					logisticsObjective.suppressedReason = recovery.reason;
 				}
+
+				if (rmColony != rmHarvest)
+					popTarget = Control.limitRemotePopulationForRecovery(popTarget, recovery, rmHarvest);
 
 				// Tally population levels for level scaling
 				Control.populationTally(rmColony,
@@ -1024,7 +1045,8 @@
 							});
 						}
 
-						if (_.get(popActual, "miner", 0) < 2 // Population stalling? Energy defecit? Replenish with miner group
+						if (!recoveryContinuityOnly
+							&& _.get(popActual, "miner", 0) < 2 // Population stalling? Energy defecit? Replenish with miner group
 							&& (_.get(popActual, "burrower", 0) < _.get(popTarget, ["burrower", "amount"], 0)
 								&& _.get(popActual, "carrier", 0) < _.get(popTarget, ["carrier", "amount"], 0))) {
 							Memory["shard"]["spawn_requests"].push({

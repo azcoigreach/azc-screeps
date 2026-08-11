@@ -94,6 +94,7 @@ class AutonomyReportTests(unittest.TestCase):
             "schedulerRecovery": {"active": True, "rooms": {"W1N1": {
                 "satisfaction": 92.31, "stableSinceTick": payload["tick"] - 500,
                 "stableRequiredTicks": 3000, "replacementCovered": True,
+                "remoteMode": "CONTINUITY", "remoteContinuityRoom": "W1N2",
                 "replacementGraceTicks": 200,
             }}},
             "homePopulation": {"satisfaction": 100, "criticalSatisfaction": 100},
@@ -110,6 +111,7 @@ class AutonomyReportTests(unittest.TestCase):
         self.assertIn("Native scheduler recovery: ACTIVE", build_report(self.history, telemetry))
         self.assertIn("stable 500/3000 ticks", build_report(self.history, telemetry))
         self.assertIn("routine replacement covered", build_report(self.history, telemetry))
+        self.assertIn("continuity remote W1N2", build_report(self.history, telemetry))
 
     def test_critical_recovery_allows_only_held_reservation_inside_lead_window(self) -> None:
         payload = telemetry_payload()
@@ -202,6 +204,56 @@ class AutonomyReportTests(unittest.TestCase):
         order = AutonomyController(self.history, transport).run(telemetry)
         self.assertIsNotNone(order)
         self.assertEqual(order.action, "PAUSE_REMOTE_MINING")
+
+    def test_covered_turnover_can_resume_one_remote_using_home_queue_only(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["empireLoad"] = {
+            "state": "STRAINED", "growthVeto": False,
+            "homePopulation": {
+                "satisfaction": 75, "coverageSatisfaction": 100,
+                "criticalSatisfaction": 100,
+            },
+            "spawnPressure": {
+                "queueDepth": 8, "homeQueueDepth": 1,
+                "remoteQueueDepth": 7, "oldestHomeDemandTicks": 1,
+            },
+        }
+        payload["operations"]["remoteMining"][0]["lifecycleState"] = "RECOVERY_CANDIDATE"
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        order = AutonomyController(self.history, transport).run(telemetry)
+        self.assertIsNotNone(order)
+        self.assertEqual(order.action, "RESUME_REMOTE_MINING")
+        self.assertEqual(order.parameters, {"room": "W1N2"})
+
+    def test_major_growth_operations_are_serialized_until_productive(self) -> None:
+        payload = telemetry_payload()
+        payload["operations"]["remoteEstablishments"] = [{
+            "orderId": "start-1", "origin": "W1N1", "target": "W1N2",
+            "state": "BOOTSTRAPPING", "createdTick": payload["tick"] - 1000,
+            "updatedTick": payload["tick"], "prediction": {},
+            "candidateScore": 80, "firstDeliveryTotal": 0,
+            "failureReason": None,
+        }]
+        telemetry = Telemetry.model_validate(payload)
+        self.assertTrue(AutonomyController._growth_operation_active(telemetry))
+
+        payload["operations"]["remoteEstablishments"][0]["state"] = "HEALTHY"
+        telemetry = Telemetry.model_validate(payload)
+        self.assertFalse(AutonomyController._growth_operation_active(telemetry))
+
+        payload["operations"]["remoteMining"][0]["lifecycleState"] = "REACTIVATING"
+        telemetry = Telemetry.model_validate(payload)
+        self.assertTrue(AutonomyController._growth_operation_active(telemetry))
+
+        payload["operations"]["remoteMining"][0]["lifecycleState"] = "ACTIVE"
+        payload["operations"]["colonizations"] = [{
+            "id": "col-1", "from": "W1N1", "origin": "W1N1",
+            "target": "W2N2", "state": "CLAIMED",
+        }]
+        telemetry = Telemetry.model_validate(payload)
+        self.assertTrue(AutonomyController._growth_operation_active(telemetry))
 
     def test_auto_abandonment_requires_fresh_unsuppressed_stop_loss_evidence(self) -> None:
         payload = telemetry_payload()

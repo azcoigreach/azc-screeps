@@ -53,6 +53,10 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
             details.append(f"stable {max(0, telemetry.tick - stable_since)}/{stable_required} ticks")
         if state.get("replacementCovered"):
             details.append("routine replacement covered")
+        if state.get("remoteMode") == "CONTINUITY" and state.get("remoteContinuityRoom"):
+            details.append(f"continuity remote {state['remoteContinuityRoom']}")
+        elif state.get("remoteMode") == "SUPPRESSED":
+            details.append("remote economy suppressed")
         unstable_since = state.get("unstableSinceTick")
         grace = state.get("replacementGraceTicks")
         if isinstance(unstable_since, int) and isinstance(grace, int):

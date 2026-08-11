@@ -926,35 +926,74 @@
 	homeRecoveryState: function (roomName) {
 		let load = _.get(Memory, ["ai", "strategy", "empireLoad"], {});
 		let loadState = _.get(load, "state", "HEALTHY");
-		let population = _.get(load, "homePopulation", {});
-		let satisfaction = _.get(population, "satisfaction", 100);
-		let criticalSatisfaction = _.get(population, "criticalSatisfaction", 100);
-		// Prefer the current colony's deterministic target when available so one
-		// recovering room does not unnecessarily suppress every healthy colony.
-		let local = _.get(Memory, ["ai", "metrics", "population", "colonies", roomName], {});
-		let localExpected = _.get(local, "expected", {});
-		let localActual = _.get(local, "actual", {});
-		let localRequested = _.get(local, "requested", {});
-		let desired = _.sum(_.values(localExpected));
-		let replacementCoverageSatisfaction = criticalSatisfaction;
+		let essentialRoles = ["harvester", "miner", "burrower", "carrier", "hauler", "worker", "multirole"];
+		let downgradeCritical = _.get(Memory, ["rooms", roomName, "survey", "downgrade_critical"], false) === true;
+		if (downgradeCritical) essentialRoles.push("upgrader");
+
+		// Recovery protects the home energy engine, not discretionary work. Merge
+		// the colony target with its local mining target so workers, source miners,
+		// and haulers are represented while routine upgraders remain noncritical.
+		let expected = {}, actual = {}, requested = {};
+		let metrics = [
+			_.get(Memory, ["ai", "metrics", "population", "colonies", roomName], {}),
+			_.get(Memory, ["ai", "metrics", "population", "remotes", roomName], {})
+		];
+		_.each(metrics, metric => {
+			_.each(_.get(metric, "expected", {}), (amount, role) => {
+				if (!_.includes(essentialRoles, role)) return;
+				expected[role] = _.get(expected, role, 0) + amount;
+				// Both local producers see all home creeps. Attribute actual and
+				// requested counts only to roles demanded by this producer so the
+				// merged home engine cannot double-count the same creep.
+				actual[role] = _.get(actual, role, 0) + _.get(metric, ["actual", role], 0);
+				requested[role] = _.get(requested, role, 0) + _.get(metric, ["requested", role], 0);
+			});
+		});
+		let desired = _.sum(_.values(expected));
+		let satisfaction = 100;
+		let criticalSatisfaction = satisfaction;
+		let replacementCoverageSatisfaction = satisfaction;
 		if (desired > 0) {
-			let available = _.sum(_.map(localExpected, (amount, role) =>
-				Math.min(amount, _.get(localActual, role, 0))));
-			let covered = _.sum(_.map(localExpected, (amount, role) =>
-				Math.min(amount, _.get(localActual, role, 0) + _.get(localRequested, role, 0))));
+			let available = _.sum(_.map(expected, (amount, role) =>
+				Math.min(amount, _.get(actual, role, 0))));
+			let covered = _.sum(_.map(expected, (amount, role) =>
+				Math.min(amount, _.get(actual, role, 0) + _.get(requested, role, 0))));
 			satisfaction = Math.round(available * 10000 / desired) / 100;
 			criticalSatisfaction = satisfaction;
 			replacementCoverageSatisfaction = Math.round(covered * 10000 / desired) / 100;
+		} else {
+			// Preserve compatibility during the first tick after a global reset and
+			// with older telemetry that has not published role-level metrics yet.
+			// The aggregate percentages are enough to protect a clearly struggling
+			// colony until the next population pulse supplies exact role counts.
+			let population = _.get(load, "homePopulation", {});
+			if (_.isNumber(population.satisfaction)) {
+				desired = _.get(population, "desired", 100);
+				satisfaction = population.satisfaction;
+				criticalSatisfaction = _.get(population, "criticalSatisfaction", satisfaction);
+				replacementCoverageSatisfaction = _.get(population, "coverageSatisfaction", satisfaction);
+			}
 		}
 		let path = ["rooms", roomName, "population_recovery"];
 		let recovery = _.get(Memory, path, {});
 		if (!_.isObject(recovery) || _.isArray(recovery)) recovery = {};
+		if (recovery.active !== true) recovery.active = false;
 
-		let overloaded = _.includes(["OVEREXTENDED", "CRITICAL"], loadState)
-			&& (desired <= 0 || satisfaction < 85);
+		let minimum = _.get(Memory, ["ai", "policy", "remoteRecoveryPopulationSatisfaction"], 85);
+		let stableTicks = _.get(Memory, ["ai", "policy", "remoteRecoveryStableTicks"], 3000);
+		let replacementGraceTicks = _.get(Memory, ["ai", "policy", "remoteRecoveryReplacementGraceTicks"], 200);
+		let overloadSignal = _.includes(["OVEREXTENDED", "CRITICAL"], loadState)
+			&& desired > 0 && satisfaction < minimum;
+		if (overloadSignal && recovery.activationSinceTick == null)
+			recovery.activationSinceTick = Game.time;
+		if (!overloadSignal) recovery.activationSinceTick = null;
+		let severeEssentialShortage = desired > 0 && satisfaction < 50;
+		let sustainedUncoveredShortage = overloadSignal && replacementCoverageSatisfaction < 100
+			&& Game.time - _.get(recovery, "activationSinceTick", Game.time) >= replacementGraceTicks;
+		let overloaded = overloadSignal && (severeEssentialShortage || sustainedUncoveredShortage);
 		if (overloaded) {
+			if (recovery.active !== true) recovery.enteredTick = Game.time;
 			recovery.active = true;
-			recovery.enteredTick = _.get(recovery, "enteredTick", Game.time);
 			recovery.stableSinceTick = null;
 			recovery.unstableSinceTick = Game.time;
 			recovery.replacementSinceTick = null;
@@ -962,16 +1001,12 @@
 			recovery.reason = `EMPIRE_LOAD_${loadState}`;
 		}
 		if (recovery.active === true && !overloaded) {
-			let minimum = _.get(Memory, ["ai", "policy", "remoteRecoveryPopulationSatisfaction"], 85);
-			let stableTicks = _.get(Memory, ["ai", "policy", "remoteRecoveryStableTicks"], 3000);
-			let replacementGraceTicks = _.get(Memory, ["ai", "policy", "remoteRecoveryReplacementGraceTicks"], 200);
-			let stableLoad = _.includes(["HEALTHY", "STRAINED"], loadState);
-			let fullyStaffed = satisfaction >= minimum && criticalSatisfaction >= 100 && stableLoad;
+			let fullyStaffed = satisfaction >= minimum && criticalSatisfaction >= 100;
 			// A queued replacement is normal steady-state operation, not a new
 			// collapse. Count bounded, role-matched home requests as temporary
 			// coverage so routine creep turnover cannot erase a long stability run.
 			let replacementCandidate = !fullyStaffed
-				&& replacementCoverageSatisfaction >= 100 && stableLoad;
+				&& replacementCoverageSatisfaction >= 100;
 			if (replacementCandidate && recovery.replacementSinceTick == null)
 				recovery.replacementSinceTick = Game.time;
 			if (!replacementCandidate) recovery.replacementSinceTick = null;
@@ -1002,6 +1037,27 @@
 			recovery.replacementCovered = !fullyStaffed && replacementCovered;
 			recovery.replacementGraceTicks = replacementGraceTicks;
 		}
+
+		// During noncritical recovery keep one proven remote's minimum energy
+		// pipeline alive. This avoids destroying the income required for recovery
+		// while still bounding the single spawn's remote workload.
+		if (recovery.active === true) {
+			let candidates = _.filter(_.keys(_.get(Memory, ["sites", "mining"], {})), remote => {
+				return remote !== roomName
+					&& _.get(Memory, ["sites", "mining", remote, "colony"]) === roomName
+					&& _.get(Memory, ["sites", "mining", remote, "ai_paused"], false) !== true;
+			});
+			let current = _.get(recovery, "remoteContinuityRoom");
+			if (!_.includes(candidates, current)) {
+				let ranked = _.sortBy(candidates, remote =>
+					-_.get(Memory, ["ai", "metrics", "remotes", remote, "energyDeliveredTotal"], 0));
+				recovery.remoteContinuityRoom = _.head(ranked) || null;
+			}
+			recovery.remoteMode = severeEssentialShortage ? "SUPPRESSED" : "CONTINUITY";
+		} else {
+			recovery.remoteContinuityRoom = null;
+			recovery.remoteMode = "NORMAL";
+		}
 		recovery.loadState = loadState;
 		recovery.satisfaction = satisfaction;
 		recovery.criticalSatisfaction = criticalSatisfaction;
@@ -1009,6 +1065,21 @@
 		recovery.updatedTick = Game.time;
 		_.set(Memory, path, recovery);
 		return recovery;
+	},
+
+	limitRemotePopulationForRecovery: function (target, recovery, roomName) {
+		if (_.get(recovery, "active", false) !== true) return target;
+		let result = _.cloneDeep(target || {});
+		let continuity = _.get(recovery, "remoteMode") === "CONTINUITY"
+			&& _.get(recovery, "remoteContinuityRoom") === roomName;
+		let limits = continuity
+			? { burrower: 1, miner: 1, carrier: 1, reserver: 1, multirole: 0, extractor: 0, dredger: 0 }
+			: { burrower: 0, miner: 0, carrier: 0, reserver: 0, multirole: 0, extractor: 0, dredger: 0 };
+		_.each(limits, (limit, role) => {
+			if (_.has(result, role))
+				_.set(result, [role, "amount"], Math.min(limit, _.get(result, [role, "amount"], 0)));
+		});
+		return result;
 	},
 
 	spawnRequestClass: function (request) {
