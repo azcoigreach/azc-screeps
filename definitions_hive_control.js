@@ -1734,9 +1734,12 @@
 			let recovery = this.homeRecoveryState(room.name);
 			if (_.get(recovery, "active", false) === true) recoveryActive = true;
 		});
-		let essentialHomeDemand = _.some(_.get(Memory, ["shard", "spawn_requests"], []), request =>
-			request && this.spawnRequestClass(request).homeEssential === true);
-		return isPulse_Spawn() || recoveryActive || essentialHomeDemand;
+		let continuityDemand = _.some(_.get(Memory, ["shard", "spawn_requests"], []), request => {
+			if (!request) return false;
+			let requestClass = this.spawnRequestClass(request);
+			return requestClass.homeEssential === true || requestClass.remote === true;
+		});
+		return isPulse_Spawn() || recoveryActive || continuityDemand;
 	},
 
 	spawnRequestKey: function (request) {

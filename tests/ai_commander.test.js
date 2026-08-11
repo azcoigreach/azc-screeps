@@ -1288,6 +1288,14 @@ test("essential home demand wakes the scheduler off pulse", function () {
 	assert.strictEqual(Control.shouldRunSpawnScheduler(), true);
 	Memory.shard.spawn_requests[0].args.role = "upgrader";
 	assert.strictEqual(Control.shouldRunSpawnScheduler(), false);
+	Memory.shard.spawn_requests[0].args.room = "W1N2";
+	assert.strictEqual(Control.shouldRunSpawnScheduler(), true);
+});
+
+test("remote population demand is regenerated beyond the spawn pulse", function () {
+	let source = fs.readFileSync(path.join(__dirname, "..", "definitions_sites.js"), "utf8");
+	assert.strictEqual(source.indexOf("if (rmColony == rmHarvest || isPulse_Spawn())"), -1);
+	assert.ok(source.indexOf("this.runPopulation(rmColony, rmHarvest, listCreeps, listSpawnRooms, hasKeepers)") >= 0);
 });
 
 test("quiet scheduler advances and releases a fully staffed recovery latch", function () {

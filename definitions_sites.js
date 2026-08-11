@@ -632,14 +632,12 @@
 				}
 				Stats_CPU.End(rmColony, `Mining-${rmHarvest}-surveyRoom`);
 
-				// Local mining requests must persist across busy-spawn ticks. Remote
-				// producers remain pulse-bound so their larger targets retain the
-				// intended CPU and spawn-pressure cadence.
-				if (rmColony == rmHarvest || isPulse_Spawn()) {
-					Stats_CPU.Start(rmColony, `Mining-${rmHarvest}-runPopulation`);
-					this.runPopulation(rmColony, rmHarvest, listCreeps, listSpawnRooms, hasKeepers);
-					Stats_CPU.End(rmColony, `Mining-${rmHarvest}-runPopulation`);
-				}
+				// Spawn requests are rebuilt from scratch every tick. Regenerate both
+				// local and active-remote demand every tick so a request is not lost
+				// when the spawn happens to be busy on the population pulse.
+				Stats_CPU.Start(rmColony, `Mining-${rmHarvest}-runPopulation`);
+				this.runPopulation(rmColony, rmHarvest, listCreeps, listSpawnRooms, hasKeepers);
+				Stats_CPU.End(rmColony, `Mining-${rmHarvest}-runPopulation`);
 
 				Stats_CPU.Start(rmColony, `Mining-${rmHarvest}-runCreeps`);
 				this.runCreeps(rmColony, rmHarvest, listCreeps, hasKeepers, listRoute);
