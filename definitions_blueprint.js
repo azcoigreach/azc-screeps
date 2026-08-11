@@ -52,7 +52,7 @@
 		Stats_CPU.Start("Hive", "Blueprint-Run");
 		let room = (room_iter < room_list.length ? Game.rooms[room_list[room_iter]] : null);
 		if (room != null) {
-			console.log(`[Blueprint] ${room_iter + 1}/${room_list.length}: Running Blueprint() for ${room.name}`);
+			// console.log(`[Blueprint] ${room_iter + 1}/${room_list.length}: Running Blueprint() for ${room.name}`);
 			this.Run(room);			// Run blueprinting for this room
 		}
 
