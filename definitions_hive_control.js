@@ -1088,13 +1088,18 @@
 		let target = _.get(args, "room", colony);
 		let role = _.get(args, "role", _.get(request, "role", "unknown"));
 		let remote = target !== colony;
-		let homeEconomy = !remote && _.includes([
-			"worker", "upgrader", "harvester", "miner", "burrower",
+		let homeEssential = !remote && _.includes([
+			"worker", "harvester", "miner", "burrower",
 			"carrier", "hauler", "multirole"
 		], role);
+		if (!remote && role === "upgrader"
+			&& _.get(Memory, ["rooms", colony, "survey", "downgrade_critical"], false) === true)
+			homeEssential = true;
 		return {
 			colony: colony, target: target, role: role, remote: remote,
-			homeEconomy: homeEconomy,
+			homeEconomy: !remote && (homeEssential || role === "upgrader"),
+			homeEssential: homeEssential,
+			homeDiscretionary: !remote && role === "upgrader" && !homeEssential,
 			remoteContinuity: remote && _.get(args, "remote_continuity_critical", false) === true
 		};
 	},
@@ -1729,7 +1734,9 @@
 			let recovery = this.homeRecoveryState(room.name);
 			if (_.get(recovery, "active", false) === true) recoveryActive = true;
 		});
-		return isPulse_Spawn() || recoveryActive;
+		let essentialHomeDemand = _.some(_.get(Memory, ["shard", "spawn_requests"], []), request =>
+			request && this.spawnRequestClass(request).homeEssential === true);
+		return isPulse_Spawn() || recoveryActive || essentialHomeDemand;
 	},
 
 	spawnRequestKey: function (request) {
@@ -1750,17 +1757,28 @@
 		let aged = base - Math.floor(age / 200) * 2;
 		let requestClass = this.spawnRequestClass(request);
 		let recovery = this.homeRecoveryState(requestClass.colony);
+		// Essential home energy roles always own the first non-defense band.
+		// A remote request may be old or preserve a held reservation, but it must
+		// never invert ahead of the miners and haulers that power its origin.
+		if (requestClass.homeEssential)
+			return 10;
 		if (recovery.active === true) {
 			// Active defense remains in priorities 0-9. Home economy owns the next
 			// deterministic band; an already-held reservation may be preserved just
 			// below it. Ordinary remote work can never age into or tie that band.
-			if (requestClass.homeEconomy)
-				return 10;
 			if (requestClass.remoteContinuity)
 				return 11;
 			if (requestClass.remote)
 				return Math.max(12, aged);
+			if (requestClass.homeDiscretionary)
+				return Math.max(14, aged);
 		}
+		if (requestClass.remoteContinuity)
+			return Math.max(11, aged);
+		if (requestClass.remote)
+			return Math.max(12, aged);
+		if (requestClass.homeDiscretionary)
+			return Math.max(14, aged);
 		return Math.max(10, aged);
 	},
 

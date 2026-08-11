@@ -149,6 +149,10 @@ class AutonomyReportTests(unittest.TestCase):
         payload["remoteDrawdownRanking"] = [
             {"room": "W1N2", "score": 90, "health": "FAILING"},
         ]
+        payload["operations"]["remoteMining"][0]["population"].update({
+            "expectedTotal": 4, "desiredTotal": 4,
+            "aliveTotal": 2, "assignedTotal": 2,
+        })
         telemetry = Telemetry.model_validate(payload)
         transport = FakeTransport(self.history, telemetry.tick)
         order = AutonomyController(self.history, transport).run(telemetry)
@@ -199,11 +203,55 @@ class AutonomyReportTests(unittest.TestCase):
         payload["remoteDrawdownRanking"] = [
             {"room": "W1N2", "score": 90, "health": "FAILING"},
         ]
+        payload["operations"]["remoteMining"][0]["population"].update({
+            "expectedTotal": 4, "desiredTotal": 4,
+            "aliveTotal": 2, "assignedTotal": 2,
+        })
         telemetry = Telemetry.model_validate(payload)
         transport = FakeTransport(self.history, telemetry.tick)
         order = AutonomyController(self.history, transport).run(telemetry)
         self.assertIsNotNone(order)
         self.assertEqual(order.action, "PAUSE_REMOTE_MINING")
+
+    def test_transient_ttl_cliff_does_not_pause_a_fully_staffed_remote(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"]["autoRemotePausing"] = True
+        payload["empireLoad"] = {
+            "state": "OVEREXTENDED", "growthVeto": True,
+            "homePopulation": {
+                "satisfaction": 54.55, "coverageSatisfaction": 54.55,
+                "criticalSatisfaction": 62.5,
+            },
+            "spawnPressure": {
+                "queueDepth": 0, "homeQueueDepth": 0,
+                "remoteQueueDepth": 0, "oldestHomeDemandTicks": 251,
+            },
+        }
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        self.assertIsNone(AutonomyController(self.history, transport).run(telemetry))
+        self.assertEqual(transport.sent, [])
+
+    def test_severe_home_shortage_does_not_pause_a_remote_with_no_spawn_deficit(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"]["autoRemotePausing"] = True
+        payload["empireLoad"] = {
+            "state": "CRITICAL", "growthVeto": True,
+            "homePopulation": {
+                "satisfaction": 40, "coverageSatisfaction": 40,
+                "criticalSatisfaction": 40,
+            },
+            "spawnPressure": {
+                "queueDepth": 5, "homeQueueDepth": 5,
+                "remoteQueueDepth": 0, "oldestHomeDemandTicks": 500,
+            },
+        }
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        self.assertIsNone(AutonomyController(self.history, transport).run(telemetry))
+        self.assertEqual(transport.sent, [])
 
     def test_covered_turnover_can_resume_one_remote_using_home_queue_only(self) -> None:
         payload = telemetry_payload()

@@ -26,14 +26,12 @@
 				}
 				Stats_CPU.End(rmColony, "Colony-surveyRoom");
 
-				// A critically understaffed home cannot leave an idle spawn waiting for
-				// the normal 29-60 tick population pulse. Recovery is deliberately the
-				// only fast path; healthy colonies retain the CPU-saving cadence.
-				if (isPulse_Spawn() || Control.homeRecoveryState(rmColony).active === true) {
-					Stats_CPU.Start(rmColony, "Colony-runPopulation");
-					this.runPopulation(rmColony, listCreeps, listSpawnRooms);
-					Stats_CPU.End(rmColony, "Colony-runPopulation");
-				}
+				// Home requests are regenerated every tick. Memory.shard.spawn_requests
+				// is also rebuilt every tick, so pulse-only production can otherwise
+				// lose several simultaneous replacements while the single spawn is busy.
+				Stats_CPU.Start(rmColony, "Colony-runPopulation");
+				this.runPopulation(rmColony, listCreeps, listSpawnRooms);
+				Stats_CPU.End(rmColony, "Colony-runPopulation");
 
 				Stats_CPU.Start(rmColony, "Colony-runCreeps");
 				this.runCreeps(rmColony, listCreeps, listSpawnRoute);
@@ -634,11 +632,10 @@
 				}
 				Stats_CPU.End(rmColony, `Mining-${rmHarvest}-surveyRoom`);
 
-				// Local mining is part of the home economy and must participate in the
-				// recovery fast path. Remote producers remain pulse-bound (and their
-				// ordinary economy demand is suppressed by runPopulation below).
-				if (isPulse_Spawn() || (rmColony == rmHarvest
-					&& Control.homeRecoveryState(rmColony).active === true)) {
+				// Local mining requests must persist across busy-spawn ticks. Remote
+				// producers remain pulse-bound so their larger targets retain the
+				// intended CPU and spawn-pressure cadence.
+				if (rmColony == rmHarvest || isPulse_Spawn()) {
 					Stats_CPU.Start(rmColony, `Mining-${rmHarvest}-runPopulation`);
 					this.runPopulation(rmColony, rmHarvest, listCreeps, listSpawnRooms, hasKeepers);
 					Stats_CPU.End(rmColony, `Mining-${rmHarvest}-runPopulation`);

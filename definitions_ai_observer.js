@@ -397,7 +397,7 @@ global.AIObserver = {
 		_.each(names, role => {
 			let state = _.get(actual, role, { alive: 0, spawning: 0, dyingSoon: 0 });
 			let wait = _.get(Memory, ["shard", "spawn_wait", `${colonyName}|${roomName}|${role}|`]);
-			let waitingTicks = wait ? Math.max(0, Game.time - _.get(wait, "firstSeenTick", Game.time)) : 0;
+			let rawWaitingTicks = wait ? Math.max(0, Game.time - _.get(wait, "firstSeenTick", Game.time)) : 0;
 			let desired = _.get(expected, role, 0);
 			let available = state.alive + state.spawning;
 			let roleState = desired <= 0
@@ -405,6 +405,8 @@ global.AIObserver = {
 				: (available >= desired
 					? ((state.dyingSoon > 0 && _.get(queued, role, 0) > 0) ? "REPLACEMENT_PENDING" : "SATISFIED")
 					: (_.get(queued, role, 0) > 0 || state.spawning > 0 ? "REPLACEMENT_PENDING" : "UNDERSTAFFED"));
+			let waitingTicks = _.includes(["UNDERSTAFFED", "REPLACEMENT_PENDING"], roleState)
+				? rawWaitingTicks : 0;
 			roles[role] = {
 				expected: desired,
 				desired: desired,
@@ -607,13 +609,16 @@ global.AIObserver = {
 			}
 			let minimum = _.get(Memory, ["ai", "policy", "remotePauseMinimumTicks"], 5000);
 			let stableTicks = _.get(Memory, ["ai", "policy", "remoteRecoveryStableTicks"], 3000);
-			let minimumPopulation = _.get(Memory, ["ai", "policy", "remoteRecoveryPopulationSatisfaction"], 85);
 			let replacementGraceTicks = _.get(Memory, ["ai", "policy", "remoteRecoveryReplacementGraceTicks"], 200);
 			let load = _.get(Memory, ["ai", "strategy", "empireLoad", "state"], "CRITICAL");
-			let population = _.get(Memory, ["ai", "strategy", "empireLoad", "homePopulation", "satisfaction"], 0);
+			let homePopulation = _.get(Memory, ["ai", "strategy", "empireLoad", "homePopulation"], {});
+			let population = _.get(homePopulation, "satisfaction", 0);
+			let essentialSatisfaction = _.get(homePopulation, "criticalSatisfaction", population);
 			let nativeRecovery = _.get(Memory, ["rooms", _.get(site, "colony"), "population_recovery"], {});
 			let stableLoad = _.includes(["HEALTHY", "STRAINED"], load);
-			let fullyRecovering = stableLoad && population >= minimumPopulation;
+			// A discretionary upgrader or soldier gap must not keep a productive
+			// remote paused after the home energy engine is fully covered.
+			let fullyRecovering = stableLoad && essentialSatisfaction >= 100;
 			let replacementCovered = stableLoad && _.get(nativeRecovery, "replacementCovered", false) === true;
 			let recoveryEvidence = fullyRecovering || replacementCovered;
 			if (recoveryEvidence) {
@@ -663,15 +668,17 @@ global.AIObserver = {
 				covered += _.sum(_.map(_.get(population, "roles", {}), role =>
 					Math.min(_.get(role, "desired", 0), _.get(role, "alive", 0)
 						+ _.get(role, "spawning", 0) + _.get(role, "queued", 0))));
-				oldest = Math.max(oldest, _.get(population, "oldestWaitingTicks", 0));
 				_.each(_.get(population, "roles", {}), (role, name) => {
 					let critical = _.includes(criticalNames, name)
 						|| (name === "upgrader" && _.get(colony, ["controller", "downgradeCritical"], false) === true);
 					if (critical) {
 						let roleDesired = _.get(role, "desired", 0);
+						let roleAvailable = _.get(role, "alive", 0)
+							+ _.get(role, "spawning", 0) + _.get(role, "queued", 0);
 						criticalDesired += roleDesired;
-						criticalAvailable += Math.min(roleDesired, _.get(role, "alive", 0)
-							+ _.get(role, "spawning", 0) + _.get(role, "queued", 0));
+						criticalAvailable += Math.min(roleDesired, roleAvailable);
+						if (roleAvailable < roleDesired)
+							oldest = Math.max(oldest, _.get(role, "waitingTicks", 0));
 					}
 				});
 			});

@@ -242,13 +242,23 @@ class AutonomyController:
             item["economicConfidence"] = confidence
             item["economicQuality"] = value.get("quality", "UNKNOWN")
             item["paused"] = remote.paused
+            item["staffingDeficit"] = max(
+                0, remote.population.desiredTotal - remote.population.assignedTotal
+            )
+            item["spawnBurden"] = remote.population.desiredTotal
             result.append(item)
         return sorted(result, key=lambda item: (-float(item.get("score") or 0), str(item["room"])))
 
     def _pause_remote(self, telemetry: Telemetry) -> StrategicOrder | None:
         if not self._cooled_down("PAUSE_REMOTE_MINING", "*", telemetry.tick, 5000):
             return None
-        ranking = [item for item in self.drawdown_ranking(telemetry) if not item.get("paused")]
+        # Pausing a fully staffed remote releases no immediate spawn capacity;
+        # it only destroys current income. Draw down only a front that is still
+        # asking the constrained colony to fill a real staffing deficit.
+        ranking = [
+            item for item in self.drawdown_ranking(telemetry)
+            if not item.get("paused") and int(item.get("staffingDeficit") or 0) > 0
+        ]
         if not ranking:
             return None
         target = ranking[0]
@@ -280,9 +290,18 @@ class AutonomyController:
         )
         critical = float(population.get("criticalSatisfaction") or 0)
         oldest = int(spawn.get("oldestHomeDemandTicks") or 0)
+        home_queue = int(
+            spawn.get("homeQueueDepth")
+            if spawn.get("homeQueueDepth") is not None
+            else spawn.get("queueDepth") or 0
+        )
 
         severe = coverage < 50 or critical < 50
-        sustained = (coverage < 85 or critical < 90) and oldest >= 200
+        sustained = (
+            (coverage < 85 or critical < 90)
+            and home_queue > 0
+            and oldest >= 200
+        )
         return severe or sustained
 
     @staticmethod

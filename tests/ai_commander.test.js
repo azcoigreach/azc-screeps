@@ -1040,12 +1040,12 @@ test("population reports active demand, replacements, and undemanded roles witho
 	assert.strictEqual(population.demandSatisfaction, 33.33);
 });
 
-test("spawn demand aging bounds starvation without outranking emergency requests", function () {
+test("essential home demand never ages behind remote or discretionary work", function () {
 	reset({ time: 2000 });
 	let worker = { room: "W1N1", priority: 23, args: { room: "W1N1", role: "worker" } };
 	let emergency = { room: "W1N1", priority: 3, args: { room: "W1N1", role: "soldier" } };
 	assert.strictEqual(Control.spawnRequestKey(worker), "W1N1|W1N1|worker|");
-	assert.strictEqual(Control.effectiveSpawnPriority(worker, { firstSeenTick: 1000 }), 13);
+	assert.strictEqual(Control.effectiveSpawnPriority(worker, { firstSeenTick: 1000 }), 10);
 	assert.strictEqual(Control.effectiveSpawnPriority(worker, { firstSeenTick: 0 }), 10);
 	assert.strictEqual(Control.effectiveSpawnPriority(emergency, { firstSeenTick: 0 }), 3);
 });
@@ -1067,12 +1067,32 @@ test("critical recovery makes real home requests outrank aged remote demand", fu
 	continuity.args.remote_continuity_critical = true;
 	let wait = { firstSeenTick: 1 };
 	assert.strictEqual(Control.effectiveSpawnPriority(worker, wait), 10);
-	assert.strictEqual(Control.effectiveSpawnPriority(upgrader, wait), 10);
+	assert.strictEqual(Control.effectiveSpawnPriority(upgrader, wait), 14);
 	assert.strictEqual(Control.effectiveSpawnPriority(continuity, wait), 11);
 	assert.strictEqual(Control.effectiveSpawnPriority(remote, wait), 12);
 	let ordered = [remote, worker, continuity, upgrader].sort((a, b) =>
 		Control.effectiveSpawnPriority(a, wait) - Control.effectiveSpawnPriority(b, wait));
-	assert.ok(_.includes(["worker", "upgrader"], ordered[0].args.role));
+	assert.strictEqual(ordered[0].args.role, "worker");
+});
+
+test("satisfied roles do not publish stale spawn wait age", function () {
+	reset({ time: 2000 });
+	AIInterface.initMemory();
+	Game.creeps.worker = {
+		memory: { colony: "W1N1", room: "W1N1", role: "worker" },
+		ticksToLive: 1000, spawning: false
+	};
+	_.set(Memory, ["ai", "metrics", "population", "colonies", "W1N1"], {
+		expected: { worker: 1 }, actual: { worker: 1 }, requested: {}
+	});
+	_.set(Memory, ["shard", "spawn_wait", "W1N1|W1N1|worker|"], {
+		firstSeenTick: 1000, lastSeenTick: 1999
+	});
+	AIObserver._populationCache = null;
+	let population = AIObserver._populationSummary("W1N1", "W1N1", { worker: 1 });
+	assert.strictEqual(population.roles.worker.state, "SATISFIED");
+	assert.strictEqual(population.roles.worker.waitingTicks, 0);
+	assert.strictEqual(population.oldestWaitingTicks, 0);
 });
 
 test("home recovery latch requires stable staffing before releasing remote work", function () {
@@ -1253,6 +1273,21 @@ test("active home recovery bypasses the randomized spawn pulse", function () {
 	assert.strictEqual(Control.shouldRunSpawnScheduler(), false);
 	Memory.shard.pulses.spawn.active = true;
 	assert.strictEqual(Control.shouldRunSpawnScheduler(), true);
+});
+
+test("essential home demand wakes the scheduler off pulse", function () {
+	reset({ time: 2000 });
+	AIInterface.initMemory();
+	Memory.shard = {
+		pulses: { spawn: { active: false } },
+		spawn_requests: [{
+			room: "W1N1", priority: 13,
+			args: { role: "carrier", room: "W1N1", colony: "W1N1" }
+		}]
+	};
+	assert.strictEqual(Control.shouldRunSpawnScheduler(), true);
+	Memory.shard.spawn_requests[0].args.role = "upgrader";
+	assert.strictEqual(Control.shouldRunSpawnScheduler(), false);
 });
 
 test("quiet scheduler advances and releases a fully staffed recovery latch", function () {
@@ -1901,6 +1936,34 @@ test("covered home replacement does not trigger critical load or remote drawdown
 	assert.strictEqual(_.includes(load.reasons, "SPAWN_CAPACITY_OVEREXTENDED"), false);
 });
 
+test("satisfied role wait age cannot manufacture sustained overextension", function () {
+	reset();
+	AIInterface.initMemory();
+	let role = function (desired, alive, waitingTicks, state) {
+		return {
+			desired: desired, alive: alive, spawning: 0, queued: 0,
+			waitingTicks: waitingTicks, state: state
+		};
+	};
+	let colonies = { W1N1: {
+		population: {
+			desiredTotal: 4, aliveTotal: 3, oldestWaitingTicks: 251,
+			roles: {
+				worker: role(2, 2, 251, "SATISFIED"),
+				carrier: role(2, 1, 135, "UNDERSTAFFED")
+			}
+		},
+		spawning: {
+			spawns: 1, busy: 1, queueDepth: 4,
+			homeQueueDepth: 4, remoteQueueDepth: 0
+		}
+	} };
+	let load = AIObserver._empireLoad(colonies, []);
+	assert.strictEqual(load.spawnPressure.oldestHomeDemandTicks, 135);
+	assert.strictEqual(load.state, "STRAINED");
+	assert.strictEqual(_.includes(load.reasons, "SPAWN_CAPACITY_OVEREXTENDED"), false);
+});
+
 test("remote bootstrap queue is not counted as home spawn pressure", function () {
 	reset();
 	AIInterface.initMemory();
@@ -2041,6 +2104,24 @@ test("paused remote recovery tolerates normal home replacement but not sustained
 	Game.time = 9017;
 	assert.strictEqual(AIObserver._remoteLifecycle({ room: "W1N2", health: "FAILING" }, site), "PAUSED");
 	assert.strictEqual(site.ai_pause.recoverySinceTick, null);
+});
+
+test("paused remote recovery uses essential coverage instead of discretionary satisfaction", function () {
+	reset({ time: 9000 });
+	AIInterface.initMemory();
+	Memory.ai.policy.remoteRecoveryStableTicks = 10;
+	let site = {
+		colony: "W1N1", ai_paused: true,
+		ai_pause: { state: "PAUSED", pausedTick: 3000, recoverySinceTick: null }
+	};
+	_.set(Memory, ["ai", "strategy", "empireLoad"], {
+		state: "STRAINED",
+		homePopulation: { satisfaction: 70, coverageSatisfaction: 70, criticalSatisfaction: 100 }
+	});
+	assert.strictEqual(AIObserver._remoteLifecycle({ room: "W1N2", health: "FAILING" }, site), "PAUSED");
+	assert.strictEqual(site.ai_pause.recoverySinceTick, 9000);
+	Game.time = 9010;
+	assert.strictEqual(AIObserver._remoteLifecycle({ room: "W1N2", health: "FAILING" }, site), "RECOVERY_CANDIDATE");
 });
 
 test("frontier exploration extends one bounded layer beyond known territory", function () {
