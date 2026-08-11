@@ -217,7 +217,10 @@ def telemetry_payload(tick: int = 12345) -> dict:
                     "canUseLinks": True,
                     "canUseExtractor": True,
                 },
-                "spawning": {"spawns": 2, "busy": 0, "idle": 2, "queueDepth": 0, "queuedRoles": {}},
+                "spawning": {
+                    "spawns": 2, "busy": 0, "idle": 2, "queueDepth": 0,
+                    "homeQueueDepth": 0, "remoteQueueDepth": 0, "queuedRoles": {},
+                },
                 "construction": {"sites": 0, "byType": {}, "outstandingEnergy": 0},
                 "defense": {
                     "towers": 2,

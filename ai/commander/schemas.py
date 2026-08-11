@@ -174,6 +174,8 @@ class SpawningState(StrictModel):
     busy: int
     idle: int
     queueDepth: int
+    homeQueueDepth: int = 0
+    remoteQueueDepth: int = 0
     queuedRoles: dict[str, int]
 
 
