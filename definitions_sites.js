@@ -835,6 +835,13 @@
 						popTarget = _.cloneDeep(Population_Mining["SK"]);
 				}
 
+				// A controller has only one reservation clock.  Cap legacy and custom
+				// population settings so they cannot assign multiple reservers to the
+				// same remote.
+				if (rmColony != rmHarvest && _.has(popTarget, "reserver"))
+					_.set(popTarget, ["reserver", "amount"], Math.min(1,
+						Math.max(0, _.get(popTarget, ["reserver", "amount"], 0))));
+
 				// A remote creep only satisfies continuity when it can remain alive
 				// through the replacement's body spawn, route travel, and safety margin.
 				// Spawning creeps still count, so this does not create duplicate demand.
@@ -990,7 +997,7 @@
 					}
 					let reservationHeld = reservation != null && _.get(reservation, "username") == getUsername()
 						&& _.get(reservation, "ticksToEnd", 0) > 0;
-					let replacementReserver = reservePlan && reservePlan.continuityAtRisk && reservePlan.spawning < 1;
+					let replacementReserver = reservePlan && reservePlan.dispatchNeeded;
 					let preserveHeldReservation = replacementReserver && reservationHeld;
 					if (reservationObjective && _.get(reservationObjective, "expiresTick", 0) >= Game.time) {
 						if (!suppressRemoteEconomy || preserveHeldReservation)

@@ -135,7 +135,7 @@ Population_Mining = {
          burrower: { level: 3, amount: 1, body: "burrower_at" },
          carrier: { level: 3, amount: 2, body: "carrier_at" },
          multirole: { level: 3, amount: 1, body: "worker_at" },
-         reserver: { level: 3, amount: 2, body: "reserver_at" }
+         reserver: { level: 3, amount: 1, body: "reserver_at" }
      },
      5: {
          burrower: { level: 5, amount: 1, body: "burrower_at" },
@@ -179,7 +179,7 @@ Population_Mining = {
          burrower: { level: 4, amount: 1, body: "burrower_at" },
          carrier: { level: 3, amount: 4, body: "carrier_at" },
          multirole: { level: 3, amount: 1, body: "worker_at" },
-         reserver: { level: 3, amount: 2, body: "reserver_at" }
+         reserver: { level: 3, amount: 1, body: "reserver_at" }
      },
      5: {
          burrower: { level: 5, amount: 1, body: "burrower_at" },

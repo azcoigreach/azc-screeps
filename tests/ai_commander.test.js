@@ -192,6 +192,27 @@ test("reservation continuity distinguishes healthy, expiring, and expired reserv
 	assert.strictEqual(expired.continuityAtRisk, true);
 });
 
+test("reservation continuity dispatches at most one covered reserver slot", function () {
+	reset();
+	global.getUsername = function () { return "tester"; };
+	let settings = { amount: 2, level: 5, body: "reserver_at" };
+	let viable = [{ memory: { role: "reserver" }, ticksToLive: 500 }];
+	let spawning = [{ memory: { role: "reserver" }, spawning: true }];
+
+	let uncovered = AIRemoteStrategy.reservationPlan(settings, [], {}, "W1N1", "W1N2", null, 0);
+	let enRoute = AIRemoteStrategy.reservationPlan(settings, viable, {}, "W1N1", "W1N2", null, 0);
+	let pending = AIRemoteStrategy.reservationPlan(settings, spawning, {}, "W1N1", "W1N2", null, 0);
+	let expiring = AIRemoteStrategy.reservationPlan(settings, [
+		{ memory: { role: "reserver" }, ticksToLive: 100 }
+	], {}, "W1N1", "W1N2", { username: "tester", ticksToEnd: 100 }, 0);
+
+	assert.strictEqual(uncovered.target, 1);
+	assert.strictEqual(uncovered.dispatchNeeded, true);
+	assert.strictEqual(enRoute.dispatchNeeded, false);
+	assert.strictEqual(pending.dispatchNeeded, false);
+	assert.strictEqual(expiring.dispatchNeeded, true);
+});
+
 test("remote replacement priorities remain below home emergencies and are ageable", function () {
 	reset();
 	let homeEmergency = { room: "W1N1", priority: 5, args: { role: "worker", room: "W1N1", colony: "W1N1" } };

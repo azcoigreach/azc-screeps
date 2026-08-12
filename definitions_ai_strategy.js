@@ -177,7 +177,13 @@ global.AIRemoteStrategy = {
 	},
 
 	reservationPlan: function (settings, creeps, site, origin, target, reservation, queued) {
-		let plan = this.rolePlan("reserver", settings, creeps, site, origin, target, queued);
+		// One reserver is sufficient to maintain a remote controller.  In
+		// particular, do not let legacy/custom population targets manufacture
+		// multiple replacement slots for the same controller.
+		let boundedSettings = Object.assign({}, settings || {}, {
+			amount: Math.min(1, Math.max(0, _.get(settings, "amount", 0)))
+		});
+		let plan = this.rolePlan("reserver", boundedSettings, creeps, site, origin, target, queued);
 		let ticks = _.get(reservation, "ticksToEnd", 0) || 0;
 		let username = typeof getUsername === "function" ? getUsername() : null;
 		let relation = _.get(reservation, "username") == null ? "UNRESERVED"
@@ -185,6 +191,12 @@ global.AIRemoteStrategy = {
 		plan.reservationTicks = ticks;
 		plan.reservationRelation = relation;
 		plan.continuityAtRisk = relation !== "SELF" || ticks < plan.leadTicks;
+		// continuityAtRisk describes the controller, not population demand.  A
+		// neutral controller can remain at risk while an existing viable reserver
+		// is already walking to or working it.  Dispatch only when that single
+		// slot is genuinely uncovered; otherwise every completed spawn would
+		// trigger the next duplicate.
+		plan.dispatchNeeded = plan.continuityAtRisk && plan.replacementNeeded > 0;
 		return plan;
 	},
 
