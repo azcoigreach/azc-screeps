@@ -279,7 +279,7 @@
 					// Additional upgrader for every 2 remote mining sources
 					let baseUpgraders = 1;
 					let storageEnergy = _.get(Game, ["rooms", rmColony, "storage", "store", RESOURCE_ENERGY], 0);
-					let storageReserve = _.get(Memory, ["ai", "policy", "minimumOriginStorageEnergy"], 250000);
+					let storageReserve = _.get(Memory, ["ai", "policy", "additionalUpgraderStorageEnergy"], 250000);
 					let additionalUpgraders = storageEnergy >= storageReserve
 						? Math.floor(remoteMiningSources / 2) : 0;
 					let totalUpgraders = baseUpgraders + additionalUpgraders;

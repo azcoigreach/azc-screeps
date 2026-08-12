@@ -179,6 +179,16 @@ def build_report(history: HistoryStore, telemetry: Telemetry, hours: float = 24)
         f"{readiness.recommendedSimultaneousColonizations}; operational limit "
         f"{readiness.operationalLimitReason or 'none'}; reasons {', '.join(readiness.reasons) or 'none'}."
     )
+    if readiness.forecast:
+        forecast = readiness.forecast
+        lines.append(
+            f"Expansion forecast: {forecast.get('status', 'UNKNOWN')} at "
+            f"{forecast.get('confidence', 'UNKNOWN')} confidence; current/required storage "
+            f"{forecast.get('currentStorage', 'unknown')}/{forecast.get('requiredStorage', 'unknown')}; "
+            f"projected reserve floor {forecast.get('projectedStorageMinimum', 'unknown')}; "
+            f"weighted storage velocity {forecast.get('storageVelocityPer1000', 'unknown')}/1,000 ticks; "
+            f"spawn-capacity expansion value {forecast.get('spawnCapacityExpansionValue', 'unknown')}."
+        )
     candidate = next(
         (item for item in telemetry.claimCandidates if item.room == readiness.recommendedRoom),
         None,

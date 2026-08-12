@@ -556,6 +556,16 @@ def show_candidates(telemetry: Telemetry) -> None:
     )
     if readiness.components:
         print(f"Components: {readiness.components}")
+    if readiness.forecast:
+        forecast = readiness.forecast
+        print(
+            f"Forecast: {forecast.get('status', 'UNKNOWN')} ({forecast.get('confidence', 'UNKNOWN')}); "
+            f"bootstrap {forecast.get('bootstrapEnergy', 'unknown')}; required reserve "
+            f"{forecast.get('requiredStorage', 'unknown')}; projected minimum "
+            f"{forecast.get('projectedStorageMinimum', 'unknown')}; storage velocity "
+            f"{forecast.get('storageVelocityPer1000', 'unknown')}/1k; second-spawn value "
+            f"{forecast.get('spawnCapacityExpansionValue', 'unknown')}"
+        )
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:

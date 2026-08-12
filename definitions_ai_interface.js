@@ -91,7 +91,13 @@ global.AIInterface = {
 		this._default(["ai", "policy", "remoteExpansionCooldownTicks"], 10000, value => this._isInteger(value) && value >= 1000);
 		this._default(["ai", "policy", "colonizationCooldownTicks"], 50000, value => this._isInteger(value) && value >= 5000);
 		this._default(["ai", "policy", "maxConcurrentColonizations"], 1, value => this._isInteger(value) && value >= 1 && value <= 3);
-		this._default(["ai", "policy", "minimumOriginStorageEnergy"], 250000, value => this._isInteger(value) && value >= 0);
+		this._default(["ai", "policy", "additionalUpgraderStorageEnergy"], 250000,
+			value => this._isInteger(value) && value >= 0);
+		this._default(["ai", "policy", "economicHistorySampleTicks"], 100, value => this._isInteger(value) && value >= 25 && value <= 500);
+		this._default(["ai", "policy", "expansionOperatingReserveEnergy"], 20000, value => this._isInteger(value) && value >= 0);
+		this._default(["ai", "policy", "expansionBootstrapContingencyPercent"], 25, value => this._isInteger(value) && value >= 0 && value <= 200);
+		this._default(["ai", "policy", "expansionUnknownTrendContingencyPercent"], 15, value => this._isInteger(value) && value >= 0 && value <= 100);
+		this._default(["ai", "policy", "expansionNegativeTrendThreshold"], 5000, value => this._isInteger(value) && value >= 0);
 		this._default(["ai", "policy", "minimumOriginPopulationSatisfaction"], 90, value => _.isNumber(value) && value >= 0 && value <= 100);
 		this._default(["ai", "policy", "minimumOriginEnergyCapacity"], 800, value => this._isInteger(value) && value >= 300);
 		this._default(["ai", "policy", "minimumStableColonyRcl"], 3, value => this._isInteger(value) && value >= 2 && value <= 6);
@@ -457,8 +463,27 @@ global.AIInterface = {
 			return { valid: false, reason: `${action} origin spawn capacity or population is insufficient` };
 		if (action === "COLONIZE_ROOM") {
 			let storageEnergy = _.get(colony, ["storage", "store", "energy"], _.get(colony, ["storage", "energy"], 0));
-			if (storageEnergy < _.get(Memory, ["ai", "policy", "minimumOriginStorageEnergy"], 250000))
-				return { valid: false, reason: "COLONIZE_ROOM origin energy reserve is insufficient" };
+			let readiness = _.get(Memory, ["ai", "strategy", "expansionReadiness"]);
+			let forecast = _.get(readiness, "forecast");
+			if (readiness && (_.get(readiness, "recommendedRoom") !== target
+				|| _.get(readiness, "origin") !== parameters.origin
+				|| _.get(readiness, "status") !== "READY"
+				|| _.get(forecast, "status") !== "FAVORABLE"))
+				return { valid: false, reason: "COLONIZE_ROOM deterministic expansion forecast is not favorable" };
+			if (!readiness) {
+				// Migration-safe fallback for a command arriving before the first v8
+				// observer pulse. This is still candidate-specific and risk adjusted;
+				// it is not the former fixed 250k balance gate.
+				let routeLength = Math.max(1, _.get(candidate, ["route", "length"], _.get(intel, "routeLength", 1)) || 1);
+				let bootstrap = _.get(candidate, ["bootstrap", "estimatedEnergy"], 41300 + routeLength * 5000);
+				let contingency = Math.round(bootstrap * (
+					_.get(Memory, ["ai", "policy", "expansionBootstrapContingencyPercent"], 25)
+					+ _.get(Memory, ["ai", "policy", "expansionUnknownTrendContingencyPercent"], 15)
+				) / 100);
+				let operating = _.get(Memory, ["ai", "policy", "expansionOperatingReserveEnergy"], 20000);
+				if (storageEnergy < bootstrap + contingency + operating)
+					return { valid: false, reason: "COLONIZE_ROOM risk-adjusted forecast reserve is insufficient" };
+			}
 			if (_.size(_.filter(_.values(_.get(Memory, ["ai", "colonizations"], {})), operation => !_.includes(["SUCCESS", "FAILED"], _.get(operation, "state"))))
 				>= _.get(Memory, ["ai", "policy", "maxConcurrentColonizations"], 1))
 				return { valid: false, reason: "Maximum concurrent colonizations reached" };

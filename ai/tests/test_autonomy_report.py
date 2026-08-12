@@ -312,6 +312,10 @@ class AutonomyReportTests(unittest.TestCase):
         telemetry = Telemetry.model_validate(payload)
         self.assertFalse(AutonomyController._growth_operation_active(telemetry))
 
+        payload["operations"]["remoteEstablishments"][0]["state"] = "ACTIVE"
+        telemetry = Telemetry.model_validate(payload)
+        self.assertFalse(AutonomyController._growth_operation_active(telemetry))
+
         payload["operations"]["remoteMining"][0]["lifecycleState"] = "REACTIVATING"
         telemetry = Telemetry.model_validate(payload)
         self.assertTrue(AutonomyController._growth_operation_active(telemetry))

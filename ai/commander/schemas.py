@@ -595,6 +595,7 @@ class ExpansionReadiness(StrictModel):
     currentOperationalRole: str | None = None
     bootstrap: dict[str, Any] | None = None
     economicConversion: dict[str, Any] | None = None
+    forecast: dict[str, Any] | None = None
     claimSlots: int
     globalGclClaimSlots: int = 0
     currentProtectionClaimSlots: int = 0
@@ -657,7 +658,7 @@ class ObserverMetrics(StrictModel):
 
 
 class Telemetry(StrictModel):
-    schemaVersion: Literal[3, 4, 5, 6, 7, 8]
+    schemaVersion: Literal[3, 4, 5, 6, 7, 8, 9]
     tick: int
     shard: str
     cpu: CPUState

@@ -139,7 +139,8 @@ class AutonomyController:
             },
             reason=(
                 f"Highest ready permanent-colony candidate: {candidate.room} score "
-                f"{candidate.score}, role {candidate.currentOperationalRole}"
+                f"{candidate.score}, role {candidate.currentOperationalRole}; expansion forecast "
+                f"{(readiness.forecast or {}).get('status', 'UNKNOWN')}"
             ),
         )
         self.history.create_operation(
@@ -308,7 +309,7 @@ class AutonomyController:
     def _growth_operation_active(telemetry: Telemetry) -> bool:
         """Serialize remote establishment, reactivation, and colonization."""
         if any(
-            operation.state not in {"HEALTHY", "DEGRADED", "FAILED"}
+            operation.state not in {"ACTIVE", "HEALTHY", "DEGRADED", "FAILED"}
             for operation in telemetry.operations.remoteEstablishments
         ):
             return True

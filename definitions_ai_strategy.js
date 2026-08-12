@@ -286,6 +286,9 @@ global.AIRemoteStrategy = {
 		let existingRemote = _.get(context, "currentOperationalRole") === "OUR_REMOTE";
 		let measuredDelivery = _.get(context, ["remoteEconomics", "measuredDeliveryPer1000"], null);
 		let adjacentPotential = _.get(context, "adjacentRemotePotential", 0);
+		let ownedSpawnCount = Math.max(0, _.get(context, "ownedSpawnCount", 0));
+		let spawnCapacityExpansionValue = ownedSpawnCount <= 1 ? 20
+			: (ownedSpawnCount <= 3 ? 12 : (ownedSpawnCount <= 6 ? 6 : 3));
 		let routeLength = Math.max(1, distance || 1);
 		let bootstrapEnergy = 15000 + 1300 + (25000 + routeLength * 5000);
 		let candidateFailure = _.get(context, "candidateFailure", null);
@@ -300,6 +303,7 @@ global.AIRemoteStrategy = {
 			defensibility: Math.max(0, 8 - Math.max(0, _.get(context, "exitCount", 4) - 2) * 2),
 			corridorValue: Math.min(6, _.get(context, "corridorValue", 0)),
 			knownInfrastructure: existingRemote ? 6 : 0,
+			spawnCapacityExpansionValue: spawnCapacityExpansionValue,
 			economicConversion: existingRemote && _.isNumber(measuredDelivery)
 				? -Math.min(8, Math.round(measuredDelivery / 2000)) : 0,
 			priorFailure: candidateFailure ? -Math.min(10, _.get(candidateFailure, "count", 1) * 3) : 0
@@ -334,6 +338,8 @@ global.AIRemoteStrategy = {
 			},
 			strategy: {
 				adjacentRemotePotential: adjacentPotential,
+				spawnCapacityExpansionValue: spawnCapacityExpansionValue,
+				ownedSpawnCount: ownedSpawnCount,
 				corridorValue: _.get(context, "corridorValue", 0),
 				neighboringPlayers: _.get(context, "neighboringPlayers", []),
 				exitCount: _.get(context, "exitCount", null)

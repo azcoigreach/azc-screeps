@@ -6,7 +6,7 @@
 // individual creep state, and long time-series histories stay out of segments.
 global.AIObserver = {
 
-	SCHEMA_VERSION: 8,
+	SCHEMA_VERSION: 9,
 	MAX_HOSTILE_EVENTS: 50,
 	MAX_INTEL_ROOMS: 150,
 	STRUCTURE_TYPES: [
@@ -46,6 +46,7 @@ global.AIObserver = {
 		let remoteMining = this._remoteMining();
 		let empireLoad = this._empireLoad(colonies, remoteMining);
 		_.set(Memory, ["ai", "strategy", "empireLoad"], _.cloneDeep(empireLoad));
+		this._recordEconomicSamples(colonies, remoteMining);
 		let readiness = this._expansionReadiness(territory.claimCandidates, colonies);
 		_.set(Memory, ["ai", "strategy", "expansionReadiness"], _.cloneDeep(readiness));
 		let militaryPreparation = this._militaryPreparation(ownedRooms, protection.empire);
@@ -656,6 +657,12 @@ global.AIObserver = {
 		let criticalNames = ["harvester", "miner", "burrower", "carrier", "hauler", "worker", "multirole"];
 		let desired = 0, alive = 0, covered = 0, criticalDesired = 0, criticalAvailable = 0;
 		let spawns = 0, busy = 0, queue = 0, remoteQueue = 0, oldest = 0;
+		let spawnBacklog = {
+			ESSENTIAL_BACKLOG: { requests: 0, energy: 0, spawnTicks: 0 },
+			REPLACEMENT_BACKLOG: { requests: 0, energy: 0, spawnTicks: 0 },
+			PRODUCTIVE_GROWTH_BACKLOG: { requests: 0, energy: 0, spawnTicks: 0 },
+			OPTIONAL_BACKLOG: { requests: 0, energy: 0, spawnTicks: 0 }
+		};
 		_.each(colonies, (colony, roomName) => {
 			let populations = [_.get(colony, "population", {})];
 			let localMiningExpected = _.get(Memory,
@@ -687,6 +694,12 @@ global.AIObserver = {
 			queue += _.get(colony, ["spawning", "homeQueueDepth"],
 				_.get(colony, ["spawning", "queueDepth"], 0));
 			remoteQueue += _.get(colony, ["spawning", "remoteQueueDepth"], 0);
+			let forecast = this._spawnForecast(roomName, colony);
+			_.each(spawnBacklog, (value, category) => {
+				value.requests += _.get(forecast, ["classes", category, "requests"], 0);
+				value.energy += _.get(forecast, ["classes", category, "energy"], 0);
+				value.spawnTicks += _.get(forecast, ["classes", category, "spawnTicks"], 0);
+			});
 		});
 		let remoteDesired = _.sum(_.map(remotes, remote => remote.paused ? 0 : _.get(remote, ["population", "desiredTotal"], 0)));
 		let remoteAvailable = _.sum(_.map(remotes, remote => remote.paused ? 0 : _.get(remote, ["population", "assignedTotal"], 0)));
@@ -714,11 +727,12 @@ global.AIObserver = {
 			reasons.push("SPAWN_CAPACITY_OVEREXTENDED");
 		} else if (coverageSatisfaction < 0.85 || criticalSatisfaction < 0.9 || queue > 0 || utilization >= 0.9) {
 			state = "STRAINED";
-			reasons.push("RECOVERY_IN_PROGRESS");
+			reasons.push(criticalSatisfaction >= 1 && _.get(spawnBacklog, ["ESSENTIAL_BACKLOG", "requests"], 0) === 0
+				? "PRODUCTIVE_SPAWN_SATURATION" : "RECOVERY_IN_PROGRESS");
 		}
-		// Remote staffing pressure blocks further growth but is not evidence that
-		// the home colony itself is overextended. Treating intentional drawdown as
-		// home overload would keep the recovery latch active forever.
+		// Remote staffing pressure is descriptive, not an automatic growth veto.
+		// A healthy origin may deliberately keep its spawn saturated building a
+		// productive remote pipeline or a second spawn center.
 		if (remotePressureHigh) {
 			if (state === "HEALTHY") state = "STRAINED";
 			reasons.push("REMOTE_STAFFING_DEFICIT");
@@ -778,11 +792,15 @@ global.AIObserver = {
 				criticalSatisfaction: Math.round(criticalSatisfaction * 10000) / 100 },
 			spawnPressure: { spawns: spawns, busy: busy, utilization: Math.round(utilization * 10000) / 100,
 				queueDepth: queue + remoteQueue, homeQueueDepth: queue, remoteQueueDepth: remoteQueue,
-				oldestHomeDemandTicks: oldest },
+				oldestHomeDemandTicks: oldest,
+				backlogClasses: spawnBacklog,
+				queueSpawnTicks: _.sum(_.map(_.values(spawnBacklog), item => item.spawnTicks)),
+				mode: criticalSatisfaction < 1 || _.get(spawnBacklog, ["ESSENTIAL_BACKLOG", "requests"], 0) > 0
+					? "ESSENTIAL_BACKLOG" : ((utilization >= 0.9 || queue + remoteQueue > 0)
+						? "PRODUCTIVE_SATURATION" : "AVAILABLE") },
 			remotePressure: { desired: remoteDesired, available: remoteAvailable,
 				staffingDeficit: remoteDeficit, reservationReplacementDemand: reserverDemand },
-			growthVeto: _.includes(["OVEREXTENDED", "CRITICAL"], state)
-				|| remotePressureHigh || _.size(recoveryRooms) > 0,
+			growthVeto: _.includes(["OVEREXTENDED", "CRITICAL"], state) || _.size(recoveryRooms) > 0,
 			schedulerRecovery: { active: _.size(recoveryRooms) > 0, rooms: recoveryRooms },
 			remoteRanking: ranking
 		};
@@ -1439,6 +1457,7 @@ global.AIObserver = {
 					neighboringPlayers: _.get(neighboringPlayers, name, []),
 					exitCount: exits,
 					corridorValue: Math.max(0, _.get(adjacentPotential, name, 0) - _.get(neighboringPlayers, name, []).length),
+					ownedSpawnCount: _.sum(_.map(_.values(colonies || {}), colony => _.get(colony, ["spawning", "spawns"], 0))),
 					remoteEconomics: remoteEconomics,
 					candidateFailure: _.get(Memory, ["ai", "strategy", "candidateFailures", name], null)
 				});
@@ -1517,6 +1536,198 @@ global.AIObserver = {
 		return { all: _.uniq(all), reachable: _.uniq(reachable), blocked: _.uniq(blocked), highValue: _.uniq(highValue) };
 	},
 
+	_recordEconomicSamples: function (colonies, remotes) {
+		let interval = _.get(Memory, ["ai", "policy", "economicHistorySampleTicks"], 100);
+		_.each(colonies || {}, (colony, roomName) => {
+			let remoteDelivered = _.sum(_.map(_.filter(remotes || [], remote => remote.colony === roomName), remote =>
+				_.get(remote, ["delivery", "energyDeliveredTotal"], 0)));
+			let sample = {
+				tick: Game.time,
+				storageEnergy: _.get(colony, ["energy", "storageEnergy"], 0),
+				controllerProgress: _.get(colony, ["controller", "progress"], 0),
+				rcl: _.get(colony, ["controller", "rcl"], 0),
+				remoteDelivered: remoteDelivered
+			};
+			let path = ["ai", "economicHistory", roomName];
+			let samples = _.get(Memory, path, []);
+			if (!_.isArray(samples)) samples = [];
+			let last = _.last(samples);
+			if (!last || Game.time - _.get(last, "tick", 0) >= interval)
+				samples.push(sample);
+			samples = _.filter(samples, item => Game.time - _.get(item, "tick", 0) <= 21000).slice(-225);
+			_.set(Memory, path, samples);
+		});
+	},
+
+	_economicTrends: function (roomName, origin) {
+		let samples = _.get(Memory, ["ai", "economicHistory", roomName], []);
+		if (!_.isArray(samples)) samples = [];
+		let current = {
+			tick: Game.time,
+			storageEnergy: _.get(origin, ["energy", "storageEnergy"], 0),
+			controllerProgress: _.get(origin, ["controller", "progress"], 0),
+			rcl: _.get(origin, ["controller", "rcl"], 0),
+			remoteDelivered: _.sum(_.map(_.filter(_.keys(_.get(Memory, ["sites", "mining"], {})), remoteName =>
+				remoteName !== roomName && _.get(Memory, ["sites", "mining", remoteName, "colony"]) === roomName), remoteName =>
+					_.get(Memory, ["ai", "metrics", "remotes", remoteName, "energyDeliveredTotal"], 0)))
+		};
+		// Mining sites are keyed by room name rather than carrying it in every
+		// legacy record, so prefer the already-sampled aggregate when available.
+		if (_.get(_.last(samples), "tick") === Game.time)
+			current.remoteDelivered = _.get(_.last(samples), "remoteDelivered", current.remoteDelivered);
+		let horizon = ticks => {
+			let eligible = _.filter(samples, sample => _.get(sample, "tick", Game.time) <= Game.time - ticks);
+			let baseline = _.last(_.sortBy(eligible, "tick"));
+			if (!baseline) return { ticks: ticks, available: false, spanTicks: 0, storageDelta: null,
+				storagePer1000: null, remoteDeliveryDelta: null, remoteDeliveryPer1000: null,
+				upgradeProgressDelta: null };
+			let span = Math.max(1, Game.time - baseline.tick);
+			let storageDelta = current.storageEnergy - _.get(baseline, "storageEnergy", current.storageEnergy);
+			let remoteDelta = current.remoteDelivered - _.get(baseline, "remoteDelivered", current.remoteDelivered);
+			let upgradeDelta = current.rcl === _.get(baseline, "rcl")
+				? current.controllerProgress - _.get(baseline, "controllerProgress", current.controllerProgress) : null;
+			return {
+				ticks: ticks, available: true, spanTicks: span,
+				storageDelta: storageDelta,
+				storagePer1000: Math.round(storageDelta * 100000 / span) / 100,
+				remoteDeliveryDelta: remoteDelta,
+				remoteDeliveryPer1000: Math.round(remoteDelta * 100000 / span) / 100,
+				upgradeProgressDelta: upgradeDelta
+			};
+		};
+		return { immediate: horizon(1000), regime: horizon(5000), structural: horizon(20000) };
+	},
+
+	_spawnForecast: function (originName, origin) {
+		let queues = [].concat(_.get(Memory, ["shard", "spawn_requests"], []),
+			_.get(Memory, ["hive", "spawn_requests"], []));
+		let result = {
+			ESSENTIAL_BACKLOG: { requests: 0, energy: 0, spawnTicks: 0 },
+			REPLACEMENT_BACKLOG: { requests: 0, energy: 0, spawnTicks: 0 },
+			PRODUCTIVE_GROWTH_BACKLOG: { requests: 0, energy: 0, spawnTicks: 0 },
+			OPTIONAL_BACKLOG: { requests: 0, energy: 0, spawnTicks: 0 }
+		};
+		_.each(queues, request => {
+			if (!request || _.get(request, "room") !== originName) return;
+			let args = _.get(request, "args", {});
+			let role = _.get(args, "role", _.get(request, "role", "unknown"));
+			let requestClass = typeof Control !== "undefined" && _.isFunction(_.get(Control, "spawnRequestClass"))
+				? Control.spawnRequestClass(request) : { remote: _.get(args, "room", originName) !== originName };
+			let category = "OPTIONAL_BACKLOG";
+			if (role === "scout" || role === "upgrader")
+				category = "OPTIONAL_BACKLOG";
+			else if (_.get(requestClass, "homeEssential", false)) {
+				let roleState = _.get(origin, ["population", "roles", role, "state"]);
+				category = roleState === "SATISFIED" ? "REPLACEMENT_BACKLOG" : "ESSENTIAL_BACKLOG";
+			} else if (_.get(requestClass, "remoteContinuity", false))
+				category = "REPLACEMENT_BACKLOG";
+			else if (_.get(requestClass, "remote", false)) {
+				let target = _.get(requestClass, "target", _.get(args, "room"));
+				let continuity = _.get(Memory, ["sites", "mining", target, "continuity", role]);
+				category = _.get(continuity, "assigned", 0) > 0 && _.get(continuity, "replacementNeeded", 0) > 0
+					? "REPLACEMENT_BACKLOG" : "PRODUCTIVE_GROWTH_BACKLOG";
+			} else if (role === "colonizer")
+				category = "PRODUCTIVE_GROWTH_BACKLOG";
+			let body = [];
+			try {
+				if (typeof Creep_Body !== "undefined" && _.isFunction(_.get(Creep_Body, "getBody")))
+					body = Creep_Body.getBody(_.get(request, "body", role), _.get(request, "level", 1)) || [];
+			} catch (err) { body = []; }
+			let costs = { move: 50, work: 100, carry: 50, attack: 80, ranged_attack: 150, heal: 250, claim: 600, tough: 10 };
+			let energy = _.sum(_.map(body, part => _.get(costs, _.isString(part) ? part : _.get(part, "type"), 0)));
+			result[category].requests++;
+			result[category].energy += energy;
+			result[category].spawnTicks += body.length * 3;
+		});
+		let activeSpawnTicks = _.sum(_.map(_.filter(_.values(_.get(Game, "spawns", {})), spawn =>
+			_.get(spawn, ["room", "name"]) === originName), spawn => _.get(spawn, ["spawning", "remainingTime"], 0) || 0));
+		let committed = result.ESSENTIAL_BACKLOG.energy + result.REPLACEMENT_BACKLOG.energy;
+		return {
+			classes: result,
+			totalRequests: _.sum(_.map(_.values(result), item => item.requests)),
+			totalSpawnTicks: activeSpawnTicks + _.sum(_.map(_.values(result), item => item.spawnTicks)),
+			activeSpawnTicks: activeSpawnTicks,
+			colonizerEarliestStartTicks: activeSpawnTicks + result.ESSENTIAL_BACKLOG.spawnTicks + result.REPLACEMENT_BACKLOG.spawnTicks,
+			committedEnergyBeforeBootstrap: committed
+		};
+	},
+
+	_expansionForecast: function (candidate, originName, origin) {
+		let bootstrap = _.get(candidate, ["bootstrap", "estimatedEnergy"], 0);
+		if (!_.isNumber(bootstrap) || bootstrap <= 0) {
+			let routeLength = Math.max(1, _.get(candidate, ["route", "length"], 1) || 1);
+			bootstrap = 41300 + routeLength * 5000;
+		}
+		let trends = this._economicTrends(originName, origin);
+		let spawn = this._spawnForecast(originName, origin);
+		let routeLength = Math.max(1, _.get(candidate, ["route", "length"], _.get(candidate, ["bootstrap", "routeLength"], 1)) || 1);
+		let basePercent = _.get(Memory, ["ai", "policy", "expansionBootstrapContingencyPercent"], 25);
+		let unknownPercent = _.get(Memory, ["ai", "policy", "expansionUnknownTrendContingencyPercent"], 15);
+		let riskPercent = basePercent + Math.max(0, routeLength - 1) * 10;
+		let availableTrends = _.filter(_.values(trends), trend => trend.available);
+		if (availableTrends.length === 0) riskPercent += unknownPercent;
+		if (_.get(candidate, ["economicConversion", "isExistingRemote"], false)) riskPercent += 10;
+		if (_.get(candidate, ["strategy", "neighboringPlayers"], []).length > 0) riskPercent += 15;
+		let immediate = trends.immediate, regime = trends.regime, structural = trends.structural;
+		let negativeThreshold = _.get(Memory, ["ai", "policy", "expansionNegativeTrendThreshold"], 5000);
+		let immediateNegative = immediate.available && immediate.storageDelta < -negativeThreshold;
+		let regimeNegative = regime.available && regime.storageDelta < -negativeThreshold;
+		let structuralNegative = structural.available && structural.storageDelta < -negativeThreshold;
+		let sustainedNegative = regimeNegative && (immediateNegative || structuralNegative);
+		if (regimeNegative) riskPercent += 25;
+		let operatingReserve = Math.max(
+			_.get(Memory, ["ai", "policy", "expansionOperatingReserveEnergy"], 20000),
+			_.get(origin, ["energy", "capacity"], 0) * 5
+		);
+		let contingency = Math.round(bootstrap * riskPercent / 100);
+		let committed = spawn.committedEnergyBeforeBootstrap;
+		let storage = _.get(origin, ["energy", "storageEnergy"], 0);
+		let requiredStorage = bootstrap + contingency + operatingReserve + committed;
+		let projectedMinimum = storage - bootstrap - committed;
+		let velocityInputs = _.filter([
+			immediate.available ? { value: immediate.storagePer1000, weight: 50 } : null,
+			regime.available ? { value: regime.storagePer1000, weight: 35 } : null,
+			structural.available ? { value: structural.storagePer1000, weight: 15 } : null
+		]);
+		let weight = _.sum(_.map(velocityInputs, item => item.weight));
+		let velocityPer1000 = weight > 0 ? _.sum(_.map(velocityInputs, item => item.value * item.weight)) / weight : 0;
+		let lostRemotePer1000 = _.get(candidate, ["economicConversion", "temporaryIncomeLossPer1000"], 0) || 0;
+		let projected = {};
+		_.each([1000, 5000, 10000], ticks => {
+			projected[ticks] = Math.round(projectedMinimum + (velocityPer1000 - lostRemotePer1000) * ticks / 1000);
+		});
+		let hardSafetyPass = projectedMinimum >= operatingReserve + contingency;
+		let status = sustainedNegative ? "UNFAVORABLE"
+			: (storage >= requiredStorage && hardSafetyPass ? "FAVORABLE"
+				: (storage >= requiredStorage * 0.9 ? "WATCH" : "UNFAVORABLE"));
+		let firstHarvestTicks = 250 + routeLength * 75;
+		let firstSpawnTicks = 2500 + routeLength * 500 + spawn.colonizerEarliestStartTicks;
+		return {
+			status: status,
+			confidence: regime.available ? (structural.available ? "HIGH" : "MEDIUM") : (immediate.available ? "MEDIUM" : "LOW"),
+			currentStorage: storage,
+			bootstrapEnergy: bootstrap,
+			bootstrapContingency: contingency,
+			riskPercent: riskPercent,
+			operatingReserve: operatingReserve,
+			spawnCommitments: spawn,
+			requiredStorage: requiredStorage,
+			projectedStorageMinimum: projectedMinimum,
+			projectedStorage: projected,
+			storageVelocityPer1000: Math.round(velocityPer1000 * 100) / 100,
+			trends: trends,
+			sustainedNegativeEconomy: sustainedNegative,
+			lostRemoteIncomePer1000: lostRemotePer1000,
+			estimatedFirstLocalHarvestTick: Game.time + firstHarvestTicks,
+			estimatedFirstSpawnTick: Game.time + firstSpawnTicks,
+			estimatedSelfSufficiencyTick: Game.time + firstSpawnTicks + 2500,
+			spawnCapacityExpansionValue: _.get(candidate, ["strategy", "spawnCapacityExpansionValue"], 0),
+			reasons: sustainedNegative ? ["SUSTAINED_NEGATIVE_ECONOMY"]
+				: (!hardSafetyPass ? ["PROJECTED_RESERVE_BELOW_OPERATING_MINIMUM"]
+					: (storage < requiredStorage ? ["INSUFFICIENT_RISK_ADJUSTED_RESERVE"] : []))
+		};
+	},
+
 	_expansionReadiness: function (candidates, colonies) {
 		let reasons = [];
 		let owned = _.size(colonies);
@@ -1525,10 +1736,10 @@ global.AIObserver = {
 		let candidate = _.find(candidates, item => item.eligible === true) || _.head(candidates) || null;
 		let originName = _.get(candidate, "origin", null);
 		let origin = _.get(colonies, originName, null);
-		let minimumStorage = _.get(Memory, ["ai", "policy", "minimumOriginStorageEnergy"], 250000);
 		let minimumPopulation = _.get(Memory, ["ai", "policy", "minimumOriginPopulationSatisfaction"], 90);
 		let minimumCapacity = _.get(Memory, ["ai", "policy", "minimumOriginEnergyCapacity"], 800);
 		let populationSatisfaction = _.get(origin, ["population", "demandSatisfaction"], 0) || 0;
+		let criticalSatisfaction = _.get(Memory, ["ai", "strategy", "empireLoad", "homePopulation", "criticalSatisfaction"], null);
 		let storageEnergy = _.get(origin, ["energy", "storageEnergy"], 0);
 		let energyCapacity = _.get(origin, ["energy", "capacity"], 0);
 		let spawnCount = _.get(origin, ["spawning", "spawns"], 0);
@@ -1539,6 +1750,7 @@ global.AIObserver = {
 		let lastColonization = _.get(Memory, ["ai", "majorOperations", "lastColonizationTick"]);
 		let cooldownTicks = _.get(Memory, ["ai", "policy", "colonizationCooldownTicks"], 50000);
 		let cooldownRemaining = _.isNumber(lastColonization) ? Math.max(0, cooldownTicks - (Game.time - lastColonization)) : 0;
+		let forecast = candidate && origin ? this._expansionForecast(candidate, originName, origin) : null;
 
 		if (globalSlots < 1) reasons.push("NO_GCL_CAPACITY");
 		if (protectionSlots < 1 && globalSlots > 0) reasons.push("BLOCKED_BY_PROTECTION");
@@ -1555,10 +1767,11 @@ global.AIObserver = {
 		}
 		if (!origin) reasons.push("BLOCKED_BY_ROUTE");
 		else {
-			if (populationSatisfaction < minimumPopulation) reasons.push("BLOCKED_BY_POPULATION");
+			if (populationSatisfaction < minimumPopulation
+				|| (_.isNumber(criticalSatisfaction) && criticalSatisfaction < 100)) reasons.push("BLOCKED_BY_POPULATION");
 			if (spawnCount < 1 || energyCapacity < minimumCapacity) reasons.push("BLOCKED_BY_SPAWN_CAPACITY");
-			if (storageEnergy < minimumStorage) reasons.push("BLOCKED_BY_ECONOMY");
-			if (hostileCount > 0) reasons.push("BLOCKED_BY_THREAT");
+			if (!forecast || forecast.status !== "FAVORABLE") reasons.push("BLOCKED_BY_ECONOMY");
+			if (hostileCount > 0 || _.get(candidate, ["security", "hostileCreeps"], 0) > 0) reasons.push("BLOCKED_BY_THREAT");
 		}
 		if (activeColonizations.length >= maxConcurrent) reasons.push("COLONIZATION_IN_PROGRESS");
 		if (cooldownRemaining > 0) reasons.push("COLONIZATION_COOLDOWN");
@@ -1576,6 +1789,7 @@ global.AIObserver = {
 			currentOperationalRole: _.get(candidate, "currentOperationalRole", null),
 			bootstrap: _.get(candidate, "bootstrap", null),
 			economicConversion: _.get(candidate, "economicConversion", null),
+			forecast: forecast,
 			claimSlots: Math.min(globalSlots, protectionSlots),
 			globalGclClaimSlots: globalSlots,
 			currentProtectionClaimSlots: protectionSlots,
@@ -1586,7 +1800,14 @@ global.AIObserver = {
 				legalCapacity: { global: globalSlots, protectedRegion: protectionSlots, available: Math.min(globalSlots, protectionSlots) },
 				population: { value: populationSatisfaction, minimum: minimumPopulation, pass: populationSatisfaction >= minimumPopulation },
 				spawnCapacity: { spawns: spawnCount, energyCapacity: energyCapacity, minimumEnergyCapacity: minimumCapacity, pass: spawnCount > 0 && energyCapacity >= minimumCapacity },
-				economy: { storageEnergy: storageEnergy, minimumStorageEnergy: minimumStorage, pass: storageEnergy >= minimumStorage },
+				economy: {
+					storageEnergy: storageEnergy,
+					forecastStatus: _.get(forecast, "status", "UNAVAILABLE"),
+					requiredStorage: _.get(forecast, "requiredStorage", null),
+					projectedStorageMinimum: _.get(forecast, "projectedStorageMinimum", null),
+					sustainedNegativeEconomy: _.get(forecast, "sustainedNegativeEconomy", false),
+					pass: _.get(forecast, "status") === "FAVORABLE"
+				},
 				threat: { hostileCreeps: hostileCount, pass: hostileCount === 0 },
 				concurrency: { active: activeColonizations.length, maximum: maxConcurrent, pass: activeColonizations.length < maxConcurrent },
 				cooldown: { remainingTicks: cooldownRemaining, pass: cooldownRemaining === 0 },

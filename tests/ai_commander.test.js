@@ -659,7 +659,7 @@ test("combat math uses tower falloff, active boosted parts, safe mode, and stale
 	delete global.BOOSTS;
 });
 
-test("telemetry schema v8 reports identity, capabilities, defense, territory, load, and exact byte size", function () {
+test("telemetry schema v9 reports identity, capabilities, defense, territory, load, forecast, and exact byte size", function () {
 	reset();
 	let structures = [
 		{ structureType: "spawn", my: true, spawning: null },
@@ -689,7 +689,7 @@ test("telemetry schema v8 reports identity, capabilities, defense, territory, lo
 	Memory.rooms.W1N1 = { defense: { hostiles: [{ id: "enemy" }] } };
 	let serialized = AIObserver.serialize();
 	let snapshot = JSON.parse(serialized);
-	assert.strictEqual(snapshot.schemaVersion, 8);
+	assert.strictEqual(snapshot.schemaVersion, 9);
 	assert.strictEqual(snapshot.empire.player, "tester");
 	assert.strictEqual(snapshot.colonies.W1N1.controller.rcl, 5);
 	assert.strictEqual(snapshot.colonies.W1N1.energy.storageEnergy, 240000);
@@ -1822,6 +1822,92 @@ test("colonization readiness reports authoritative legal, population, spawn, eco
 	assert.strictEqual(AIObserver._expansionReadiness([state.candidate], state.colonies).status, "BLOCKED_BY_PROTECTION");
 });
 
+test("expansion forecast funds an adjacent second spawn from risk-adjusted reserve instead of a fixed 250k gate", function () {
+	reset({ time: 10000 });
+	AIInterface.initMemory();
+	Memory.ai.policy.allowColonization = true;
+	Memory.ai.protection.summary = { currentProtectionClaimSlots: 3 };
+	_.set(Memory, ["ai", "strategy", "empireLoad"], { homePopulation: { criticalSatisfaction: 100 } });
+	let colonies = { W1N1: {
+		energy: { storageEnergy: 104012, capacity: 2300 },
+		population: { demandSatisfaction: 100, roles: {} },
+		spawning: { spawns: 1 }, defense: { hostileCreeps: 0 },
+		controller: { rcl: 6, progress: 200000 }
+	} };
+	let candidate = {
+		room: "W1N2", origin: "W1N1", eligible: true, disqualifiers: [],
+		layout: { name: "def_hor", origin: { x: 20, y: 20 } },
+		bootstrap: { estimatedEnergy: 46300, routeLength: 1 },
+		route: { length: 1 }, security: { hostileCreeps: 0 },
+		economicConversion: { isExistingRemote: false, temporaryIncomeLossPer1000: 0 },
+		strategy: { neighboringPlayers: [], spawnCapacityExpansionValue: 20 }
+	};
+	let readiness = AIObserver._expansionReadiness([candidate], colonies);
+	assert.strictEqual(readiness.status, "READY");
+	assert.strictEqual(readiness.forecast.status, "FAVORABLE");
+	assert.ok(readiness.forecast.requiredStorage < 104012);
+	assert.strictEqual(readiness.forecast.spawnCapacityExpansionValue, 20);
+});
+
+test("expansion forecast vetoes sustained negative storage across immediate and regime horizons", function () {
+	reset({ time: 10000 });
+	AIInterface.initMemory();
+	Memory.ai.policy.allowColonization = true;
+	Memory.ai.protection.summary = { currentProtectionClaimSlots: 3 };
+	_.set(Memory, ["ai", "strategy", "empireLoad"], { homePopulation: { criticalSatisfaction: 100 } });
+	Memory.ai.economicHistory = { W1N1: [
+		{ tick: 4000, storageEnergy: 150000, controllerProgress: 180000, rcl: 6, remoteDelivered: 10000 },
+		{ tick: 9000, storageEnergy: 115000, controllerProgress: 195000, rcl: 6, remoteDelivered: 40000 }
+	] };
+	let colonies = { W1N1: {
+		energy: { storageEnergy: 104012, capacity: 2300 },
+		population: { demandSatisfaction: 100, roles: {} }, spawning: { spawns: 1 },
+		defense: { hostileCreeps: 0 }, controller: { rcl: 6, progress: 200000 }
+	} };
+	let candidate = {
+		room: "W1N2", origin: "W1N1", eligible: true, disqualifiers: [],
+		layout: { name: "def_hor", origin: { x: 20, y: 20 } },
+		bootstrap: { estimatedEnergy: 46300 }, route: { length: 1 },
+		security: { hostileCreeps: 0 }, strategy: { neighboringPlayers: [] },
+		economicConversion: { isExistingRemote: false, temporaryIncomeLossPer1000: 0 }
+	};
+	let readiness = AIObserver._expansionReadiness([candidate], colonies);
+	assert.strictEqual(readiness.status, "BLOCKED_BY_ECONOMY");
+	assert.strictEqual(readiness.forecast.sustainedNegativeEconomy, true);
+	assert.ok(readiness.forecast.reasons.includes("SUSTAINED_NEGATIVE_ECONOMY"));
+});
+
+test("spawn forecast separates productive saturation from essential backlog in spawn ticks", function () {
+	reset();
+	AIInterface.initMemory();
+	_.set(Memory, ["shard", "spawn_requests"], [
+		{ room: "W1N1", body: "burrower", level: 5, args: { role: "burrower", room: "W1N2", colony: "W1N1" } },
+		{ room: "W1N1", body: "scout", level: 1, args: { role: "scout", room: "W1N3", colony: "W1N1" } }
+	]);
+	let forecast = AIObserver._spawnForecast("W1N1", { population: { roles: {} } });
+	assert.strictEqual(forecast.classes.PRODUCTIVE_GROWTH_BACKLOG.requests, 1);
+	assert.strictEqual(forecast.classes.OPTIONAL_BACKLOG.requests, 1);
+	assert.ok(forecast.totalSpawnTicks > 0);
+});
+
+test("economic forecast history retains bounded interval samples for all three horizons", function () {
+	reset({ time: 1000 });
+	AIInterface.initMemory();
+	let colony = { W1N1: {
+		energy: { storageEnergy: 100000 }, controller: { progress: 1000, rcl: 6 }
+	} };
+	AIObserver._recordEconomicSamples(colony, []);
+	Game.time = 1050;
+	colony.W1N1.energy.storageEnergy = 101000;
+	AIObserver._recordEconomicSamples(colony, []);
+	Game.time = 1100;
+	colony.W1N1.energy.storageEnergy = 102000;
+	AIObserver._recordEconomicSamples(colony, []);
+	assert.strictEqual(Memory.ai.economicHistory.W1N1.length, 2);
+	assert.strictEqual(Memory.ai.economicHistory.W1N1[0].tick, 1000);
+	assert.strictEqual(Memory.ai.economicHistory.W1N1[1].tick, 1100);
+});
+
 test("multi-colony origin selection prefers bootstrap health over hardcoded room names", function () {
 	reset();
 	let colonies = {
@@ -2011,7 +2097,7 @@ test("empire load marks severe home shortage critical and ranks failed remote fi
 	assert.strictEqual(load.remoteRanking[0].recommendation, "PAUSE");
 });
 
-test("intentional remote drawdown blocks growth without deadlocking home recovery", function () {
+test("remote staffing deficit does not veto growth when home critical roles are healthy", function () {
 	reset();
 	AIInterface.initMemory();
 	let role = function (desired, alive) {
@@ -2033,7 +2119,7 @@ test("intentional remote drawdown blocks growth without deadlocking home recover
 	}];
 	let load = AIObserver._empireLoad(colonies, remotes);
 	assert.strictEqual(load.state, "STRAINED");
-	assert.strictEqual(load.growthVeto, true);
+	assert.strictEqual(load.growthVeto, false);
 	assert.ok(_.includes(load.reasons, "REMOTE_STAFFING_DEFICIT"));
 	assert.strictEqual(load.schedulerRecovery.active, false);
 });
