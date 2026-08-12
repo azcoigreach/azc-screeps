@@ -1311,6 +1311,33 @@ test("combat creeps never camp before reaching their assigned room", function ()
 	assert.deepStrictEqual(destinations, [["W1N2", true]]);
 });
 
+test("paused remote sites continue running assigned defenders", function () {
+	reset({ time: 2000 });
+	Memory.sites.mining.W1N2 = {
+		colony: "W1N1", ai_paused: true, list_route: ["W1N1", "W1N2"]
+	};
+	Game.creeps = {
+		soldier: { memory: { role: "soldier", room: "W1N2", colony: "W1N1" } },
+		ranger: { memory: { role: "ranger", room: "W1N2", colony: "W1N1" } },
+		healer: { memory: { role: "healer", room: "W1N2", colony: "W1N1" } },
+		miner: { memory: { role: "miner", room: "W1N2", colony: "W1N1" } }
+	};
+	let calls = [];
+	let priorRoles = global.Creep_Roles;
+	global.Creep_Roles = {
+		Soldier: function (creep) { calls.push(creep.memory.role); },
+		Archer: function (creep) { calls.push(creep.memory.role); },
+		Healer: function (creep) { calls.push(creep.memory.role); }
+	};
+	try {
+		assert.strictEqual(Control.runPausedRemoteDefenders("W1N1", "W1N2"), 3);
+		assert.deepStrictEqual(calls.sort(), ["healer", "ranger", "soldier"]);
+		assert.deepStrictEqual(Game.creeps.soldier.memory.list_route, ["W1N1", "W1N2"]);
+	} finally {
+		global.Creep_Roles = priorRoles;
+	}
+});
+
 test("travel replaces a cached path when its destination changes", function () {
 	function MockRoomPosition(x, y, roomName) {
 		this.x = x; this.y = y; this.roomName = roomName;
@@ -2156,6 +2183,51 @@ test("invisible legacy establishment recovers active state from durable delivery
 	AIObserver._updateEstablishments();
 	assert.strictEqual(Memory.ai.establishments["establish-1"].state, "ACTIVE");
 	assert.strictEqual(Memory.ai.establishments["establish-1"].actualDelivered, 5000);
+});
+
+test("productive establishment survives temporary total miner loss", function () {
+	reset({ time: 9000 });
+	AIInterface.initMemory();
+	Game.rooms.W1N2 = {};
+	Memory.sites.mining.W1N2 = { colony: "W1N1", can_mine: true, ai_paused: false };
+	Memory.ai.establishments = {
+		W1N2: {
+			target: "W1N2", state: "HEALTHY", createdTick: 1000,
+			firstDeliveryTotal: 1000, failureReason: null
+		}
+	};
+	_.set(Memory, ["ai", "metrics", "remotes", "W1N2"], { energyDeliveredTotal: 6000 });
+	Memory.ai.intelligence.rooms.W1N2 = { controller: { ownerRelation: "NEUTRAL" } };
+	AIObserver._updateEstablishments();
+	assert.strictEqual(Memory.ai.establishments.W1N2.state, "DEGRADED");
+	assert.strictEqual(Memory.ai.establishments.W1N2.failureReason, null);
+	assert.strictEqual(Memory.sites.mining.W1N2.ai_paused, false);
+});
+
+test("legacy false establishment stop-loss is repaired by durable delivery", function () {
+	reset({ time: 9000 });
+	AIInterface.initMemory();
+	Memory.sites.mining.W1N2 = {
+		colony: "W1N1", can_mine: true, ai_paused: true,
+		ai_pause: {
+			state: "PAUSED", pausedTick: 8000,
+			reason: "delivery never began within the startup stop-loss window",
+			source: "ESTABLISHMENT_STOP_LOSS"
+		}
+	};
+	Memory.ai.establishments = {
+		W1N2: {
+			target: "W1N2", state: "FAILED", createdTick: 1000,
+			firstDeliveryTotal: 1000,
+			failureReason: "delivery never began within the startup stop-loss window"
+		}
+	};
+	_.set(Memory, ["ai", "metrics", "remotes", "W1N2"], { energyDeliveredTotal: 6000 });
+	Memory.ai.intelligence.rooms.W1N2 = { controller: { ownerRelation: "NEUTRAL" } };
+	AIObserver._updateEstablishments();
+	assert.strictEqual(Memory.ai.establishments.W1N2.state, "DEGRADED");
+	assert.strictEqual(Memory.ai.establishments.W1N2.failureReason, null);
+	assert.strictEqual(Memory.ai.establishments.W1N2.actualDelivered, 5000);
 });
 
 test("paused remote recovery tolerates normal home replacement but not sustained shortage", function () {

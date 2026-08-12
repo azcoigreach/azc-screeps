@@ -584,6 +584,10 @@
 			Run: function (rmColony, rmHarvest) {
 				Stats_CPU.Start(rmColony, "Mining-init");
 				if (rmColony != rmHarvest && _.get(Memory, ["sites", "mining", rmHarvest, "ai_paused"], false) === true) {
+					// A strategic/economic pause stops new remote population demand, but
+					// it must never switch off soldiers already assigned to defend the
+					// room. Continue tactical pursuit until the room is clear.
+					Control.runPausedRemoteDefenders(rmColony, rmHarvest);
 					Stats_CPU.End(rmColony, "Mining-init");
 					return;
 				}

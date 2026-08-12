@@ -898,14 +898,22 @@ global.AIObserver = {
 			let metrics = _.get(Memory, ["ai", "metrics", "remotes", operation.target], {});
 			let intel = _.get(Memory, ["ai", "intelligence", "rooms", operation.target], {});
 			let age = Game.time - _.get(operation, "createdTick", Game.time);
+			let delivered = _.get(metrics, "energyDeliveredTotal", 0)
+				- _.get(operation, "firstDeliveryTotal", 0);
+			operation.actualDelivered = Math.max(0, delivered);
 			if (!site) {
 				operation.state = "FAILED";
 				operation.failureReason = "remote configuration disappeared";
 			} else if (_.get(site, "ai_paused", false) === true && operation.failureReason) {
-				// A failed establishment cannot return to RESERVING merely because the
-				// paused target is no longer visible. Preserve its terminal truth while
-				// the reversible remote configuration remains suspended.
-				operation.state = "FAILED";
+				// Repair the legacy false terminal state: a remote with durable measured
+				// delivery did begin operating, even if an invasion later killed its
+				// current miner. Keep genuine route/ownership failures terminal.
+				if (delivered > 0 && operation.failureReason === "delivery never began within the startup stop-loss window") {
+					operation.state = "DEGRADED";
+					operation.failureReason = null;
+				} else {
+					operation.state = "FAILED";
+				}
 			} else if (_.get(site, "route_failure", false)) {
 				operation.state = "FAILED";
 				operation.failureReason = "deterministic route failure";
@@ -920,27 +928,37 @@ global.AIObserver = {
 				// establishment. Preserve the last productive lifecycle state, and
 				// repair legacy RESERVING records when their durable delivery counter
 				// proves that the remote had already become productive.
-				let delivered = _.get(metrics, "energyDeliveredTotal", 0)
-					- _.get(operation, "firstDeliveryTotal", 0);
-				if (!_.includes(["ACTIVE", "HEALTHY", "DEGRADED"], operation.state))
-					operation.state = delivered > 0 ? "ACTIVE" : "RESERVING";
-				operation.actualDelivered = Math.max(0, delivered);
+				if (delivered > 0) {
+					if (!_.includes(["ACTIVE", "HEALTHY", "DEGRADED"], operation.state))
+						operation.state = "ACTIVE";
+					operation.failureReason = null;
+				} else if (!_.includes(["ACTIVE", "HEALTHY", "DEGRADED"], operation.state)) {
+					operation.state = "RESERVING";
+				}
 			}
 			else {
 				let population = _.filter(_.get(Game, "creeps", {}), creep => _.get(creep, ["memory", "room"]) === operation.target);
 				let hasMiner = _.some(population, creep => _.includes(["burrower", "miner"], _.get(creep, ["memory", "role"])));
-				let delivered = _.get(metrics, "energyDeliveredTotal", 0) - _.get(operation, "firstDeliveryTotal", 0);
 				if (delivered > 0 && hasMiner && age >= 5000) {
 					let predicted = _.get(operation, ["prediction", "grossEnergyPer1000", "value"], 0) * age / 1000;
 					operation.state = predicted <= 0 || delivered >= predicted * 0.5 ? "HEALTHY" : "DEGRADED";
-				} else if (delivered > 0 && hasMiner) operation.state = "ACTIVE";
+					operation.failureReason = null;
+				} else if (delivered > 0 && hasMiner) {
+					operation.state = "ACTIVE";
+					operation.failureReason = null;
+				} else if (delivered > 0) {
+					// A mature productive remote can temporarily lose every miner during
+					// an invasion or TTL cliff. This is an operational staffing deficit,
+					// not establishment proof that delivery never began.
+					operation.state = "DEGRADED";
+					operation.failureReason = null;
+				}
 				else if (hasMiner) operation.state = "BOOTSTRAPPING";
 				else if (age >= 7500) {
 					operation.state = "FAILED";
 					operation.failureReason = "delivery never began within the startup stop-loss window";
 					this._pauseFailedEstablishment(site, operation.failureReason);
 				} else operation.state = "RESERVING";
-				operation.actualDelivered = Math.max(0, delivered);
 			}
 			operation.updatedTick = Game.time;
 		});

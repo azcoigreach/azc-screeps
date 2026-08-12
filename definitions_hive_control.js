@@ -1082,6 +1082,34 @@
 		return result;
 	},
 
+	runPausedRemoteDefenders: function (rmColony, rmHarvest) {
+		let listRoute = _.get(Memory, ["sites", "mining", rmHarvest, "list_route"]);
+		let defenders = _.filter(_.get(Game, "creeps", {}), creep => {
+			return _.get(creep, ["memory", "room"]) === rmHarvest
+				&& _.get(creep, ["memory", "colony"]) === rmColony
+				&& _.includes(["soldier", "paladin", "ranger", "archer", "healer"],
+					_.get(creep, ["memory", "role"]));
+		});
+		_.each(defenders, creep => {
+			if (_.isArray(listRoute) && listRoute.length > 0)
+				creep.memory.list_route = listRoute;
+			switch (_.get(creep, ["memory", "role"])) {
+				case "soldier":
+				case "paladin":
+					Creep_Roles.Soldier(creep, false, true);
+					break;
+				case "ranger":
+				case "archer":
+					Creep_Roles.Archer(creep, false, true);
+					break;
+				case "healer":
+					Creep_Roles.Healer(creep, true);
+					break;
+			}
+		});
+		return defenders.length;
+	},
+
 	spawnRequestClass: function (request) {
 		let args = _.get(request, "args", {});
 		let colony = _.get(request, "room");

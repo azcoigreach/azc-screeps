@@ -325,10 +325,10 @@ class AutonomyController:
     def _resume_remote(self, telemetry: Telemetry) -> StrategicOrder | None:
         population = telemetry.empireLoad.get("homePopulation", {})
         spawn = telemetry.empireLoad.get("spawnPressure", {})
-        coverage = population.get("coverageSatisfaction")
-        if coverage is None:
-            coverage = population.get("satisfaction")
-        if float(coverage or 0) < 85 or float(population.get("criticalSatisfaction") or 0) < 100:
+        # Reactivation protects the home energy engine. Discretionary vacancies
+        # (for example a routine upgrader) must not strand a productive remote
+        # when every essential role is covered and home demand is bounded.
+        if float(population.get("criticalSatisfaction") or 0) < 100:
             return None
         home_queue = spawn.get("homeQueueDepth")
         if home_queue is None:

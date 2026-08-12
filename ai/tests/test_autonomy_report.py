@@ -275,6 +275,27 @@ class AutonomyReportTests(unittest.TestCase):
         self.assertEqual(order.action, "RESUME_REMOTE_MINING")
         self.assertEqual(order.parameters, {"room": "W1N2"})
 
+    def test_essential_coverage_resumes_remote_despite_discretionary_gap(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["empireLoad"] = {
+            "state": "STRAINED", "growthVeto": False,
+            "homePopulation": {
+                "satisfaction": 81.82, "coverageSatisfaction": 81.82,
+                "criticalSatisfaction": 100,
+            },
+            "spawnPressure": {
+                "queueDepth": 0, "homeQueueDepth": 0,
+                "remoteQueueDepth": 0, "oldestHomeDemandTicks": 0,
+            },
+        }
+        payload["operations"]["remoteMining"][0]["lifecycleState"] = "RECOVERY_CANDIDATE"
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        order = AutonomyController(self.history, transport).run(telemetry)
+        self.assertIsNotNone(order)
+        self.assertEqual(order.action, "RESUME_REMOTE_MINING")
+
     def test_major_growth_operations_are_serialized_until_productive(self) -> None:
         payload = telemetry_payload()
         payload["operations"]["remoteEstablishments"] = [{
