@@ -2344,6 +2344,9 @@
 		if ((reqTarget == creep.room.name || reqTargetBase == creep.room.name) && creep.room.controller.my) {
 			// Room already claimed! Check if first spawn is built before completing mission
 			let spawns = creep.room.find(FIND_MY_SPAWNS);
+			let spawnSites = creep.room.find(FIND_MY_CONSTRUCTION_SITES, {
+				filter: site => site.structureType == "spawn"
+			});
 			let layout = _.get(request, "layout");
 
 			// The observer may initialize spawn_assist before the colonizer reaches
@@ -2366,7 +2369,10 @@
 				creep.memory = {};
 				return;
 			} else {
-				_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
+				// The request pulse is only needed to create the initial site. Once
+				// that site exists the regular blueprint cycle owns further planning.
+				if (spawnSites.length == 0)
+					_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
 				// CLAIM/MOVE colonizers cannot build. Clear the completed route and
 				// move off the border once so stale exit state cannot send them back.
 				if (typeof creep.travelClear === "function")

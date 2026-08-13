@@ -1491,6 +1491,37 @@ test("claimed colonization target does not request a replacement colonizer", fun
 	assert.strictEqual(context.Memory.hive.spawn_requests.length, 0);
 });
 
+test("claimed-room colonizer stops blueprint pulse requests once the spawn site exists", function () {
+	let context = {
+		_: _, Memory: {
+			rooms: { W1N2: { layout: { name: "def_hor_w", origin: { x: 20, y: 20 } } } },
+			hive: { pulses: { blueprint: {} } },
+			sites: { colonization: { W1N2: {
+				from: "W1N1", target: "W1N2", layout: { name: "def_hor_w", origin: { x: 20, y: 20 } }
+			} } }
+		},
+		Game: { time: 2000, shard: { name: "shard0" } },
+		FIND_MY_SPAWNS: 8, FIND_MY_CONSTRUCTION_SITES: 2
+	};
+	context.global = context;
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "definitions_creep_roles.js"), "utf8"), context);
+	let cleared = 0;
+	let creep = {
+		name: "colonizer-test",
+		memory: { role: "colonizer", room: "W1N2", colony: "W1N1", target_key: "W1N2" },
+		room: {
+			name: "W1N2", controller: { my: true },
+			find: function (type) { return type === 2 ? [{ structureType: "spawn" }] : []; }
+		},
+		pos: { x: 25, y: 25 },
+		ensureGlobal: function () {}, updateGlobalStatus: function () {},
+		travelClear: function () { cleared++; }, moveTo: function () {}
+	};
+	context.Creep_Roles.Colonizer(creep);
+	assert.strictEqual(context.Memory.hive.pulses.blueprint.request, undefined);
+	assert.strictEqual(cleared, 1);
+});
+
 test("quiet scheduler advances and releases a fully staffed recovery latch", function () {
 	reset({ time: 5000 });
 	AIInterface.initMemory();
