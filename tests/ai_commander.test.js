@@ -1373,6 +1373,13 @@ test("remote population demand is regenerated beyond the spawn pulse", function 
 	assert.ok(source.indexOf("this.runPopulation(rmColony, rmHarvest, listCreeps, listSpawnRooms, hasKeepers)") >= 0);
 });
 
+test("remote survey preserves cached source capacity while vision is absent", function () {
+	let source = fs.readFileSync(path.join(__dirname, "..", "definitions_sites.js"), "utf8");
+	assert.strictEqual(source.indexOf("surveyData.source_amount = 0"), -1);
+	assert.strictEqual(source.indexOf("surveyData.has_minerals = false"), -1);
+	assert.ok(source.indexOf("surveyData.source_amount = Game.rooms[rmHarvest].findSources().length") >= 0);
+});
+
 test("combat creeps never camp before reaching their assigned room", function () {
 	reset({ time: 2000 });
 	let destinations = [];

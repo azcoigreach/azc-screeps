@@ -666,15 +666,16 @@
 				// Calculate minerals and sources - check mineral depletion periodically (every 100 ticks)
 				// to prevent spawning extractors when mineral is depleted
 				if (visible) {
+					// Source count is cheap and foundational to population sizing. Refresh it
+					// on every visible survey, independently of the slower mineral pulse.
+					surveyData.source_amount = Game.rooms[rmHarvest].findSources().length;
 					if (surveyData.has_minerals === undefined || Game.time % 100 === 0) {
 						let minerals = Game.rooms[rmHarvest].find(FIND_MINERALS);
 						surveyData.has_minerals = minerals.some(m => m.mineralAmount > 0);
-						surveyData.source_amount = Game.rooms[rmHarvest].findSources().length;
 					}
-				} else {
-					surveyData.has_minerals = false;
-					surveyData.source_amount = 0;
 				}
+				// No vision means unknown, not zero. Preserve the last observed source
+				// and mineral data so a temporary scout gap cannot erase remote demand.
 				
 				// Cache hostile detection
 				let hostiles = [];
