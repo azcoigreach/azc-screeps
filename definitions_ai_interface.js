@@ -1186,6 +1186,16 @@ global.AIInterface = {
 		try {
 			if (!this._segmentAvailable(id))
 				return false;
+			let payloadBytes = typeof AIObserver !== "undefined" && _.isFunction(AIObserver._utf8Bytes)
+				? AIObserver._utf8Bytes(value) : value.length;
+			// Screeps rejects segments above 100,000 bytes at the end of the tick,
+			// outside this try/catch. Refuse the assignment here so telemetry can
+			// degrade without freezing every creep in the empire.
+			if (payloadBytes > 99000) {
+				this._logError(`Refusing oversized segment ${id}`,
+					new Error(`${payloadBytes} bytes exceeds the 99000 byte safety limit`));
+				return false;
+			}
 			RawMemory.segments[id] = value;
 			return true;
 		} catch (err) {

@@ -729,6 +729,59 @@ test("telemetry publishes immediately when the observer schema marker is missing
 	}
 });
 
+test("observer compacts telemetry before the hard memory segment limit", function () {
+	reset();
+	AIInterface.initMemory();
+	let snapshot = AIObserver.buildSnapshot();
+	let candidates = [];
+	let rooms = [];
+	for (let i = 0; i < 30; i++) {
+		let room = `W${i}N${i}`;
+		candidates.push({
+			room: room, score: 100 - i, factors: { sources: 40 }, rawScore: 100 - i,
+			intelAgeTicks: i, disqualified: false, disqualifiers: [], eligible: true,
+			origin: "W1N1", sourceCount: 2, mineralType: "H", terrainSwampPercent: 10,
+			currentOperationalRole: "NEUTRAL_SCOUTED", claimCandidateStatus: "ELIGIBLE",
+			accessibility: "REACHABLE_NOW", availabilitySet: "CURRENTLY_REACHABLE",
+			layout: { blob: "x".repeat(3000) }, validLayouts: [], economicConversion: {},
+			bootstrap: {}, strategy: {}, route: {}, security: {}
+		});
+		rooms.push({
+			room: room, lastSeenTick: Game.time, classification: "normal", sourceCount: 2,
+			sourcePositions: [], mineralType: "H", mineralPosition: null,
+			terrainSwampPercent: 10, layoutAnalysis: { blob: "y".repeat(3000) },
+			controller: { status: "neutral", owner: null, ownerRelation: "NEUTRAL",
+				reservation: null, reservationRelation: "NEUTRAL", reservationTicks: null,
+				rcl: 0, safeMode: null },
+			structures: { spawns: 0, towers: 0, storage: 0, currentRelationship: "NEUTRAL" },
+			hostileCreeps: 0, hostilePlayers: [], playerRelations: [],
+			lastHostileSightingTick: null, hostileSightingsTotal: 0, nearestColony: "W1N1",
+			distanceFromColony: 1, routeLength: 1, routeStatus: "available",
+			intelAgeTicks: 0, stale: false
+		});
+	}
+	snapshot.claimCandidates = candidates;
+	snapshot.expansionCandidates = candidates;
+	snapshot.intelligence.knownRooms = rooms;
+	let serialized = AIObserver.serialize(snapshot);
+	let compact = JSON.parse(serialized);
+	assert.ok(Buffer.byteLength(serialized, "utf8") <= AIObserver.MAX_PAYLOAD_BYTES);
+	assert.ok(compact.claimCandidates.length >= 3);
+	assert.ok(compact.intelligence.knownRooms.length >= 3);
+	assert.ok(compact.expansionCandidates[0].layout == null);
+	assert.strictEqual(compact.expansionCandidates[0].currentOperationalRole, "NEUTRAL_SCOUTED");
+	assert.strictEqual(compact.observer.payloadBytes, Buffer.byteLength(serialized, "utf8"));
+});
+
+test("interface refuses an oversized segment instead of aborting the game tick", function () {
+	reset();
+	AIInterface.initMemory();
+	RawMemory.segments[90] = "previous";
+	assert.strictEqual(AIInterface._writeSegment(90, "x".repeat(99001)), false);
+	assert.strictEqual(RawMemory.segments[90], "previous");
+	assert.strictEqual(Memory.ai.status.lastInterfaceError.message, "Refusing oversized segment 90");
+});
+
 test("interface errors retain one bounded diagnostic in Memory", function () {
 	reset();
 	AIInterface.initMemory();

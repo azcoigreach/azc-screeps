@@ -7,6 +7,9 @@
 global.AIObserver = {
 
 	SCHEMA_VERSION: 9,
+	// Screeps enforces this limit as 100,000 UTF-8 bytes, not 100 KiB.
+	// Keep enough headroom for serialization differences and future fields.
+	MAX_PAYLOAD_BYTES: 95000,
 	MAX_HOSTILE_EVENTS: 50,
 	MAX_INTEL_ROOMS: 150,
 	STRUCTURE_TYPES: [
@@ -148,15 +151,72 @@ global.AIObserver = {
 		let value = snapshot == null ? this.buildSnapshot() : snapshot;
 		let measured = _.isFunction(_.get(Game, ["cpu", "getUsed"])) ? Math.max(0, Game.cpu.getUsed() - started) : 0;
 		value.observer = { cpuUsed: measured, payloadBytes: 0 };
-		let serialized = JSON.stringify(value);
-		// Re-serialize until the self-reported UTF-8 byte length is stable. Memory
-		// Segment limits are bytes, while JavaScript string length counts UTF-16.
-		for (let i = 0; i < 3; i++) {
-			let payloadBytes = this._utf8Bytes(serialized);
-			if (value.observer.payloadBytes === payloadBytes)
-				break;
-			value.observer.payloadBytes = payloadBytes;
-			serialized = JSON.stringify(value);
+
+		// expansionCandidates is the legacy spelling retained for older readers.
+		// Publishing the complete rich candidate twice consumed ~16 KB in a
+		// nine-room empire, so keep the modern claimCandidates payload authoritative
+		// and expose only the fields used by legacy trend readers here.
+		value.expansionCandidates = _.map(_.get(value, "claimCandidates",
+			_.get(value, "expansionCandidates", [])), candidate => _.pick(candidate, [
+				"room", "score", "factors", "rawScore", "intelAgeTicks", "disqualified",
+				"disqualifiers", "eligible", "origin", "sourceCount", "mineralType",
+				"terrainSwampPercent", "currentOperationalRole", "claimCandidateStatus",
+				"accessibility", "availabilitySet"
+			]));
+
+		let serializeMeasured = () => {
+			let result = JSON.stringify(value);
+			// Re-serialize until the self-reported UTF-8 byte length is stable.
+			for (let i = 0; i < 3; i++) {
+				let payloadBytes = this._utf8Bytes(result);
+				if (value.observer.payloadBytes === payloadBytes)
+					break;
+				value.observer.payloadBytes = payloadBytes;
+				result = JSON.stringify(value);
+			}
+			return result;
+		};
+		let serialized = serializeMeasured();
+
+		// The strategic dataset grows with explored territory. Apply deterministic,
+		// lowest-value compaction before ever handing an oversized value to
+		// RawMemory; an oversized segment aborts the entire bot tick.
+		if (this._utf8Bytes(serialized) > this.MAX_PAYLOAD_BYTES) {
+			value.authorityAudit = _.get(value, "authorityAudit", []).slice(-10);
+			_.set(value, ["intelligence", "hostileEvents"],
+				_.get(value, ["intelligence", "hostileEvents"], []).slice(-10));
+			_.each(_.get(value, ["operations", "remoteMining"], []), remote => {
+				let baseline = _.get(remote, ["pause", "baseline"]);
+				if (baseline)
+					remote.pause.baseline = _.pick(baseline,
+						["state", "reasons", "evaluatedTick", "growthVeto"]);
+			});
+			serialized = serializeMeasured();
+		}
+		while (this._utf8Bytes(serialized) > this.MAX_PAYLOAD_BYTES
+			&& _.get(value, "claimCandidates", []).length > 3) {
+			value.claimCandidates.pop();
+			let rooms = _.map(value.claimCandidates, "room");
+			value.expansionCandidates = _.filter(value.expansionCandidates,
+				candidate => _.includes(rooms, candidate.room));
+			serialized = serializeMeasured();
+		}
+		while (this._utf8Bytes(serialized) > this.MAX_PAYLOAD_BYTES
+			&& _.get(value, ["intelligence", "knownRooms"], []).length > 3) {
+			let removed = value.intelligence.knownRooms.pop();
+			if (removed && removed.room && _.has(value, ["intelligence", "protectionByRoom", removed.room]))
+				delete value.intelligence.protectionByRoom[removed.room];
+			serialized = serializeMeasured();
+		}
+		while (this._utf8Bytes(serialized) > this.MAX_PAYLOAD_BYTES
+			&& _.get(value, "remoteCandidates", []).length > 3) {
+			value.remoteCandidates.pop();
+			serialized = serializeMeasured();
+		}
+		if (this._utf8Bytes(serialized) > this.MAX_PAYLOAD_BYTES) {
+			value.playerHistory = [];
+			value.combatAssessments = [];
+			serialized = serializeMeasured();
 		}
 		_.set(Memory, ["ai", "metrics", "observerCpu"], measured);
 		_.set(Memory, ["ai", "metrics", "payloadBytes"], this._utf8Bytes(serialized));
