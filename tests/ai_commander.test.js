@@ -1432,7 +1432,7 @@ test("one bootstrap worker preempts construction to guard the controller", funct
 	let ran = null;
 	let creep = {
 		name: "work:a", carry: { energy: 50 }, carryCapacity: 50,
-		memory: { role: "worker", room: "W1N2", state: "working", task: { type: "build" } },
+		memory: { role: "worker", room: "W1N2", state: "refueling", task: { type: "harvest" } },
 		room: { name: "W1N2", controller: { level: 2 }, find: function () { return []; } },
 		getTask_Upgrade: function () { return { type: "upgrade" }; },
 		runTask: function () { ran = this.memory.task.type; }
@@ -1443,6 +1443,7 @@ test("one bootstrap worker preempts construction to guard the controller", funct
 	context.Creep_Roles.Worker(creep, true);
 	assert.strictEqual(ran, "upgrade");
 	assert.strictEqual(creep.memory.task.type, "upgrade");
+	assert.strictEqual(creep.memory.state, "working");
 });
 
 test("travel replaces a cached path when its destination changes", function () {

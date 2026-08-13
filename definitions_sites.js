@@ -617,7 +617,8 @@
 				let listRoute = _.get(Memory, ["sites", "mining", rmHarvest, "list_route"]);
 				let hasKeepers = _.get(Memory, ["sites", "mining", rmHarvest, "has_keepers"], false);
 				if (rmColony == rmHarvest
-					&& _.filter(_.get(Game, ["spawns"]), s => { return s.room.name == rmColony; }).length < 1) {
+					&& (_.filter(_.get(Game, ["spawns"]), s => { return s.room.name == rmColony; }).length < 1
+						|| _.get(Game, ["rooms", rmColony, "controller", "level"], 0) < 3)) {
 					listSpawnRooms = _.get(Memory, ["rooms", rmColony, "spawn_assist", "rooms"]);
 					listRoute = _.get(Memory, ["rooms", rmColony, "spawn_assist", "list_route"]);
 				}
