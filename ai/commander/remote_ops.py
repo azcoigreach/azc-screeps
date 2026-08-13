@@ -311,7 +311,10 @@ def evaluate_operation(operation: dict[str, Any], telemetry: Telemetry) -> tuple
             return "NO_EFFECT", current, "The remote is paused, but the evaluation window has not yet produced measurable home recovery."
         return "NO_EFFECT", current, "The remote is still active after the pause evaluation window."
     if action == "RESUME_REMOTE_MINING":
-        if not current.get("paused") and current.get("lifecycleState") in {"REACTIVATING", "ACTIVE", "DEGRADED", "FAILING"}:
+        # Lifecycle diagnostics such as PAUSE_RECOMMENDED describe health; they
+        # do not mean the site's pause flag is still set. The resume action has
+        # succeeded once the preserved configuration is unpaused.
+        if not current.get("paused"):
             return "SUCCESS", current, "The preserved remote configuration resumed ordinary operation."
         return "NO_EFFECT", current, "The remote remains paused after the resume evaluation window."
     if action == "REBALANCE_REMOTE_LOGISTICS":

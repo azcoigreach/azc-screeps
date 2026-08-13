@@ -106,6 +106,7 @@ global.AIInterface = {
 		this._default(["ai", "policy", "remoteRecoveryStableTicks"], 3000, value => this._isInteger(value) && value >= 500);
 		this._default(["ai", "policy", "remoteRecoveryPopulationSatisfaction"], 85, value => _.isNumber(value) && value >= 50 && value <= 100);
 		this._default(["ai", "policy", "remoteRecoveryReplacementGraceTicks"], 200, value => this._isInteger(value) && value >= 25 && value <= 1000);
+		this._default(["ai", "policy", "remoteLossRecoveryTicks"], 1500, value => this._isInteger(value) && value >= 500 && value <= 5000);
 		this._default(["ai", "policy", "intelligenceFrontierMaxDistance"], 4, value => this._isInteger(value) && value >= 2 && value <= 8);
 		this._default(["ai", "policy", "protectionThresholdHours"], [168, 72, 24, 6, 0], value => _.isArray(value));
 		if (!_.isObject(_.get(Memory, ["ai", "policy", "roomOverrides"]))) _.set(Memory, ["ai", "policy", "roomOverrides"], {});

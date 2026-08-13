@@ -906,8 +906,16 @@ global.AIObserver = {
 		if (remote.reservation.relation === "SELF" && remote.reservation.ticksToEnd != null
 			&& remote.reservation.ticksToEnd < remote.reservation.warningTicks)
 			add("RESERVATION_EXPIRING", "MEDIUM", { ticksToEnd: remote.reservation.ticksToEnd, warningTicks: remote.reservation.warningTicks });
-		if (remote.losses.creepLossesTotal >= 5 && remote.losses.lastCreepLossTick != null
-			&& Game.time - remote.losses.lastCreepLossTick <= 5000)
+		let lastLossAge = remote.losses.lastCreepLossTick == null
+			? null : Game.time - remote.losses.lastCreepLossTick;
+		let lossRecoveryTicks = _.get(Memory, ["ai", "policy", "remoteLossRecoveryTicks"], 1500);
+		let deliveredAfterLoss = remote.losses.lastCreepLossTick != null
+			&& remote.delivery.lastDeliveryTick != null
+			&& remote.delivery.lastDeliveryTick > remote.losses.lastCreepLossTick;
+		let sustainedSafeDelivery = deliveredAfterLoss && lastLossAge >= lossRecoveryTicks
+			&& remote.security.isSafe && remote.active;
+		if (remote.losses.creepLossesTotal >= 5 && lastLossAge != null
+			&& lastLossAge <= 5000 && !sustainedSafeDelivery)
 			add("HIGH_CREEP_LOSSES", "MEDIUM", { total: remote.losses.creepLossesTotal, lastLossAge: Game.time - remote.losses.lastCreepLossTick });
 		if (remote.active && remote.delivery.lastDeliveryTick != null && Game.time - remote.delivery.lastDeliveryTick > 1500)
 			add("LOW_DELIVERY", "MEDIUM", { ticksSinceDelivery: Game.time - remote.delivery.lastDeliveryTick });
@@ -940,12 +948,21 @@ global.AIObserver = {
 		let key = ["ai", "metrics", "remotes", remote.room, "stopLoss"];
 		let previous = _.get(Memory, key, { badWindows: 0, state: "ACTIVE" });
 		let bad = remote.health === "FAILING" || remote.health === "UNSAFE" || _.includes(remote.reasons, "ROUTE_FAILURE") || _.includes(evidence, "establishment_failed");
-		let recovered = remote.health === "HEALTHY" && evidence.length === 0;
+		let productiveRecovery = remote.active === true && _.get(remote, ["security", "isSafe"], false) === true
+			&& _.isNumber(_.get(remote, ["delivery", "lastDeliveryTick"]))
+			&& Game.time - remote.delivery.lastDeliveryTick <= 1500
+			&& !_.includes(remote.reasons, "MINER_SHORTAGE")
+			&& !_.includes(remote.reasons, "HAULER_SHORTAGE");
+		let recovered = evidence.length === 0 && (remote.health === "HEALTHY" || productiveRecovery);
 		let pulse = Game.time - _.get(previous, "evaluatedTick", 0) >= 1000;
 		let nativeRecoveryActive = _.get(Memory, ["rooms", remote.colony, "population_recovery", "active"], false) === true;
 		let suppressed = remote.paused === true || nativeRecoveryActive;
 		let badWindows = _.get(previous, "badWindows", 0);
-		if (pulse && !suppressed) badWindows = bad ? badWindows + 1 : (recovered ? Math.max(0, badWindows - 1) : badWindows);
+		let recoveredFromLossEvidence = recovered
+			&& _.includes(_.get(previous, "evidence", []), "high_creep_losses")
+			&& !_.includes(evidence, "high_creep_losses");
+		let evaluateNow = pulse || recoveredFromLossEvidence;
+		if (evaluateNow && !suppressed) badWindows = bad ? badWindows + 1 : (recovered ? Math.max(0, badWindows - 1) : badWindows);
 		let state = badWindows >= 3 ? "ABANDON_RECOMMENDED" : (badWindows >= 2 ? "PAUSE_RECOMMENDED" : (badWindows >= 1 ? "PROBATION" : (evidence.length ? "WATCH" : "ACTIVE")));
 		let strongEvidence = _.filter(evidence, item => _.includes([
 			"persistent_path_failure", "delivery_near_zero", "high_creep_losses", "establishment_failed"
@@ -958,7 +975,7 @@ global.AIObserver = {
 		let requiredTicks = _.get(Memory, ["ai", "policy", "autoAbandonEvidenceTicks"], 3000);
 		let result = {
 			state: state, badWindows: badWindows, evidence: evidence,
-			evaluatedTick: pulse && !suppressed ? Game.time : _.get(previous, "evaluatedTick", Game.time),
+			evaluatedTick: evaluateNow && !suppressed ? Game.time : _.get(previous, "evaluatedTick", Game.time),
 			suppressed: suppressed,
 			autoEligibilitySinceTick: eligibleSinceTick,
 			autoEligibilityRequiredTicks: requiredTicks,
@@ -1149,7 +1166,8 @@ global.AIObserver = {
 				}
 				if (_.get(Memory, ["rooms", target, "layout"]) == null && operation.layout)
 					_.set(Memory, ["rooms", target, "layout"], _.cloneDeep(operation.layout));
-				if (_.get(Memory, ["rooms", target, "spawn_assist", "rooms"]) == null)
+				let assistRetired = _.get(Memory, ["rooms", target, "spawn_assist_retired_tick"]) != null;
+				if (!assistRetired && _.get(Memory, ["rooms", target, "spawn_assist", "rooms"]) == null)
 					_.set(Memory, ["rooms", target, "spawn_assist", "rooms"], [origin]);
 				// Blueprint requests are one-shot. Keep requesting the first spawn
 				// until a site exists so a skipped tick or a late layout handoff cannot
@@ -1165,6 +1183,24 @@ global.AIObserver = {
 					let spawningName = _.get(spawn, ["spawning", "name"]);
 					return spawningName && _.get(Game, ["creeps", spawningName, "memory", "colony"]) === target;
 				})) operation.firstIndependentSpawnTick = Game.time;
+
+				let miningPopulation = _.get(Memory, ["ai", "metrics", "population", "remotes", target], {});
+				let miningExpected = _.get(miningPopulation, "expected", {});
+				let miningActual = _.get(miningPopulation, "actual", {});
+				let miningDesired = _.sum(_.map(_.values(miningExpected), amount => _.isNumber(amount) ? amount : 0));
+				let miningCovered = _.sum(_.map(miningExpected, (amount, role) =>
+					Math.min(_.isNumber(amount) ? amount : 0, _.get(miningActual, role, 0))));
+				let miningSatisfaction = miningDesired > 0 ? 100 * miningCovered / miningDesired : 0;
+				let independentEconomy = targetSpawns.length > 0 && localWorkers.length > 0
+					&& operation.firstIndependentSpawnTick != null && miningSatisfaction >= 75;
+				if (independentEconomy && !assistRetired) {
+					if (_.has(Memory, ["rooms", target, "spawn_assist"]))
+						delete Memory.rooms[target].spawn_assist;
+					_.set(Memory, ["rooms", target, "spawn_assist_retired_tick"], Game.time);
+					assistRetired = true;
+				}
+				if (assistRetired)
+					operation.bootstrapSupport.required = false;
 
 				let stableRcl = _.get(Memory, ["ai", "policy", "minimumStableColonyRcl"], 3);
 				let stablePopulation = _.get(Memory, ["ai", "policy", "minimumStableColonyPopulationSatisfaction"], 75);

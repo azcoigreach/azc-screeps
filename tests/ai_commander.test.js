@@ -1779,6 +1779,40 @@ test("remote health distinguishes healthy and stale-intelligence operations", fu
 	assert.ok(remote.reasons.indexOf("STALE_INTEL") >= 0);
 });
 
+test("sustained safe delivery retires stale remote loss evidence", function () {
+	reset({ time: 10000 });
+	AIInterface.initMemory();
+	Memory.ai.policy.remoteLossRecoveryTicks = 1500;
+	let remote = {
+		room: "W1N2", colony: "W1N1", configured: true, active: true, paused: false,
+		visible: true, intelAgeTicks: 0,
+		route: { status: "CONFIGURED", rooms: ["W1N1", "W1N2"] },
+		reservation: { relation: "SELF", ticksToEnd: 3000, warningTicks: 2000,
+			reserverPresent: 1, reserverSpawning: 0, reserverQueued: 0 },
+		population: { roles: {
+			burrower: { desired: 1, alive: 1, spawning: 0 },
+			carrier: { desired: 1, alive: 1, spawning: 0 },
+			reserver: { desired: 1, alive: 1, spawning: 0 }
+		} },
+		mining: { expectedSourceContainers: 1, containers: 1, containerSites: 0,
+			containerHits: { min: 200000 }, energyWaiting: 0 },
+		delivery: { energyDeliveredTotal: 10000, lastDeliveryTick: 9999 },
+		losses: { creepLossesTotal: 12, lastCreepLossTick: 8000 },
+		security: { isSafe: true, hostileCreeps: 0 }
+	};
+	let assessment = AIObserver._remoteHealth(remote);
+	assert.strictEqual(assessment.reasons.indexOf("HIGH_CREEP_LOSSES"), -1);
+	remote.health = assessment.health;
+	remote.reasons = assessment.reasons;
+	_.set(Memory, ["ai", "metrics", "remotes", "W1N2"], { stopLoss: {
+		badWindows: 2, state: "PAUSE_RECOMMENDED", evaluatedTick: 9999,
+		evidence: ["high_creep_losses"]
+	} });
+	let stopLoss = AIObserver._stopLoss(remote);
+	assert.strictEqual(stopLoss.badWindows, 1);
+	assert.strictEqual(stopLoss.state, "PROBATION");
+});
+
 test("remote reactivation completes only after mining and delivery resume", function () {
 	reset({ time: 22000 });
 	AIInterface.initMemory();
@@ -2195,9 +2229,21 @@ test("existing remote conversion tracks claim through self-sustaining success", 
 	Game.creeps.localWorker = { name: "localWorker", memory: { room: "W1N2", colony: "W1N2", role: "worker" } };
 	Game.spawns.newSpawn = { room: { name: "W1N2" }, spawning: { name: "localWorker" } };
 	Memory.ai.metrics.population.colonies.W1N2 = { expected: { worker: 1 }, actual: { worker: 1 } };
+	_.set(Memory, ["ai", "metrics", "population", "remotes", "W1N2"], {
+		expected: { burrower: 1, carrier: 1 }, actual: { burrower: 1, carrier: 1 }
+	});
+	Game.rooms.W1N2.controller.level = 2;
 	Game.time++;
 	AIObserver._updateColonizations();
 	let operation = Memory.ai.colonizations.W1N2;
+	assert.strictEqual(operation.state, "ECONOMY_BOOTSTRAPPING");
+	assert.strictEqual(Memory.rooms.W1N2.spawn_assist, undefined);
+	assert.strictEqual(Memory.rooms.W1N2.spawn_assist_retired_tick, Game.time);
+	assert.strictEqual(operation.bootstrapSupport.required, false);
+	Game.rooms.W1N2.controller.level = 3;
+	Game.time++;
+	AIObserver._updateColonizations();
+	operation = Memory.ai.colonizations.W1N2;
 	assert.strictEqual(operation.state, "SUCCESS");
 	assert.strictEqual(operation.outcome, "SUCCESS");
 	assert.ok(operation.claimTick != null);

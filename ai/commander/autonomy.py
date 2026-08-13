@@ -67,7 +67,7 @@ class AutonomyController:
         if (
             authority.execution.remotePausing
             and not recovering
-            and not growth_active
+            and not self._growth_blocks_remote_resume(telemetry)
             and current_load in {"HEALTHY", "STRAINED"}
         ):
             order = self._resume_remote(telemetry)
@@ -341,6 +341,33 @@ class AutonomyController:
         return any(
             remote.lifecycleState == "REACTIVATING"
             for remote in telemetry.operations.remoteMining
+        )
+
+    @staticmethod
+    def _growth_blocks_remote_resume(telemetry: Telemetry) -> bool:
+        """Serialize unsafe growth, but let a proven RCL2 economy restore income.
+
+        A claim without an operational local economy still needs exclusive spawn
+        attention. Once the target is ECONOMY_BOOTSTRAPPING or SELF_SUSTAINING,
+        the normal critical-population and home-queue gates in ``_resume_remote``
+        are sufficient protection. Waiting for RCL3 here can suppress an existing
+        income stream for many hours after the second spawn is already independent.
+        """
+        if any(
+            operation.state not in {"ACTIVE", "HEALTHY", "DEGRADED", "FAILED"}
+            for operation in telemetry.operations.remoteEstablishments
+        ):
+            return True
+        if any(
+            remote.lifecycleState == "REACTIVATING"
+            for remote in telemetry.operations.remoteMining
+        ):
+            return True
+        return any(
+            operation.state not in {
+                "ECONOMY_BOOTSTRAPPING", "SELF_SUSTAINING", "SUCCESS", "FAILED"
+            }
+            for operation in telemetry.operations.colonizations
         )
 
     def _resume_remote(self, telemetry: Telemetry) -> StrategicOrder | None:

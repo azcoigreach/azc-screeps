@@ -366,6 +366,54 @@ class AutonomyReportTests(unittest.TestCase):
         self.assertIsNotNone(order)
         self.assertEqual(order.action, "RESUME_REMOTE_MINING")
 
+    def test_independent_rcl2_colony_does_not_block_remote_reactivation(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["empireLoad"] = {
+            "state": "HEALTHY", "growthVeto": False,
+            "homePopulation": {
+                "satisfaction": 100, "coverageSatisfaction": 100,
+                "criticalSatisfaction": 100,
+            },
+            "spawnPressure": {
+                "queueDepth": 0, "homeQueueDepth": 0,
+                "remoteQueueDepth": 0, "oldestHomeDemandTicks": 0,
+            },
+        }
+        payload["operations"]["remoteMining"][0]["lifecycleState"] = "RECOVERY_CANDIDATE"
+        payload["operations"]["colonizations"] = [{
+            "id": "col-1", "from": "W1N1", "origin": "W1N1",
+            "target": "W2N2", "state": "ECONOMY_BOOTSTRAPPING",
+        }]
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        order = AutonomyController(self.history, transport).run(telemetry)
+        self.assertIsNotNone(order)
+        self.assertEqual(order.action, "RESUME_REMOTE_MINING")
+
+    def test_pre_economy_colonization_still_blocks_remote_reactivation(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["empireLoad"] = {
+            "state": "HEALTHY", "growthVeto": False,
+            "homePopulation": {
+                "satisfaction": 100, "coverageSatisfaction": 100,
+                "criticalSatisfaction": 100,
+            },
+            "spawnPressure": {
+                "queueDepth": 0, "homeQueueDepth": 0,
+                "remoteQueueDepth": 0, "oldestHomeDemandTicks": 0,
+            },
+        }
+        payload["operations"]["remoteMining"][0]["lifecycleState"] = "RECOVERY_CANDIDATE"
+        payload["operations"]["colonizations"] = [{
+            "id": "col-1", "from": "W1N1", "origin": "W1N1",
+            "target": "W2N2", "state": "SPAWN_BUILDING",
+        }]
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        self.assertIsNone(AutonomyController(self.history, transport).run(telemetry))
+
     def test_major_growth_operations_are_serialized_until_productive(self) -> None:
         payload = telemetry_payload()
         payload["operations"]["remoteEstablishments"] = [{

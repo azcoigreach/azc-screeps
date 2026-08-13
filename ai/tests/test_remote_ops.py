@@ -120,6 +120,17 @@ class RemoteOperationTests(unittest.TestCase):
         operation = {"room": "W9N9", "action": "REASSESS_REMOTE", "baseline": {}}
         self.assertEqual(evaluate_operation(operation, telemetry)[0], "INCONCLUSIVE")
 
+    def test_resume_succeeds_for_unpaused_diagnostic_lifecycle(self) -> None:
+        payload = telemetry_payload(2000)
+        remote = payload["operations"]["remoteMining"][0]
+        remote["paused"] = False
+        remote["lifecycleState"] = "PAUSE_RECOMMENDED"
+        telemetry = Telemetry.model_validate(payload)
+        operation = {"room": remote["room"], "action": "RESUME_REMOTE_MINING", "baseline": {}}
+        outcome, _, reason = evaluate_operation(operation, telemetry)
+        self.assertEqual(outcome, "SUCCESS")
+        self.assertIn("resumed", reason)
+
 
 if __name__ == "__main__":
     unittest.main()
