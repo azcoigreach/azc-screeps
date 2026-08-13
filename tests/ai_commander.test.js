@@ -1359,6 +1359,92 @@ test("paused remote sites continue running assigned defenders", function () {
 	}
 });
 
+test("paused remote economy drains cargo and retreats empty creeps", function () {
+	reset({ time: 2000 });
+	Memory.sites.mining.W1N2 = {
+		colony: "W1N1", ai_paused: true, list_route: ["W1N1", "W1N2"]
+	};
+	Game.creeps = {
+		carrier: { carry: { energy: 500 }, memory: { role: "carrier", room: "W1N2", colony: "W1N1" } },
+		reserver: { carry: {}, memory: { role: "reserver", room: "W1N2", colony: "W1N1" } }
+	};
+	let calls = [];
+	let priorRoles = global.Creep_Roles;
+	global.Creep_Roles = {
+		Mining: function (creep) { calls.push(["drain", creep.memory.role, creep.memory.state]); },
+		goToRoom: function (creep, room, forward) {
+			calls.push(["retreat", creep.memory.role, room, forward]);
+			return true;
+		}
+	};
+	try {
+		assert.strictEqual(Control.runPausedRemoteEconomy("W1N1", "W1N2"), 2);
+		assert.deepStrictEqual(calls, [
+			["drain", "carrier", "delivering"],
+			["retreat", "reserver", "W1N1", false]
+		]);
+	} finally {
+		global.Creep_Roles = priorRoles;
+	}
+});
+
+test("assisted spawn request falls back when the new local spawn lacks energy", function () {
+	reset({ time: 2000 });
+	global.OK = 0;
+	global.ERR_NOT_ENOUGH_ENERGY = -6;
+	Memory.hive = { spawn_requests: [] };
+	Memory.shard = { spawn_requests: [{
+		room: "W1N2", listRooms: ["W1N1"], priority: 25,
+		level: 3, scale: true, body: "worker_at", name: null,
+		args: { role: "worker", room: "W1N2" }
+	}], spawn_wait: {} };
+	Memory.rooms = {
+		W1N1: { population: {} }, W1N2: { population: { actual: 3, target: 4 } }
+	};
+	let attempts = [];
+	let localRoom = { name: "W1N2", storage: null, getLevel: function () { return 1; } };
+	let assistRoom = { name: "W1N1", storage: null, getLevel: function () { return 6; } };
+	Game.spawns = {
+		Spawn2: { room: localRoom, spawning: null, spawnCreep: function () { attempts.push("local"); return -6; } },
+		Spawn1: { room: assistRoom, spawning: null, spawnCreep: function () { attempts.push("assist"); return 0; } }
+	};
+	let priorScheduler = Control.shouldRunSpawnScheduler;
+	let priorStats = global.Stats_CPU;
+	try {
+		global.Stats_CPU = { Start: function () {}, End: function () {} };
+		Control.shouldRunSpawnScheduler = function () { return true; };
+		Control.processSpawnRequests();
+		assert.deepStrictEqual(attempts, ["local", "assist"]);
+	} finally {
+		Control.shouldRunSpawnScheduler = priorScheduler;
+		global.Stats_CPU = priorStats;
+	}
+});
+
+test("one bootstrap worker preempts construction to guard the controller", function () {
+	let context = {
+		_: _, Memory: { rooms: { W1N2: { survey: { downgrade_critical: false } } } },
+		Game: { time: 2000, creeps: {} },
+		FIND_DROPPED_RESOURCES: 3, FIND_HOSTILE_CREEPS: 4
+	};
+	context.global = context;
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "definitions_creep_roles.js"), "utf8"), context);
+	let ran = null;
+	let creep = {
+		name: "work:a", carry: { energy: 50 }, carryCapacity: 50,
+		memory: { role: "worker", room: "W1N2", state: "working", task: { type: "build" } },
+		room: { name: "W1N2", controller: { level: 2 }, find: function () { return []; } },
+		getTask_Upgrade: function () { return { type: "upgrade" }; },
+		runTask: function () { ran = this.memory.task.type; }
+	};
+	context.Game.creeps = { guard: creep, other: {
+		name: "work:b", memory: { role: "worker", room: "W1N2" }
+	} };
+	context.Creep_Roles.Worker(creep, true);
+	assert.strictEqual(ran, "upgrade");
+	assert.strictEqual(creep.memory.task.type, "upgrade");
+});
+
 test("travel replaces a cached path when its destination changes", function () {
 	function MockRoomPosition(x, y, roomName) {
 		this.x = x; this.y = y; this.roomName = roomName;

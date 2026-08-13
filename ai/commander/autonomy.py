@@ -57,6 +57,7 @@ class AutonomyController:
         growth_active = self._growth_operation_active(telemetry)
         if (
             authority.execution.autoRemotePausing
+            and not growth_active
             and current_load in {"OVEREXTENDED", "CRITICAL"}
             and self._home_distress_requires_drawdown(telemetry)
         ):
@@ -253,12 +254,31 @@ class AutonomyController:
     def _pause_remote(self, telemetry: Telemetry) -> StrategicOrder | None:
         if not self._cooled_down("PAUSE_REMOTE_MINING", "*", telemetry.tick, 5000):
             return None
+
+        # A recovery latch deliberately designates one remote as the bounded
+        # continuity pipeline. Never let the external commander undo that native
+        # safeguard, and never shut down the last active income-producing remote.
+        active_rooms = {
+            remote.room for remote in telemetry.operations.remoteMining
+            if remote.active and not remote.paused
+        }
+        if len(active_rooms) <= 1:
+            return None
+        continuity_rooms = {
+            str(state.get("remoteContinuityRoom"))
+            for state in (
+                telemetry.empireLoad.get("schedulerRecovery", {}).get("rooms", {}) or {}
+            ).values()
+            if isinstance(state, dict) and state.get("remoteMode") == "CONTINUITY"
+            and state.get("remoteContinuityRoom")
+        }
         # Pausing a fully staffed remote releases no immediate spawn capacity;
         # it only destroys current income. Draw down only a front that is still
         # asking the constrained colony to fill a real staffing deficit.
         ranking = [
             item for item in self.drawdown_ranking(telemetry)
-            if not item.get("paused") and int(item.get("staffingDeficit") or 0) > 0
+            if not item.get("paused") and item.get("room") not in continuity_rooms
+            and int(item.get("staffingDeficit") or 0) > 0
         ]
         if not ranking:
             return None

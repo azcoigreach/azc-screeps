@@ -1105,6 +1105,52 @@
 		return defenders.length;
 	},
 
+	runPausedRemoteEconomy: function (rmColony, rmHarvest) {
+		let listRoute = _.get(Memory, ["sites", "mining", rmHarvest, "list_route"]);
+		let economicRoles = ["burrower", "miner", "carrier", "multirole", "reserver", "extractor", "dredger"];
+		let creeps = _.filter(_.get(Game, "creeps", {}), creep => {
+			return _.get(creep, ["memory", "room"]) === rmHarvest
+				&& _.get(creep, ["memory", "colony"]) === rmColony
+				&& _.includes(economicRoles, _.get(creep, ["memory", "role"]));
+		});
+		_.each(creeps, creep => {
+			if (_.isArray(listRoute) && listRoute.length > 0)
+				creep.memory.list_route = listRoute;
+			let carried = _.sum(_.values(_.get(creep, "carry", {})));
+			let role = _.get(creep, ["memory", "role"]);
+			if (carried > 0) {
+				creep.memory.state = "delivering";
+				if (_.get(creep.memory, ["task", "type"]) != "deposit")
+					delete creep.memory.task;
+				if (_.includes(["burrower", "miner", "carrier"], role)) {
+					Creep_Roles.Mining(creep, true, true);
+					return;
+				}
+				if (Creep_Roles.goToRoom(creep, rmColony, false))
+					return;
+				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Spawns();
+				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Storage("energy");
+				creep.memory.task = creep.memory.task || creep.getTask_Deposit_Container("energy");
+				if (creep.memory.task)
+					creep.runTask(creep);
+				return;
+			}
+
+			delete creep.memory.task;
+			creep.memory.state = "retreating";
+			if (Creep_Roles.goToRoom(creep, rmColony, false))
+				return;
+			let spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS);
+			if (spawn) {
+				if (creep.pos.getRangeTo(spawn) <= 1)
+					spawn.recycleCreep(creep);
+				else
+					creep.moveTo(spawn, { reusePath: 5 });
+			}
+		});
+		return creeps.length;
+	},
+
 	spawnRequestClass: function (request) {
 		let args = _.get(request, "args", {});
 		let colony = _.get(request, "room");
@@ -1710,6 +1756,50 @@
 			let result = energies == null
 				? bestSpawn.spawnCreep(body, name, { memory: request.args })
 				: bestSpawn.spawnCreep(body, name, { memory: request.args, energyStructures: energies });
+
+			// A newly-built assisted spawn often has too little local energy to
+			// satisfy its own bootstrap request. Do not let its mere existence mask
+			// a fully powered assisting spawn: retry the same request in the declared
+			// assist rooms before leaving both spawns idle.
+			if (result == ERR_NOT_ENOUGH_ENERGY) {
+				let assistRooms = _.get(request, "listRooms", []);
+				for (let assistRoom of assistRooms) {
+					let alternatives = _.get(spawnsByRoom, assistRoom, []);
+					let alternateName = _.find(alternatives, spawnName => spawnName != bestSpawnName);
+					if (!alternateName)
+						continue;
+					let alternateSpawn = Game["spawns"][alternateName];
+					let alternateRoomLevel = alternateSpawn.room.getLevel();
+					let alternateMinLevel = Math.max(1, Math.min(baseLevel, alternateRoomLevel));
+					let alternateScaledLevel = Math.max(1,
+						Math.min(Math.round(populationRatio * baseLevel), alternateRoomLevel));
+					let alternateLevel = scale == false ? alternateMinLevel
+						: (alternateRoomLevel <= 4
+							? Math.max(alternateMinLevel, Math.max(1, Math.floor(alternateScaledLevel * 0.8)))
+							: Math.max(alternateMinLevel, alternateScaledLevel));
+					let alternateBody = Creep_Body.getBody(request.body, alternateLevel);
+					request.args["level"] = alternateLevel;
+					let alternateEnergies = null;
+					if (alternateSpawn.room.storage) {
+						alternateEnergies = alternateSpawn.room.find(FIND_MY_STRUCTURES).filter(s => {
+							return s.isActive() && (s.structureType == "extension" || s.structureType == "spawn");
+						}).sort(s => { return s.pos.getRangeTo(alternateSpawn.room.storage); });
+					}
+					let alternateResult = alternateEnergies == null
+						? alternateSpawn.spawnCreep(alternateBody, name, { memory: request.args })
+						: alternateSpawn.spawnCreep(alternateBody, name,
+							{ memory: request.args, energyStructures: alternateEnergies });
+					if (alternateResult == OK) {
+						bestSpawn = alternateSpawn;
+						bestSpawnName = alternateName;
+						level = alternateLevel;
+						body = alternateBody;
+						result = alternateResult;
+						break;
+					}
+					result = alternateResult;
+				}
+			}
 
 			if (_.has(wait, request._spawnWaitKey)) {
 				wait[request._spawnWaitKey].attempts++;

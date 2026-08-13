@@ -162,6 +162,76 @@ class AutonomyReportTests(unittest.TestCase):
         self.assertEqual(len(transport.sent), 1)
         self.assertEqual(self.history.recent_operations()[0]["action"], "PAUSE_REMOTE_MINING")
 
+    def test_active_colonization_cannot_trigger_remote_drawdown(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"]["autoRemotePausing"] = True
+        payload["empireLoad"] = {
+            "state": "CRITICAL", "growthVeto": True,
+            "homePopulation": {"satisfaction": 30, "criticalSatisfaction": 40},
+            "spawnPressure": {"queueDepth": 5},
+        }
+        payload["operations"]["remoteMining"][0]["population"].update({
+            "expectedTotal": 4, "desiredTotal": 4,
+            "aliveTotal": 1, "assignedTotal": 1,
+        })
+        payload["operations"]["colonizations"] = [{
+            "id": "col-1", "from": "W1N1", "origin": "W1N1",
+            "target": "W2N2", "state": "SPAWN_OPERATIONAL",
+        }]
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        self.assertIsNone(AutonomyController(self.history, transport).run(telemetry))
+        self.assertEqual(transport.sent, [])
+
+    def test_drawdown_preserves_native_continuity_remote(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"]["autoRemotePausing"] = True
+        payload["empireLoad"] = {
+            "state": "CRITICAL", "growthVeto": True,
+            "homePopulation": {"satisfaction": 30, "criticalSatisfaction": 40},
+            "spawnPressure": {"queueDepth": 5},
+            "schedulerRecovery": {"active": True, "rooms": {"W1N1": {
+                "remoteMode": "CONTINUITY", "remoteContinuityRoom": "W1N2",
+            }}},
+        }
+        payload["remoteDrawdownRanking"] = [
+            {"room": "W1N2", "score": 90, "health": "FAILING"},
+            {"room": "W2N1", "score": 80, "health": "FAILING"},
+        ]
+        for remote in payload["operations"]["remoteMining"][:2]:
+            remote["population"].update({
+                "expectedTotal": 4, "desiredTotal": 4,
+                "aliveTotal": 1, "assignedTotal": 1,
+            })
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        order = AutonomyController(self.history, transport).run(telemetry)
+        self.assertIsNotNone(order)
+        self.assertEqual(order.parameters, {"room": "W2N1"})
+
+    def test_drawdown_never_pauses_the_last_active_remote(self) -> None:
+        payload = telemetry_payload()
+        payload["authority"]["mode"] = "execute"
+        payload["authority"]["execution"]["autoRemotePausing"] = True
+        payload["empireLoad"] = {
+            "state": "CRITICAL", "growthVeto": True,
+            "homePopulation": {"satisfaction": 30, "criticalSatisfaction": 40},
+            "spawnPressure": {"queueDepth": 5},
+        }
+        payload["operations"]["remoteMining"][0]["population"].update({
+            "expectedTotal": 4, "desiredTotal": 4,
+            "aliveTotal": 1, "assignedTotal": 1,
+        })
+        for remote in payload["operations"]["remoteMining"][1:]:
+            remote["paused"] = True
+            remote["lifecycleState"] = "PAUSED"
+        telemetry = Telemetry.model_validate(payload)
+        transport = FakeTransport(self.history, telemetry.tick)
+        self.assertIsNone(AutonomyController(self.history, transport).run(telemetry))
+        self.assertEqual(transport.sent, [])
+
     def test_covered_routine_replacement_does_not_pause_remote(self) -> None:
         payload = telemetry_payload()
         payload["authority"]["mode"] = "execute"

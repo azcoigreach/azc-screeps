@@ -1646,6 +1646,25 @@
 				let hasUpgraders = _.filter(Game.creeps, c => 
 					c.memory.role == "upgrader" && c.memory.room == creep.room.name).length > 0;
 				let isCriticalDowngrade = _.get(Memory, ["rooms", creep.room.name, "survey", "downgrade_critical"], false);
+				let roomWorkers = _.sortBy(_.filter(Game.creeps, c =>
+					c.memory.role == "worker" && c.memory.room == creep.room.name), c => c.name);
+				let isControllerGuard = !hasUpgraders && _.get(_.head(roomWorkers), "name") == creep.name
+					&& (roomLevel < 3 || isCriticalDowngrade);
+
+				// A bootstrap room must always retain one controller worker. Without
+				// this guard every worker can hold a long-lived build task while RCL2
+				// silently downgrades. Preempt only the single deterministic guard;
+				// the remaining workers continue construction and energy logistics.
+				if (isControllerGuard) {
+					if (_.get(creep.memory, ["task", "type"]) != "upgrade")
+						delete creep.memory.task;
+					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(true);
+					creep.memory.task = creep.memory.task || creep.getTask_Upgrade(false);
+					if (creep.memory.task) {
+						creep.runTask(creep);
+						return;
+					}
+				}
 
 				// Early game priority: Focus on building structures for RCL progression
 				if (roomLevel <= 4) {

@@ -585,9 +585,10 @@
 				Stats_CPU.Start(rmColony, "Mining-init");
 				if (rmColony != rmHarvest && _.get(Memory, ["sites", "mining", rmHarvest, "ai_paused"], false) === true) {
 					// A strategic/economic pause stops new remote population demand, but
-					// it must never switch off soldiers already assigned to defend the
-					// room. Continue tactical pursuit until the room is clear.
+					// it must not freeze existing creeps in place. Continue tactical
+					// defense and drain carried resources before recycling the old crew.
 					Control.runPausedRemoteDefenders(rmColony, rmHarvest);
+					Control.runPausedRemoteEconomy(rmColony, rmHarvest);
 					Stats_CPU.End(rmColony, "Mining-init");
 					return;
 				}
@@ -599,12 +600,10 @@
 						return;
 					}
 
-					if (_.filter(_.get(Game, ["spawns"]), s => { return s.room.name == rmColony; }).length < 1
-						&& _.get(Memory, ["rooms", rmColony, "focus_defense"]) != true)
-						return;
-
-					if (_.get(Memory, ["rooms", rmColony, "focus_defense"]) == true
-						&& _.get(Game, ["rooms", rmColony, "controller", "level"]) < 3)
+					// Before the bootstrap spawn exists, colonization workers own the
+					// room. Once it is operational, local source population must start at
+					// every RCL; focus_defense must not suppress the energy engine until 3.
+					if (_.filter(_.get(Game, ["spawns"]), s => { return s.room.name == rmColony; }).length < 1)
 						return;
 				}
 
