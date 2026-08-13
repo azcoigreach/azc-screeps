@@ -639,11 +639,6 @@
 			if (role !== "colonizer")
 				_.set(creep, ["memory", "role"], "colonizer");
 
-			// Ensure we don't run multiple times per tick
-			if (_.get(creep.memory, "_last_colonizer_run") === Game.time)
-				return;
-
-			creep.memory._last_colonizer_run = Game.time;
 			Creep_Roles.Colonizer(creep);
 		});
 	},

@@ -2067,6 +2067,12 @@
 	},
 
 	Colonizer: function (creep) {
+		// Colonizers are discovered both globally and through their colonization
+		// site. Keep movement and controller intents single-writer within a tick.
+		if (_.get(creep.memory, "_last_colonizer_run") === Game.time)
+			return;
+		creep.memory._last_colonizer_run = Game.time;
+
 		let globalDefaults = {
 			mission: _.get(creep.memory, "shard_mission", "colonization"),
 			status: _.get(creep.memory, "global_status", _.get(creep, ["memory", "global", "status"], "active")),
@@ -2338,32 +2344,37 @@
 		if ((reqTarget == creep.room.name || reqTargetBase == creep.room.name) && creep.room.controller.my) {
 			// Room already claimed! Check if first spawn is built before completing mission
 			let spawns = creep.room.find(FIND_MY_SPAWNS);
+			let layout = _.get(request, "layout");
+
+			// The observer may initialize spawn_assist before the colonizer reaches
+			// this branch, so apply each handoff field independently and idempotently.
+			if (_.get(Memory, ["rooms", creep.room.name, "spawn_assist", "rooms"]) == null)
+				_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "rooms"], [_.get(request, ["from"])]);
+			if (_.get(Memory, ["rooms", creep.room.name, "spawn_assist", "list_route"]) == null)
+				_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "list_route"], _.get(request, ["list_route"]));
+			if (_.get(Memory, ["rooms", creep.room.name, "layout"]) == null && layout != null)
+				_.set(Memory, ["rooms", creep.room.name, "layout"], _.cloneDeep(layout));
+			if (_.get(Memory, ["rooms", creep.room.name, "focus_defense"]) == null)
+				_.set(Memory, ["rooms", creep.room.name, "focus_defense"], _.get(request, "focus_defense"));
 			
 			if (spawns.length > 0) {
 				// First spawn is complete! Close colonization mission
 				let key = creep.memory.target_key || creep.room.name;
 				delete Memory["sites"]["colonization"][key];
-				_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "rooms"], [_.get(request, ["from"])]);
-				_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "list_route"], _.get(request, ["list_route"]));
-				_.set(Memory, ["rooms", creep.room.name, "layout"], _.get(request, "layout"));
-				_.set(Memory, ["rooms", creep.room.name, "focus_defense"], _.get(request, "focus_defense"));
 				_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
 				console.log(`[Colonization] ${creep.name} - first spawn complete, colonization mission complete!`);
 				creep.memory = {};
 				return;
 			} else {
-				// Room claimed but no spawn yet - ensure spawn assist and layout are set but keep mission active
-				if (!_.get(Memory, ["rooms", creep.room.name, "spawn_assist", "rooms"])) {
-					_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "rooms"], [_.get(request, ["from"])]);
-					_.set(Memory, ["rooms", creep.room.name, "spawn_assist", "list_route"], _.get(request, ["list_route"]));
-					_.set(Memory, ["rooms", creep.room.name, "layout"], _.get(request, "layout"));
-					_.set(Memory, ["rooms", creep.room.name, "focus_defense"], _.get(request, "focus_defense"));
-					_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
-					console.log(`[Colonization] ${creep.room.name} - room claimed, waiting for first spawn...`);
-				}
-				// Colonizer can help build the spawn while waiting
+				_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
+				// CLAIM/MOVE colonizers cannot build. Clear the completed route and
+				// move off the border once so stale exit state cannot send them back.
+				if (typeof creep.travelClear === "function")
+					creep.travelClear();
 				creep.memory.state = "working";
 				delete creep.memory.task;
+				if (creep.pos.x == 0 || creep.pos.x == 49 || creep.pos.y == 0 || creep.pos.y == 49)
+					creep.moveTo(creep.room.controller, { reusePath: 0, maxRooms: 1 });
 				return;
 			}
 		}
@@ -2385,6 +2396,8 @@
 				_.set(Memory, ["hive", "pulses", "blueprint", "request"], creep.room.name);
 			}
 			console.log(`[Colonization] ${creep.name} successfully claimed ${creep.room.name}! Waiting for first spawn...`);
+			if (typeof creep.travelClear === "function")
+				creep.travelClear();
 			creep.memory.state = "working";
 			return;
 		} else {

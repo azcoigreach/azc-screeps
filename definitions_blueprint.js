@@ -152,19 +152,22 @@
 			console.log(`[Blueprint] Blocking area in ${room.name} for room controller around (${room.controller.pos.x}, ${room.controller.pos.y}).`);
 		}
 
-		// If colonization focused on rapidly building defenses (RCL 3), don't place anything until tower is built
-		if (level <= 3 && _.get(Memory, ["rooms", room.name, "focus_defense"]) == true) {
-			sites = Blueprint.iterateStructure(room, sites, structures, layout, origin, sites_per_room, blocked_areas, "tower");
-			if (level < 3 || !this.atMaxStructureCount(room, structures, layout, "tower"))
-				return;
-			else
-				delete Memory["rooms"][room.name]["focus_defense"];
-		}
-
-		// Build the 1st base's spawn alone, as priority!
+		// A new colony cannot bootstrap without its first spawn. Defense-focused
+		// colonizations previously returned here at RCL 1-2 while waiting for a
+		// tower that cannot legally be placed until RCL 3.
 		sites = Blueprint.iterateStructure(room, sites, structures, layout, origin, sites_per_room, blocked_areas, "spawn");
 		if (_.filter(structures, s => { return s.structureType == "spawn"; }).length == 0)
 			return;
+
+		// Once the first spawn is operational, a defense-focused bootstrap may
+		// prioritize its first tower at RCL 3. Lower RCLs must continue laying the
+		// ordinary structures needed to reach RCL 3.
+		if (level == 3 && _.get(Memory, ["rooms", room.name, "focus_defense"]) == true) {
+			sites = Blueprint.iterateStructure(room, sites, structures, layout, origin, sites_per_room, blocked_areas, "tower");
+			if (!this.atMaxStructureCount(room, structures, layout, "tower"))
+				return;
+			delete Memory["rooms"][room.name]["focus_defense"];
+		}
 
 		// Early game priority: Focus on RCL progression structures
 		if (level <= 4) {

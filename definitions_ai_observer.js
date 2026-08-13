@@ -1091,6 +1091,12 @@ global.AIObserver = {
 					_.set(Memory, ["rooms", target, "layout"], _.cloneDeep(operation.layout));
 				if (_.get(Memory, ["rooms", target, "spawn_assist", "rooms"]) == null)
 					_.set(Memory, ["rooms", target, "spawn_assist", "rooms"], [origin]);
+				// Blueprint requests are one-shot. Keep requesting the first spawn
+				// until a site exists so a skipped tick or a late layout handoff cannot
+				// strand an owned room without a bootstrap spawn.
+				if (targetSpawns.length === 0 && spawnSites.length === 0
+					&& _.get(Memory, ["rooms", target, "layout", "origin"]) != null)
+					_.set(Memory, ["hive", "pulses", "blueprint", "request"], target);
 
 				if (spawnSites.length > 0 && operation.spawnSitePlacedTick == null) operation.spawnSitePlacedTick = Game.time;
 				if (targetSpawns.length > 0 && operation.spawnOperationalTick == null) operation.spawnOperationalTick = Game.time;

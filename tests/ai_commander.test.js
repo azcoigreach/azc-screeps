@@ -1424,6 +1424,73 @@ test("room travel selects an open neighboring exit when the nearest lane is occu
 	assert.strictEqual(selected.y, 35);
 });
 
+test("defense-focused RCL2 blueprint places the bootstrap spawn before tower gating", function () {
+	let placed = [];
+	let room = {
+		name: "W1N2",
+		controller: { my: true, level: 2, pos: { x: 25, y: 35 } },
+		findSources: function () { return [{ pos: { x: 39, y: 15 } }, { pos: { x: 19, y: 24 } }]; },
+		find: function (type) {
+			if (type === 7) return [{ pos: { x: 17, y: 12 } }];
+			return [];
+		},
+		lookForAt: function () { return []; },
+		createConstructionSite: function (x, y, structureType) {
+			placed.push({ x: x, y: y, structureType: structureType });
+			return 0;
+		}
+	};
+	let context = {
+		_: _, Memory: { rooms: { W1N2: {
+			layout: { origin: { x: 20, y: 20 }, name: "def_hor", blocked_areas: [] },
+			focus_defense: true
+		} } },
+		Game: { rooms: { W1N2: room } },
+		FIND_MY_CONSTRUCTION_SITES: 2, FIND_STRUCTURES: 1, FIND_MINERALS: 7,
+		STRUCTURE_ROAD: "road", OK: 0, ERR_INVALID_TARGET: -7,
+		CONTROLLER_STRUCTURES: CONTROLLER_STRUCTURES,
+		Blueprint__Default_Horizontal: Blueprint__Default_Horizontal,
+		Blueprint__Default_Horizontal__Walled: Blueprint__Default_Horizontal__Walled,
+		Blueprint__Default_Vertical: Blueprint__Default_Vertical,
+		Blueprint__Default_Vertical__Walled: Blueprint__Default_Vertical__Walled,
+		Blueprint__Default_Compact: Blueprint__Default_Compact,
+		Blueprint__Default_Compact__Walled: Blueprint__Default_Compact__Walled,
+		Blueprint__Compact_Horizontal: Blueprint__Compact_Horizontal,
+		Blueprint__Compact_Horizontal__Walled: Blueprint__Compact_Horizontal__Walled,
+		Blueprint__Compact_Vertical: Blueprint__Compact_Vertical,
+		Blueprint__Compact_Vertical__Walled: Blueprint__Compact_Vertical__Walled
+	};
+	context.global = context;
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "definitions_blueprint.js"), "utf8"), context);
+	context.Blueprint.Run(room);
+	assert.deepStrictEqual(placed[0], { x: 20, y: 20, structureType: "spawn" });
+});
+
+test("claimed colonization target does not request a replacement colonizer", function () {
+	let context = {
+		_: _, Memory: {
+			rooms: { W1N1: {} }, hive: { spawn_requests: [] },
+			sites: { colonization: { W1N2: { from: "W1N1", target: "W1N2", list_route: ["W1N1", "W1N2"] } } }
+		},
+		Game: {
+			rooms: {
+				W1N1: { controller: { my: true, level: 6 } },
+				W1N2: { controller: { my: true, level: 2 }, find: function () { return []; } }
+			},
+			creeps: {}
+		},
+		Stats_CPU: { Start: function () {}, End: function () {} },
+		Control: { populationTally: function () {} },
+		Population_Colonization: { colonizer: { amount: 1, level: 6, scale: false, body: "reserver_at" } },
+		Creep_Roles: { Colonizer: function () {} },
+		FIND_MY_SPAWNS: 8
+	};
+	context.global = context;
+	vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "definitions_sites.js"), "utf8"), context);
+	context.Sites.Colonization("W1N1", "W1N2");
+	assert.strictEqual(context.Memory.hive.spawn_requests.length, 0);
+});
+
 test("quiet scheduler advances and releases a fully staffed recovery latch", function () {
 	reset({ time: 5000 });
 	AIInterface.initMemory();
@@ -1940,6 +2007,7 @@ test("existing remote conversion tracks claim through self-sustaining success", 
 	AIObserver._updateColonizations();
 	assert.strictEqual(Memory.ai.colonizations.W1N2.state, "CLAIMED");
 	assert.strictEqual(Memory.sites.mining.W1N2.colony, "W1N2");
+	assert.strictEqual(Memory.hive.pulses.blueprint.request, "W1N2");
 	spawnSites = [{ structureType: "spawn" }];
 	Game.time++;
 	AIObserver._updateColonizations();

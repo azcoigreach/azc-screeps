@@ -2801,6 +2801,7 @@
 
 			runPopulation: function (rmColony, rmTarget, listCreeps, listRoute) {
 				const rmTargetBase = _.isString(rmTarget) && rmTarget.indexOf("/") >= 0 ? rmTarget.split("/")[1] : rmTarget;
+				const targetOwned = _.get(Game, ["rooms", rmTargetBase, "controller", "my"], false) === true;
 				let popActual = new Object();
 				// Count colonizers regardless of transfer state so we do not spawn a duplicate
 				// while one is crossing shards. Previously we excluded global_status === 'transferring',
@@ -2816,13 +2817,15 @@
 					_.sum(popTarget, p => { return _.get(p, "amount", 0); }),
 					_.sum(popActual));
 
-				const pendingColonizer = _.find(_.get(Memory, ["hive", "spawn_requests"], []), r => r && r.role === "colonizer" && _.get(r, ["args", "target_key"]) === rmTarget);
+				const pendingColonizer = _.find(_.get(Memory, ["hive", "spawn_requests"], []), r => r
+					&& _.get(r, "role", _.get(r, ["args", "role"])) === "colonizer"
+					&& _.get(r, ["args", "target_key"], _.get(r, ["args", "room"])) === rmTarget);
 				const actual = _.get(popActual, "colonizer", 0);
 				const target = _.get(popTarget, ["colonizer", "amount"], 0);
 				const hasPending = !!pendingColonizer;
 				const shouldSpawn = actual < target && !pendingColonizer;
 				
-				if (_.get(popActual, "colonizer", 0) < _.get(popTarget, ["colonizer", "amount"], 0) && !pendingColonizer) {
+				if (!targetOwned && _.get(popActual, "colonizer", 0) < _.get(popTarget, ["colonizer", "amount"], 0) && !pendingColonizer) {
 					console.log(`[Colonization] Creating spawn request for colonizer to ${rmTarget} from ${rmColony}`);
 					Memory["hive"]["spawn_requests"].push({
 						room: rmColony,
